@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-15
+
 ### Added
 
 - **A `claude plugin eval` suite (`plugins/setup-audit/evals/`), so trigger accuracy and output
@@ -143,7 +145,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/senzelden/claude-setup-audit/releases/tag/v0.1.0
