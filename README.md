@@ -37,6 +37,16 @@ directly:
 | `depth` | `quick` (local snapshot only) · `full` (plus docs diff and what's new) | `full` |
 | `scope` | `global` · `project` · `all` | `all` |
 | `mode` | `audit` (read-only) · `propose` (report + diffs, then ask) · `apply` | `propose` |
+| `report_dir` | where reports and trend data are kept | `~/.claude/audits` |
+
+**Cost:** the local snapshot is a deterministic script that takes a few seconds. The model's
+analysis is the main cost. For reference, a `depth=quick scope=project mode=audit` run on
+Sonnet took about 4.5 minutes and ~$0.73 on one real machine. A `full` audit of all projects
+reads more and costs more.
+
+**Where reports go:** Claude Code protects files under `~/.claude`, so interactive sessions ask
+you to approve the first write. In headless runs, point `report_dir` at a folder you own, or the
+report goes to a temporary folder.
 
 Deliberate choices can be recorded in `~/.claude/audits/decisions.yaml` with a `review_after`
 date, so they aren't re-flagged until then.

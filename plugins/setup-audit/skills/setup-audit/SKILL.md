@@ -1,7 +1,7 @@
 ---
 name: setup-audit
 description: Audit the user's whole Claude Code setup (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
-allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *)
+allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *)
 ---
 
 # Claude Code setup audit
@@ -26,6 +26,7 @@ one batch.
 | `depth` | `quick` (snapshot only, no docs fetch, cheap) · `full` (docs diff, what's new) | `full` |
 | `scope` | `global` · `project` (current repo) · `all` (every project Claude Code has been used in) | `all` |
 | `mode` | `audit` (read-only report) · `propose` (report + exact diffs, then ask) · `apply` (propose, then apply approved items) | `propose` |
+| `report_dir` | where reports and `audit.json` live (also where the previous run is looked up) | `~/.claude/audits` |
 
 Then read the decisions file `~/.claude/audits/decisions.yaml`, if it exists. It records
 deliberate divergences the user doesn't want re-flagged:
@@ -49,8 +50,17 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-au
 
 It discovers projects from Claude Code's own records (transcript `cwd`, /insights metadata), so
 it doesn't assume any folder layout; `--roots DIR...` adds extra directories. It prints its
-estimated token size. Read it section by section (`global`, `projects`, `memory`, `usage`,
-`transcripts`, `skill_listing`, `corrections`) rather than all at once. The script already
+estimated token size. Read it section by section with the bundled read-only helper, rather than all at once
+and rather than ad-hoc `python3 -c` (that needs arbitrary-code permission, and a security audit
+shouldn't ask for it):
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py "$TMPDIR/setup-audit-snapshot.json"            # sections + sizes
+python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py "$TMPDIR/setup-audit-snapshot.json" readiness --keys
+python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py "$TMPDIR/setup-audit-snapshot.json" readiness "~/code/app" env
+```
+
+Sections: `global`, `projects`, `readiness`, `memory`, `usage`, `transcripts`, `skill_listing`, `corrections`. The script already
 redacts secret-looking values and classifies risky rules. Open individual files only to confirm
 a finding before proposing an edit.
 
@@ -94,14 +104,18 @@ List them but don't rank them. For repeated mistakes, only a pattern across seve
 projects counts, and the lightest mechanism that prevents recurrence wins:
 memory line < CLAUDE.md or path-scoped rule < hook (must always hold) < skill (whole workflow).
 
-**Diff against the previous run** (`~/.claude/audits/*-audit.json`): mark each finding `new`,
+**Diff against the previous run** (`<report_dir>/*-audit.json`): mark each finding `new`,
 `open` or `regressed`, and list `resolved` ones. For learning findings, compare the metric that
 motivated a previously applied fix (e.g. a friction count or a correction cluster). If it
 didn't improve, escalate the mechanism, e.g. from an instruction to a hook.
 
 ## Step 4: Write the report and audit.json
 
-Save both to `~/.claude/audits/YYYY-MM-DD-audit.md` and `…-audit.json` (add `-2` etc. if taken).
+Save both to `<report_dir>/YYYY-MM-DD-audit.md` and `…-audit.json` (add `-2` etc. if taken).
+Claude Code protects files under `~/.claude`: an interactive session asks the user to approve
+the write, while headless or restricted sessions may refuse it. If the write is refused, don't
+retry or look for a way around it. Save both files to `$TMPDIR/setup-audit/` instead, tell the
+user that path is temporary, and suggest `report_dir=<a folder they own>` for next time.
 
 Markdown template:
 

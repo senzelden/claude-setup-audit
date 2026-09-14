@@ -201,5 +201,24 @@ class TranscriptEvidence(FakeHome):
         self.assertEqual(t["env_error_hits_by_project"], {"-home-x-repo": 1})
 
 
+class QuerySnapshot(FakeHome):
+    def run_query(self, *args):
+        import subprocess
+        script = os.path.join(os.path.abspath(SCRIPTS), "query_snapshot.py")
+        return subprocess.run([sys.executable, "-B", script, *args], capture_output=True, text=True)
+
+    def test_select_keys_index_and_truncate(self):
+        snap = self.write("snap.json", {"readiness": {"~/code/app": {"env": {"undeclared": [{"name": "A"}, {"name": "B"}]}}},
+                                        "usage": {"big": "x" * 500}})
+        self.assertIn("readiness", self.run_query(snap).stdout)
+        self.assertEqual(json.loads(self.run_query(snap, "readiness", "--keys").stdout), ["~/code/app"])
+        out = self.run_query(snap, "readiness", "~/code/app", "env", "undeclared", "1")
+        self.assertEqual(json.loads(out.stdout), {"name": "B"})
+        self.assertIn("truncated", self.run_query(snap, "usage", "--max-chars", "100").stdout)
+        missing = self.run_query(snap, "readiness", "nope")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("available", missing.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
