@@ -12,6 +12,8 @@ short, ranked list of fixes for:
 - **Learning from repeated mistakes**: recurring friction and corrections across sessions and
   projects, turned into the lightest mechanism that stops them (memory → rule → hook → skill),
   and re-measured on the next run.
+- **Agent readiness** *(opt-in: `focus=readiness`)*: whether Claude can set up, run, verify and
+  understand each repo cheaply. See [Agent readiness](#agent-readiness) below.
 
 Proposals are applied only when you approve them, with backups and verification.
 
@@ -50,6 +52,27 @@ report goes to a temporary folder.
 
 Deliberate choices can be recorded in `~/.claude/audits/decisions.yaml` with a `review_after`
 date, so they aren't re-flagged until then.
+
+## Agent readiness
+
+An opt-in track (`focus=readiness`, most useful with `scope=project`). It checks repo properties
+that decide how much it costs Claude to work in a codebase, and it reports a gap only when
+transcripts show it hurting (or the fix is cheap), in the repo's own stack. It never suggests
+Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on repo age:
+"turn it on now" for young repos, parked with a cost estimate for mature ones.
+
+| Check | What it looks at |
+|---|---|
+| First run | one setup command (`make setup`, `dev` script), toolchain pins (`.nvmrc`, `.tool-versions`, `.python-version`, mise, devcontainer, Nix), lockfiles |
+| Env contract | variables the code reads (`os.environ`, `process.env`, …) vs variables declared by **any** mechanism: `.env.example`, direnv `.envrc` (including `pass`/1Password/sops pointers), mise `[env]`, devcontainer, compose, pydantic settings. Graded `required` / `read` / `optional` / `test-only`. |
+| Env reaches Claude | direnv only loads at an interactive prompt, which Claude's Bash tool never shows, so variables that work in your terminal can be missing for Claude. Cross-checked with env errors in transcripts. Fixes, with trade-offs: `direnv exec` wrappers for secrets (default), a filtered `CLAUDE_ENV_FILE` session hook for non-secrets |
+| Guardrails | formatter configured *and* enforced (pre-commit/lefthook/husky, plus a format-on-edit hook for Claude), type strictness |
+| Test loop | measured test-run time from transcripts, test data (seeds, Testcontainers), CI caching |
+| Context | ADRs (`docs/adr/`), module-boundary tooling |
+
+A `.envrc` is never executed and secret values are never read: literal secrets are reported by
+variable name only. Structured logging and feature flags are out of scope, since they're product
+architecture with no agent-side signal.
 
 ## What it reads, writes and sends
 
