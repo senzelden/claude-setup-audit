@@ -1,0 +1,817 @@
+#!/usr/bin/env python3
+"""Collect a compact, redacted snapshot of the local Claude Code setup as JSON.
+
+Deterministic groundwork for the setup-audit skill: it reads config, usage data and
+history so the model spends its tokens on analysis instead of file spelunking.
+Stdlib only. Never prints secret values (env values, credentials, tokens in rules).
+
+Usage: collect.py [--roots ~/code ...] [--days 30] [--out snapshot.json]
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import shlex
+import subprocess
+import time
+from collections import Counter, defaultdict
+from datetime import datetime
+
+HOME = os.path.expanduser("~")
+CLAUDE = os.path.join(HOME, ".claude")
+
+SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
+    r"|(?i:authorization|bearer|token|api[_-]?key|password|secret)\s*[:=]\s*\S+)"
+)
+# A value that looks like an actual credential (not a variable/placeholder reference).
+LITERAL_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
+    r"|(?i:bearer|token|api[_-]?key|password|secret)[\"' ]*[:=]\s*[\"']?(?![$<_{(])[A-Za-z0-9._\-]{16,})"
+)
+
+# (flag, regex over the rule text). Ordered roughly by severity.
+RISKY_RULES = [
+    ("wildcard-all", re.compile(r"^Bash(\((\*|:\*)\))?$")),
+    ("sudo", re.compile(r"\bsudo\b")),
+    ("rm-recursive", re.compile(r"\brm\s+-[a-zA-Z]*r")),
+    ("network-wildcard", re.compile(r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")),
+    ("git-destructive", re.compile(r"git (push|reset|clean|checkout --|rebase)")),
+    ("gh-api", re.compile(r"\bgh (api|repo delete|release)")),
+    ("interpreter-wildcard", re.compile(r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-c ')?[ :]?\*")),
+    ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
+    ("docker", re.compile(r"\bdocker\b")),
+    ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),
+    ("secret-literal-in-rule", LITERAL_SECRET_RE),
+    # A secret pulled out of .env onto the command line (not masking like sed 's/=.*/=<set>/' .env).
+    ("secret-via-env-file", re.compile(r"\$\\?\(.*\.env\b|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\S*\s+\S*\.env\b")),
+    ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
+]
+ONE_OFF_RE = re.compile(r".{120,}|/tmp/|\b\d{4,}\b|https?://\S+\?")
+CORRECTION_RE = re.compile(
+    r"^(no\b|nope|stop\b|wait\b|don'?t\b|that'?s (wrong|not)|wrong\b|again\b|i said|why did you|"
+    r"you (forgot|missed|broke|didn'?t)|revert|undo|nein\b|nicht\b|falsch|stopp\b|hör auf|warum hast du)",
+    re.IGNORECASE,
+)
+
+
+def load_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def redact(text):
+    return SECRET_RE.sub("[REDACTED]", text)
+
+
+def est_tokens(path):
+    try:
+        return os.path.getsize(path) // 4
+    except OSError:
+        return 0
+
+
+def line_count(path):
+    try:
+        with open(path, errors="replace") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+def git_status(repo, rel):
+    """'ignored' | 'tracked' | 'untracked' | 'not-a-git-repo' for rel inside repo."""
+    try:
+        if subprocess.run(["git", "-C", repo, "rev-parse"], capture_output=True, timeout=5).returncode:
+            return "not-a-git-repo"
+        if not subprocess.run(["git", "-C", repo, "ls-files", "--error-unmatch", rel], capture_output=True, timeout=5).returncode:
+            return "tracked"
+        if not subprocess.run(["git", "-C", repo, "check-ignore", "-q", rel], capture_output=True, timeout=5).returncode:
+            return "ignored"
+        return "untracked"
+    except Exception:
+        return "unknown"
+
+
+def analyze_permissions(perms):
+    allow = perms.get("allow", []) or []
+    flags = defaultdict(list)
+    one_offs = 0
+    for rule in allow:
+        for name, rx in RISKY_RULES:
+            if rx.search(rule):
+                flags[name].append(redact(rule)[:160])
+        if ONE_OFF_RE.search(rule):
+            one_offs += 1
+    return {
+        "allow_count": len(allow),
+        "deny_count": len(perms.get("deny", []) or []),
+        "ask_count": len(perms.get("ask", []) or []),
+        "deny": [redact(r) for r in perms.get("deny", []) or []],
+        "default_mode": perms.get("defaultMode"),
+        "additional_dirs": perms.get("additionalDirectories", []),
+        "missing_additional_dirs": [p for p in perms.get("additionalDirectories", []) or []
+                                    if not os.path.isdir(os.path.expanduser(p))],
+        "one_off_rules": one_offs,
+        "risky": {k: v[:6] for k, v in flags.items()},
+    }
+
+
+def summarize_settings(path):
+    d = load_json(path)
+    if d is None:
+        return None
+    hooks = d.get("hooks", {}) or {}
+    raw_commands = [x.get("command", "") for lst in hooks.values() for h in lst for x in h.get("hooks", [])]
+    # Project settings live in <project>/.claude/; user settings in ~/.claude (no project dir).
+    settings_dir = os.path.dirname(os.path.abspath(path))
+    project_dir = None if settings_dir == CLAUDE else os.path.dirname(settings_dir)
+    return {
+        "path": path.replace(HOME, "~"),
+        "keys": sorted(d.keys()),
+        "model": d.get("model"),
+        "model_settings": d.get("modelSettings"),
+        "env_keys": sorted((d.get("env") or {}).keys()),
+        "enabled_plugins": d.get("enabledPlugins"),
+        "hooks": {ev: [h.get("matcher") for h in lst] for ev, lst in hooks.items()},
+        "hook_commands": [redact(c)[:200] for c in raw_commands],
+        "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
+        "sandbox": d.get("sandbox"),
+        "auto_mode_configured": bool(d.get("autoMode")),
+        "permissions": analyze_permissions(d.get("permissions", {}) or {}),
+        "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
+                                     "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
+    }
+
+
+def collect_global():
+    out = {"settings": [], "claude_md": None, "skills": [], "agents": [], "commands": []}
+    for name in ("settings.json", "settings.local.json"):
+        s = summarize_settings(os.path.join(CLAUDE, name))
+        if s:
+            out["settings"].append(s)
+    gmd = os.path.join(CLAUDE, "CLAUDE.md")
+    if os.path.exists(gmd):
+        out["claude_md"] = {"est_tokens": est_tokens(gmd), "lines": line_count(gmd)}
+    out["plugin_session_start_hooks"] = plugin_session_start_hooks(out.get("settings", []))
+    for kind in ("skills", "agents", "commands"):
+        base = os.path.join(CLAUDE, kind)
+        if os.path.isdir(base):
+            out[kind] = sorted(os.listdir(base))
+    out["mcp_user"] = sorted((load_json(os.path.join(HOME, ".claude.json")) or {}).get("mcpServers", {}).keys())
+    installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
+    out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
+    out["last_update"] = load_json(os.path.join(CLAUDE, ".last-update-result.json"))
+    for cmd, key in ((["claude", "--version"], "version"), (["claude", "doctor"], "doctor")):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            out[key] = (r.stdout + r.stderr).strip()[-1500:]
+        except Exception as e:
+            out[key] = f"unavailable: {e}"
+    return out
+
+
+def plugin_session_start_hooks(settings):
+    """Enabled plugins that inject context on every session start, with a size estimate."""
+    enabled = {k for s in settings for k, v in (s.get("enabled_plugins") or {}).items() if v}
+    found = []
+    # The cache keeps old versions around; only the newest copy of each plugin is live.
+    newest = {}
+    for hooks_json in glob.glob(os.path.join(CLAUDE, "plugins", "cache", "*", "*", "*", "hooks", "hooks.json")):
+        key = tuple(hooks_json.split(os.sep)[-5:-3])
+        if key not in newest or os.path.getmtime(hooks_json) > os.path.getmtime(newest[key]):
+            newest[key] = hooks_json
+    for hooks_json in newest.values():
+        parts = hooks_json.split(os.sep)
+        marketplace, plugin, version = parts[-5], parts[-4], parts[-3]
+        if f"{plugin}@{marketplace}" not in enabled:
+            continue
+        hooks = (load_json(hooks_json) or {}).get("hooks", {})
+        if "SessionStart" not in hooks:
+            continue
+        plugin_root = os.path.dirname(os.path.dirname(hooks_json))
+        # Rough payload size: files the plugin's session-start hook script is likely to inject.
+        injected = sum(os.path.getsize(p) for p in glob.glob(os.path.join(plugin_root, "skills", "using-*", "SKILL.md")))
+        found.append({"plugin": f"{plugin}@{marketplace}", "version": version,
+                      "matchers": [h.get("matcher") for h in hooks["SessionStart"]],
+                      "est_injected_tokens": injected // 4 or None})
+    return found
+
+
+def discover_projects():
+    """Directories the user has actually run Claude Code in, from Claude Code's own records.
+
+    Transcript records carry an exact `cwd`; /insights session-meta carries `project_path`.
+    Project folder names under ~/.claude/projects are lossy encodings, so they are not decoded.
+    """
+    found = set()
+    for proj_dir in glob.glob(os.path.join(CLAUDE, "projects", "*")):
+        transcripts = sorted(glob.glob(os.path.join(proj_dir, "*.jsonl")), key=os.path.getmtime, reverse=True)
+        for path in transcripts[:3]:
+            try:
+                with open(path, errors="replace") as f:
+                    for i, line in enumerate(f):
+                        if i > 400:
+                            break
+                        if '"cwd"' in line:
+                            cwd = json.loads(line).get("cwd")
+                            if cwd:
+                                found.add(cwd)
+                                break
+            except (OSError, ValueError):
+                continue
+    for f in glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json")):
+        path = (load_json(f) or {}).get("project_path")
+        if path:
+            found.add(path)
+    # Collapse subdirectories into their git root, and drop paths that no longer exist.
+    roots = set()
+    for path in found:
+        if not os.path.isdir(path) or os.path.realpath(path) == os.path.realpath(HOME):
+            continue
+        try:
+            # --git-common-dir points a linked worktree back at its main repository's .git.
+            common = subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                    capture_output=True, text=True, timeout=5).stdout.strip()
+            top = os.path.dirname(common) if common.endswith(os.sep + ".git") else ""
+        except Exception:
+            top = ""
+        roots.add(top or path)
+    return sorted(roots)
+
+
+def collect_projects(roots):
+    projects = {}
+    for root in roots:
+        root = os.path.expanduser(root)
+        for dirpath, dirnames, filenames in os.walk(root):
+            depth = dirpath[len(root):].count(os.sep)
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", ".venv", "venv", ".git", "__pycache__", "dist", "build")]
+            if depth >= 3:
+                dirnames[:] = [d for d in dirnames if d == ".claude"]
+            entry = {}
+            if "CLAUDE.md" in filenames:
+                entry["claude_md_tokens"] = est_tokens(os.path.join(dirpath, "CLAUDE.md"))
+                entry["claude_md_lines"] = line_count(os.path.join(dirpath, "CLAUDE.md"))
+                if "/.worktrees/" not in dirpath and "/worktrees/" not in dirpath:
+                    entry["claude_md_dead_refs"] = dead_references(os.path.join(dirpath, "CLAUDE.md"), root)
+                if "/.worktrees/" in dirpath or "/worktrees/" in dirpath:
+                    entry["is_worktree_copy"] = True
+            if ".mcp.json" in filenames:
+                entry["mcp_servers"] = sorted((load_json(os.path.join(dirpath, ".mcp.json")) or {}).get("mcpServers", {}).keys())
+            cdir = os.path.join(dirpath, ".claude")
+            if os.path.isdir(cdir):
+                entry["settings"] = [s for s in (summarize_settings(os.path.join(cdir, n))
+                                                 for n in ("settings.json", "settings.local.json")) if s]
+                for kind in ("skills", "agents", "commands", "hooks"):
+                    if os.path.isdir(os.path.join(cdir, kind)):
+                        entry[kind] = sorted(os.listdir(os.path.join(cdir, kind)))
+                entry["git"] = {n: git_status(dirpath, f".claude/{n}")
+                                for n in ("settings.json", "settings.local.json")
+                                if os.path.exists(os.path.join(cdir, n))}
+            if entry:
+                projects[dirpath.replace(HOME, "~")] = entry
+    return projects
+
+
+def collect_memory():
+    mem, desc_seen = {}, defaultdict(list)
+    for d in glob.glob(os.path.join(CLAUDE, "projects", "*", "memory")):
+        proj = os.path.basename(os.path.dirname(d))
+        files = [f for f in os.listdir(d) if f.endswith(".md")]
+        idx = os.path.join(d, "MEMORY.md")
+        entries = []
+        for f in sorted(files):
+            if f == "MEMORY.md":
+                continue
+            head = open(os.path.join(d, f), errors="replace").read(600)
+            m = re.search(r"^description:\s*(.+)$", head, re.M)
+            desc = redact(m.group(1).strip())[:160] if m else ""
+            entries.append({"file": f, "description": desc})
+            desc_seen[f].append(proj)
+        mem[proj] = {"files": len(entries), "index_lines": line_count(idx), "entries": entries[:30]}
+    # Similar memories in several projects = a convention re-learned per repo (global CLAUDE.md candidate).
+    # Names vary ("commit-conventions" vs "git-commit-conventions"), so compare filename word sets.
+    # Descriptions are too wordy for lexical overlap; this is only a hint — the model clusters the rest.
+    stop = {"md", "the", "and", "for", "of", "to", "in", "not", "project", "notes", "feedback", "user", "must"}
+    items = [(proj, e["file"], {w.rstrip("s").removesuffix("red").removesuffix("ed") for w in re.split(r"[^a-z]+", e["file"].lower())
+                                if len(w) > 2 and w not in stop})
+             for proj, v in mem.items() for e in v["entries"]]
+    similar = []
+    for i, (p1, f1, w1) in enumerate(items):
+        for p2, f2, w2 in items[i + 1:]:
+            if p1 != p2 and w1 and w2 and len(w1 & w2) / len(w1 | w2) >= 0.3:
+                similar.append({"a": f"{p1}/{f1}", "b": f"{p2}/{f2}", "shared": sorted(w1 & w2)[:6]})
+    return {"by_project": mem, "similar_across_projects": similar[:25]}
+
+
+def missing_hook_scripts(commands, project_dir):
+    """Hook commands whose script path doesn't exist; a PreToolUse hook like that can break every call.
+
+    Idea credit: ccinspect (MIT) dead-hook check.
+    """
+    missing = []
+    for cmd in commands:
+        if "${CLAUDE_PLUGIN_ROOT}" in cmd:
+            continue
+        expanded = cmd.replace("${CLAUDE_PROJECT_DIR}", project_dir or "\0").replace("$CLAUDE_PROJECT_DIR", project_dir or "\0")
+        if "\0" in expanded:  # project-relative hook declared in user settings: can't resolve statically
+            continue
+        try:
+            tokens = shlex.split(expanded)
+        except ValueError:
+            tokens = expanded.split()
+        script = next((t for t in tokens if "/" in t and not t.startswith("-")), None)
+        if script and not os.path.exists(os.path.expanduser(script)):
+            missing.append(redact(cmd)[:160])
+    return missing
+
+
+PATH_REF_RE = re.compile(r"`((?:\.{0,2}/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?)`")
+
+
+def dead_references(md_path, repo_root):
+    """Backtick-quoted relative paths in a CLAUDE.md that exist neither under the repo nor next to the file.
+
+    Only tokens containing '/' are checked (bare filenames often live deep in the tree and would be
+    false positives). Idea credit: claude-md-doctor (MIT) records check.
+    """
+    try:
+        with open(md_path, errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    missing = set()
+    bases = (repo_root, os.path.dirname(md_path))
+    for ref in set(PATH_REF_RE.findall(text)):
+        if ref.startswith(("http", "~", "/", "$", "@")) or any(c in ref for c in "*<>{}"):
+            continue
+        clean = ref.lstrip("./")
+        first, leaf = clean.split("/")[0], clean.rstrip("/").split("/")[-1]
+        # False-positive guards: placeholders (NN, XXX, YYYY), non-path slashes like "D/A" or
+        # "owner/repo" (first segment must be a real directory), and prefixes like "migrations/022"
+        # (leaf must look like a file or an explicit directory).
+        if re.search(r"\b(N{2,}|X{3,}|YYYY|MM|DD)\b|\.\.\.", clean):
+            continue
+        if not any(os.path.isdir(os.path.join(b, first)) for b in bases):
+            continue
+        if "." not in leaf and not ref.endswith("/"):
+            continue
+        if not any(os.path.exists(os.path.join(b, clean)) for b in bases):
+            missing.add(ref)
+    return sorted(missing)[:15]
+
+
+def collect_transcripts(days, max_files=400):
+    """Measured signals from session transcripts, not estimates.
+
+    context_baseline: input + cache-creation + cache-read tokens of each session's first main-thread
+    assistant turn = everything loaded before the first answer (system prompt, tools, CLAUDE.md,
+    memory, skill listing) plus the first prompt. MCP call counts: idea credit unclog (MIT).
+    """
+    cutoff = time.time() - days * 86400
+    top = glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl"))
+    sub = glob.glob(os.path.join(CLAUDE, "projects", "*", "*", "subagents", "*.jsonl"))
+    top = sorted((f for f in top if os.path.getmtime(f) >= cutoff), key=os.path.getmtime, reverse=True)[:max_files]
+    sub = [f for f in sub if os.path.getmtime(f) >= cutoff][: max_files * 4]
+    baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
+    env_hits, test_durations = Counter(), defaultdict(list)
+    for path in top + sub:
+        need_baseline = is_top = path in top
+        proj_key = os.path.basename(os.path.dirname(path))
+        pending = {}  # Bash tool_use id -> start time, for test commands
+        try:
+            with open(path, errors="replace") as f:
+                for line in f:
+                    if is_top and '"tool_result"' in line:
+                        if ENV_ERROR_RE.search(line):
+                            env_hits[proj_key] += 1
+                        if pending and '"tool_use_id"' in line:
+                            try:
+                                r = json.loads(line)
+                            except ValueError:
+                                r = {}
+                            content = (r.get("message") or {}).get("content")
+                            end = _ts(r.get("timestamp"))
+                            for item in content if isinstance(content, list) else []:
+                                start = pending.pop(item.get("tool_use_id"), None) if isinstance(item, dict) else None
+                                if start is not None and end is not None and end >= start:
+                                    test_durations[proj_key].append(round(end - start, 1))
+                    elif is_top and '"tool_use"' in line and TEST_CMD_RE.search(line):
+                        try:
+                            r = json.loads(line)
+                        except ValueError:
+                            r = {}
+                        content = (r.get("message") or {}).get("content")
+                        for item in content if isinstance(content, list) else []:
+                            if (isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name") == "Bash"
+                                    and TEST_CMD_RE.search(str((item.get("input") or {}).get("command", "")))):
+                                started = _ts(r.get("timestamp"))
+                                if started is not None:
+                                    pending[item.get("id")] = started
+                    if need_baseline and '"usage"' in line and '"assistant"' in line:
+                        try:
+                            r = json.loads(line)
+                        except ValueError:
+                            r = {}
+                        if r.get("type") == "assistant" and not r.get("isSidechain"):
+                            u = (r.get("message") or {}).get("usage") or {}
+                            total = sum(u.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+                            if total:
+                                baselines.append(total)
+                                per_project[os.path.basename(os.path.dirname(path))].append(total)
+                                need_baseline = False
+                    if '"mcp__' in line and '"tool_use"' in line:
+                        for name in re.findall(r'"name"\s*:\s*"(mcp__[^"]+)"', line):
+                            parts = name.split("__")
+                            if len(parts) >= 3:
+                                mcp_calls[parts[1]] += 1
+        except OSError:
+            continue
+
+    def pct(values, p):
+        s = sorted(values)
+        return s[min(len(s) - 1, int(p * len(s)))] if s else None
+
+    return {
+        "sessions_measured": len(baselines),
+        "context_baseline_tokens": {"median": pct(baselines, 0.5), "p90": pct(baselines, 0.9), "max": max(baselines, default=None)},
+        "context_baseline_by_project_median": sorted(
+            ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
+        "mcp_calls_by_server": mcp_calls.most_common(),
+        "env_error_hits_by_project": dict(env_hits),
+        "_baseline_lists": dict(per_project),  # joined per repo in main(), then dropped
+        # Start of the Bash call to its result; includes any permission-prompt wait, so an upper bound.
+        "test_run_seconds_by_project": {p: {"runs": len(v), "median": pct(v, 0.5), "p90": pct(v, 0.9)}
+                                        for p, v in test_durations.items() if v},
+    }
+
+
+def skill_listing():
+    """Skill descriptions that load into every session's skill listing.
+
+    Per the skills docs: the listing budget is 1% of the context window (8,000-char fallback), and each
+    entry's description + when_to_use is capped at 1,536 chars (skillListingMaxDescChars).
+    """
+    enabled = set()
+    for n in ("settings.json", "settings.local.json"):
+        enabled |= {k for k, v in ((load_json(os.path.join(CLAUDE, n)) or {}).get("enabledPlugins") or {}).items() if v}
+    newest = {}
+    for skill_md in glob.glob(os.path.join(CLAUDE, "plugins", "cache", "*", "*", "*", "skills", "*", "SKILL.md")):
+        parts = skill_md.split(os.sep)
+        key = (parts[-6], parts[-5], parts[-2])  # marketplace, plugin, skill
+        if f"{parts[-5]}@{parts[-6]}" in enabled and (key not in newest or os.path.getmtime(skill_md) > os.path.getmtime(newest[key])):
+            newest[key] = skill_md
+    files = [(f"user:{os.path.basename(os.path.dirname(p))}", p) for p in glob.glob(os.path.join(CLAUDE, "skills", "*", "SKILL.md"))]
+    files += [(f"{k[1]}:{k[2]}", p) for k, p in newest.items()]
+    entries = []
+    for name, p in files:
+        head = open(p, errors="replace").read(6000)
+        fm = re.match(r"^---\n(.*?)\n---", head, re.S)
+        text = fm.group(1) if fm else ""
+        desc = sum(len(m.group(2).strip().strip("\"'")) for m in re.finditer(r"^(description|when_to_use):\s*(.+)$", text, re.M))
+        entries.append((name, desc))
+    over = [(n, c) for n, c in entries if c > 1536]
+    return {"skills": len(entries), "total_description_chars": sum(min(c, 1536) for _, c in entries),
+            "over_1536_char_cap": over, "budget_note": "listing budget = 1% of context window (8,000-char fallback)"}
+
+
+ENV_ERROR_RE = re.compile(
+    r"KeyError: .{0,3}[A-Z][A-Z0-9_]{3,}"
+    r"|(?i:env(?:ironment)? ?var(?:iable)?s?)[^\n]{0,60}?(?i:not set|missing|required|undefined)"
+    r"|\b[A-Z][A-Z0-9_]{3,}\b (?i:is not set|not set|is required)")
+TEST_CMD_RE = re.compile(r"\b(pytest|vitest|jest|go test|cargo test|(?:npm|pnpm|yarn|bun) (?:run )?test|make test|mix test|rspec|phpunit)\b")
+SOURCE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".rb")
+SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__", "dist", "build", ".next", "target",
+             ".worktrees", "vendor", ".tox", ".mypy_cache", "site-packages", "coverage"}
+ENV_READ_RES = [re.compile(p) for p in (
+    r"os\.environ\[\s*['\"]([A-Z][A-Z0-9_]+)['\"]",  # first: raises when missing = required
+    r"os\.(?:environ\.get|getenv)\(\s*['\"]([A-Z][A-Z0-9_]+)['\"]",
+    r"process\.env\.([A-Z][A-Z0-9_]+)",
+    r"process\.env\[\s*['\"]([A-Z][A-Z0-9_]+)['\"]",
+    r"import\.meta\.env\.([A-Z][A-Z0-9_]+)",
+    r"os\.Getenv\(\s*\"([A-Z][A-Z0-9_]+)\"",
+    r"env::var\(\s*\"([A-Z][A-Z0-9_]+)\"",
+    r"ENV\[\s*['\"]([A-Z][A-Z0-9_]+)['\"]",
+)]
+ENV_IGNORE = re.compile(r"^(HOME|PATH|USER|PWD|SHELL|TERM|LANG|LC_\w+|TMPDIR|TMP|TEMP|CI|NODE_ENV|PYTHONPATH|VIRTUAL_ENV"
+                        r"|XDG_\w+|GITHUB_\w+|RUNNER_\w+|CLAUDE_\w+|DEV|PROD|MODE|SSR|BASE_URL)$")
+ENV_KEY_LINE = r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*="
+
+
+def _ts(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _read(root, rel, limit=200_000):
+    path = os.path.join(root, rel)
+    try:
+        with open(path, errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return ""
+
+
+def env_declarations(root):
+    """Variables a repo declares, whatever mechanism it uses. A pointer-only .envrc counts as a template."""
+    declared, sources = set(), []
+    for name in (".env.example", ".env.template", ".env.sample", ".env.dist", "example.env"):
+        text = _read(root, name)
+        if text:
+            declared |= set(re.findall(ENV_KEY_LINE, text, re.M))
+            sources.append(name)
+    envrc = _read(root, ".envrc")
+    if envrc:
+        declared |= set(re.findall(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=", envrc, re.M))
+        # Not anchored: several use_pass calls may share a line (`use_pass A x; use_pass B y`).
+        declared |= set(re.findall(r"\buse_pass\w*\s+([A-Z][A-Z0-9_]*)", envrc))
+        sources.append(".envrc")
+    for name in ("mise.toml", ".mise.toml"):
+        m = re.search(r"^\[env\]\s*\n(.*?)(?=^\[|\Z)", _read(root, name), re.M | re.S)
+        if m:
+            declared |= set(re.findall(ENV_KEY_LINE, m.group(1), re.M))
+            sources.append(name)
+    for name in (".devcontainer/devcontainer.json", ".devcontainer.json"):
+        for block in re.findall(r"\"(?:containerEnv|remoteEnv)\"\s*:\s*\{([^}]*)\}", _read(root, name)):
+            declared |= set(re.findall(r"\"([A-Z][A-Z0-9_]*)\"\s*:", block))
+            sources.append(name)
+    for path in glob.glob(os.path.join(root, "*compose*.y*ml")):
+        text = _read(root, os.path.basename(path))
+        found = set(re.findall(r"^\s*-\s*([A-Z][A-Z0-9_]*)=", text, re.M)) | set(re.findall(r"^\s+([A-Z][A-Z0-9_]*):\s*\$\{", text, re.M))
+        if found:
+            declared |= found
+            sources.append(os.path.basename(path))
+    return declared, sorted(set(sources))
+
+
+def env_contract(root, max_files=4000):
+    """Declared vs read environment variables, plus fail-fast validation libraries in use."""
+    declared, sources = env_declarations(root)
+    reads, required, validation = defaultdict(set), set(), set()
+    optional, app_reads = set(), set()
+    scanned, truncated = 0, False
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(SOURCE_EXT):
+                continue
+            if scanned >= max_files:
+                truncated = True
+                break
+            path = os.path.join(dirpath, fn)
+            try:
+                if os.path.getsize(path) > 400_000:
+                    continue
+                with open(path, errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            scanned += 1
+            rel = os.path.relpath(path, root)
+            for rx in ENV_READ_RES:
+                for name in rx.findall(text):
+                    if not ENV_IGNORE.match(name):
+                        reads[name].add(rel)
+            is_test = bool(re.search(r"(^|/)(tests?|__tests__|spec|e2e)(/|$)|(\.test|\.spec|_test)\.\w+$|(^|/)test_[^/]*\.py$", rel))
+            if not is_test:
+                app_reads |= {n for rx in ENV_READ_RES for n in rx.findall(text)}
+                required |= set(ENV_READ_RES[0].findall(text))
+            # Reads with a fallback value don't break when the variable is missing.
+            optional |= set(re.findall(r"os\.(?:environ\.get|getenv)\(\s*['\"]([A-Z][A-Z0-9_]+)['\"]\s*,", text))
+            optional |= set(re.findall(r"process\.env\.([A-Z][A-Z0-9_]+)\s*(?:\?\?|\|\|)", text))
+            if "BaseSettings" in text:
+                validation.add("pydantic-settings")
+                for body in re.findall(r"class \w+\([^)]*BaseSettings[^)]*\):\n((?:[ \t]+.*\n|[ \t]*\n)+)", text):
+                    declared |= {n.upper() for n in re.findall(r"^[ \t]+([a-z_][a-z0-9_]*)\s*:", body, re.M)}
+            lib = re.search(r"from ['\"](envalid|@t3-oss/env[\w-]*|znv|envsafe)['\"]", text)
+            if lib:
+                validation.add(lib.group(1))
+            if "process.env" in text and re.search(r"\bz\.object\(", text):
+                validation.add("zod")
+        if truncated:
+            break
+    def kind(name):
+        if name in required:
+            return "required"  # os.environ["X"] in app code: crashes when missing
+        if name not in app_reads:
+            return "test-only"
+        return "optional" if name in optional else "read"
+
+    order = {"required": 0, "read": 1, "optional": 2, "test-only": 3}
+    undeclared = sorted((n for n in reads if n not in declared), key=lambda n: (order[kind(n)], n))
+    return {"declared_via": sources, "declared_count": len(declared), "read_count": len(reads),
+            "undeclared_counts": dict(Counter(kind(n) for n in undeclared)),
+            "undeclared": [{"name": n, "kind": kind(n), "files": sorted(reads[n])[:3]} for n in undeclared][:25],
+            "validation": sorted(validation), "files_scanned": scanned, "truncated": truncated}
+
+
+def envrc_info(root):
+    text = _read(root, ".envrc")
+    if not text:
+        return None
+    literal = re.findall(r"^\s*export\s+(\w*(?:KEY|TOKEN|SECRET|PASSWORD)\w*)=['\"]?(?![$`'\"])[^\s'\"]{12,}", text, re.M)
+    return {"pointer_lines": len(re.findall(r"use_pass|pass show|op read|sops |vault ", text)),
+            "literal_secret_names": sorted(set(literal)),  # names only, never values
+            "git": git_status(root, ".envrc")}
+
+
+def git_age(root):
+    def run(*args):
+        try:
+            return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            return ""
+    count, first = run("rev-list", "--count", "HEAD"), run("log", "--reverse", "--format=%cs", "--max-parents=0").split()
+    return {"commits": int(count) if count.isdigit() else None, "first_commit": first[0] if first else None}
+
+
+def readiness(root):
+    """Agent-readiness signals for one repo: can Claude set up, run, verify and understand it cheaply?"""
+    exists = lambda *names: [n for n in names if os.path.exists(os.path.join(root, n))]  # noqa: E731
+    pkg = load_json(os.path.join(root, "package.json")) or {}
+    pkg_text = json.dumps(pkg)
+    pyproject = _read(root, "pyproject.toml")
+    makefile = _read(root, "Makefile") + _read(root, "makefile") + _read(root, "justfile") + _read(root, "Justfile")
+    workflows = glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
+    workflow_text = "".join(_read(root, os.path.relpath(p, root)) for p in workflows)
+    deps = (pyproject + _read(root, "requirements.txt") + _read(root, "requirements-dev.txt") + pkg_text).lower()
+    tsconfig = _read(root, "tsconfig.json")
+    return {
+        "toolchain_pins": exists(".nvmrc", ".node-version", ".tool-versions", ".python-version", "mise.toml", ".mise.toml",
+                                 "rust-toolchain.toml", "rust-toolchain", "flake.nix", "shell.nix",
+                                 ".devcontainer/devcontainer.json", ".devcontainer.json"),
+        "lockfiles": exists("uv.lock", "poetry.lock", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "Cargo.lock", "go.sum"),
+        "setup_entrypoints": [f"make {t}" for t in sorted(set(re.findall(r"^(setup|bootstrap|install|init|dev)\s*:", makefile, re.M)))]
+                             + [f"script:{s}" for s in sorted(pkg.get("scripts") or {}) if s in ("setup", "bootstrap", "dev", "prepare")],
+        "precommit": exists(".pre-commit-config.yaml", "lefthook.yml", ".lefthook.yml", "lefthook.yaml", ".husky")
+                     + (["lint-staged"] if "lint-staged" in pkg_text else []),
+        "formatter_config": exists("ruff.toml", ".ruff.toml", "biome.json", "biome.jsonc", ".prettierrc", ".prettierrc.json",
+                                   "prettier.config.js", "rustfmt.toml", ".editorconfig")
+                            + (["ruff (pyproject)"] if "[tool.ruff" in pyproject else [])
+                            + (["black (pyproject)"] if "[tool.black" in pyproject else []),
+        "type_strictness": {
+            "tsconfig_strict": bool(re.search(r"\"strict\"\s*:\s*true", tsconfig)) if tsconfig else None,
+            "mypy_strict": ("[tool.mypy" in pyproject and bool(re.search(r"^\s*strict\s*=\s*true", pyproject, re.M)))
+                           or "strict" in _read(root, "mypy.ini"),
+            "pyright_strict": "typeCheckingMode = \"strict\"" in pyproject or "\"strict\"" in _read(root, "pyrightconfig.json"),
+        },
+        "tests": {"dirs": exists("tests", "test", "__tests__", "spec"), "testcontainers": "testcontainers" in deps,
+                  "seed_or_fixtures": exists("seed", "seeds", "fixtures", "tests/fixtures", "db/seeds", "prisma/seed.ts", "scripts/seed.py")},
+        "ci": {"github_workflows": len(workflows), "gitlab": bool(exists(".gitlab-ci.yml")),
+               "caching": bool(re.search(r"actions/cache|\bcache:|setup-uv|cache-dependency-path", workflow_text))},
+        "adr": {d: len(glob.glob(os.path.join(root, d, "*.md"))) for d in ("docs/adr", "docs/adrs", "docs/decisions", "adr", "doc/adr")
+                if os.path.isdir(os.path.join(root, d))},
+        "boundaries": exists(".importlinter", ".dependency-cruiser.js", ".dependency-cruiser.cjs", "nx.json")
+                      + (["import-linter (pyproject)"] if "[tool.importlinter" in pyproject else [])
+                      + (["eslint-plugin-boundaries"] if "eslint-plugin-boundaries" in pkg_text else []),
+        "repo": git_age(root),
+        "envrc": envrc_info(root),
+        "env": env_contract(root),
+        # Claude Code names transcript folders after the path with non-alphanumerics replaced by '-'.
+        "transcript_key": re.sub(r"[^A-Za-z0-9]", "-", root),
+    }
+
+
+def collect_usage(days):
+    cutoff = time.time() - days * 86400
+    stats = load_json(os.path.join(CLAUDE, "stats-cache.json")) or {}
+    models = {}
+    for m, u in (stats.get("modelUsage") or {}).items():
+        models[m] = {k: u.get(k, 0) for k in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")}
+    recent_daily = [d for d in stats.get("dailyModelTokens", []) or []
+                    if d.get("date", "") >= time.strftime("%Y-%m-%d", time.localtime(cutoff))]
+
+    tools, err_cats, per_project = Counter(), Counter(), Counter()
+    sessions = []
+    for f in glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json")):
+        m = load_json(f) or {}
+        tools.update(m.get("tool_counts", {}))
+        err_cats.update(m.get("tool_error_categories", {}) or {})
+        per_project[(m.get("project_path") or "?").replace(HOME, "~")] += 1
+        sessions.append({
+            "project": (m.get("project_path") or "?").replace(HOME, "~"),
+            "start": m.get("start_time"), "minutes": m.get("duration_minutes"),
+            "out_tokens": m.get("output_tokens", 0), "tool_errors": m.get("tool_errors", 0),
+            "interruptions": m.get("user_interruptions", 0), "agents": m.get("uses_task_agent"),
+            "first_prompt": redact((m.get("first_prompt") or "")[:120]),
+        })
+    n = len(sessions) or 1
+    heavy = sorted(sessions, key=lambda s: s["out_tokens"] or 0, reverse=True)[:8]
+    errorful = sorted(sessions, key=lambda s: (s["tool_errors"] or 0) + 3 * (s["interruptions"] or 0), reverse=True)[:8]
+
+    friction, outcomes, details = Counter(), Counter(), []
+    for f in glob.glob(os.path.join(CLAUDE, "usage-data", "facets", "*.json")):
+        d = load_json(f) or {}
+        friction.update(d.get("friction_counts", {}) or {})
+        outcomes[d.get("outcome")] += 1
+        if d.get("friction_detail"):
+            details.append(redact(d["friction_detail"][:400]))
+
+    reports = sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "report*.html")), key=os.path.getmtime)
+    grand = sum(sum(u.values()) for u in models.values()) or 1
+    for u in models.values():
+        u["share_of_all_tokens_pct"] = round(100 * sum(v for k, v in u.items() if k.endswith("Tokens")) / grand, 1)
+    daily_totals = [{"date": d.get("date"), "total": sum((d.get("tokensByModel") or {}).values())}
+                    for d in recent_daily]
+    return {
+        "stats_lifetime_by_model": models,
+        "daily_token_totals_recent": daily_totals[-days:],
+        "stats_total_sessions": stats.get("totalSessions"),
+        "session_meta_count": len(sessions),
+        "avg_tool_errors_per_session": round(sum(s["tool_errors"] or 0 for s in sessions) / n, 2),
+        "subagent_session_share": round(sum(1 for s in sessions if s["agents"]) / n, 2),
+        "top_tools": tools.most_common(15),
+        "tool_error_categories": err_cats.most_common(10),
+        "sessions_per_project": per_project.most_common(15),
+        "heaviest_sessions": heavy,
+        "most_friction_sessions": errorful,
+        "facet_friction": friction.most_common(),
+        "facet_outcomes": dict(outcomes),
+        "facet_friction_details": details[:15],
+        "latest_insights_report": reports[-1].replace(HOME, "~") if reports else None,
+    }
+
+
+def collect_corrections(days):
+    """User prompts that look like corrections — raw material for 'repeated mistakes'."""
+    cutoff_ms = (time.time() - days * 86400) * 1000
+    hits, by_project = [], Counter()
+    path = os.path.join(CLAUDE, "history.jsonl")
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        for line in f:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            ts = d.get("timestamp", 0)
+            ts = ts if isinstance(ts, (int, float)) else 0
+            text = (d.get("display") or "").strip()
+            if ts >= cutoff_ms and CORRECTION_RE.search(text):
+                proj = (d.get("project") or "?").replace(HOME, "~")
+                by_project[proj] += 1
+                hits.append({"project": proj, "text": redact(text[:220])})
+    return {"count": len(hits), "by_project": by_project.most_common(10), "samples": hits[-40:]}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--roots", nargs="*", default=[],
+                    help="extra directories to scan in addition to projects discovered from Claude Code's own records")
+    ap.add_argument("--days", type=int, default=30)
+    ap.add_argument("--out")
+    a = ap.parse_args()
+    audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
+    roots = sorted(set(discover_projects()) | {os.path.expanduser(r) for r in a.roots})
+    snap = {
+        "generated": time.strftime("%Y-%m-%d %H:%M"),
+        "window_days": a.days,
+        "global": collect_global(),
+        "projects": collect_projects(roots),
+        "readiness": {r.replace(HOME, "~"): readiness(r) for r in roots},
+        "memory": collect_memory(),
+        "usage": collect_usage(a.days),
+        "corrections": collect_corrections(a.days),
+        "transcripts": collect_transcripts(a.days),
+        "skill_listing": skill_listing(),
+        "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
+    }
+    # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
+    env_hook = lambda cmds: any("direnv" in c or "CLAUDE_ENV_FILE" in c for c in cmds)  # noqa: E731
+    global_env_hook = env_hook([c for s in snap["global"]["settings"] for c in s["hook_commands"]])
+    for rpath, r in snap["readiness"].items():
+        key = r.pop("transcript_key")
+        project_cmds = [c for s in snap["projects"].get(rpath, {}).get("settings", []) for c in s["hook_commands"]]
+        r["claude_env_hook"] = global_env_hook or env_hook(project_cmds)
+        match = lambda k: k == key or k.startswith(key + "--")  # noqa: E731
+        r["env_error_hits"] = sum(v for k, v in snap["transcripts"]["env_error_hits_by_project"].items() if match(k))
+        runs = [v for k, v in snap["transcripts"]["test_run_seconds_by_project"].items() if match(k)]
+        r["test_run_seconds"] = max(runs, key=lambda v: v["runs"]) if runs else None
+        samples = sorted(x for k, v in snap["transcripts"]["_baseline_lists"].items() if match(k) for x in v)
+        r["context_baseline_median"] = samples[len(samples) // 2] if samples else None
+        r["context_baseline_sessions"] = len(samples)
+    snap["transcripts"].pop("_baseline_lists", None)
+    configured = set(snap["global"].get("mcp_user") or [])
+    for entry in snap["projects"].values():
+        configured |= set(entry.get("mcp_servers") or [])
+    used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
+    snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
+    text = json.dumps(snap, indent=1, default=str)
+    if a.out:
+        with open(a.out, "w") as f:
+            f.write(text)
+        print(f"wrote {a.out} ({len(text)//4} est. tokens)")
+    else:
+        print(text)
+
+
+if __name__ == "__main__":
+    main()

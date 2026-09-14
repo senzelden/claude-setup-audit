@@ -1,0 +1,14 @@
+{
+  "name": "claude-setup-audit",
+  "owner": {
+    "name": "senzelden"
+  },
+  "description": "Setup Audit: an evidence-backed auditor for your whole Claude Code configuration, covering security, cost and repeated mistakes.",
+  "plugins": [
+    {
+      "name": "setup-audit",
+      "source": "./plugins/setup-audit",
+      "description": "Audit your whole Claude Code setup against the current docs and apply approved security, cost and repeated-mistake fixes with backups and verification."
+    }
+  ]
+}

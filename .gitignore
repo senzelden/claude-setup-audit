@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# Audit output contains machine-specific, potentially sensitive config details.
+audits/
+snapshot*.json

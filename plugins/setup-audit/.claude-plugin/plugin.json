@@ -1,0 +1,14 @@
+{
+  "name": "setup-audit",
+  "displayName": "Setup Audit",
+  "version": "0.1.0",
+  "description": "Audit your whole Claude Code setup (global and per-project settings, permissions, hooks, MCP, skills, CLAUDE.md, memory, usage data) against the current docs; get ranked, evidence-backed proposals for security, cost and repeated mistakes, and apply the ones you approve with backups and verification.",
+  "author": {
+    "name": "senzelden",
+    "url": "https://github.com/senzelden"
+  },
+  "homepage": "https://github.com/senzelden/claude-setup-audit",
+  "repository": "https://github.com/senzelden/claude-setup-audit",
+  "license": "MIT",
+  "keywords": ["audit", "security", "permissions", "cost", "context", "claude-md", "hooks", "insights"]
+}
