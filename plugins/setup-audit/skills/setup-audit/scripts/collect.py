@@ -19,7 +19,8 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 HOME = os.path.expanduser("~")
-CLAUDE = os.path.join(HOME, ".claude")
+# Claude Code's documented override; --claude-dir takes precedence (see main()).
+CLAUDE = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
 
 SECRET_RE = re.compile(
     r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
@@ -39,7 +40,8 @@ RISKY_RULES = [
     ("network-wildcard", re.compile(r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")),
     ("git-destructive", re.compile(r"git (push|reset|clean|checkout --|rebase)")),
     ("gh-api", re.compile(r"\bgh (api|repo delete|release)")),
-    ("interpreter-wildcard", re.compile(r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-c ')?[ :]?\*")),
+    # Matches `python3:*`, `python3 *`, and inline-code forms with or without a quote: `python3 -c *`, `python3 -c ' *`.
+    ("interpreter-wildcard", re.compile(r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-[ce]\s*['\"]?\s*)?\*")),
     ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
     ("docker", re.compile(r"\bdocker\b")),
     ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),
@@ -864,12 +866,16 @@ def collect_corrections(days):
 
 
 def main():
+    global CLAUDE
     ap = argparse.ArgumentParser()
     ap.add_argument("--roots", nargs="*", default=[],
                     help="extra directories to scan in addition to projects discovered from Claude Code's own records")
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--out")
+    ap.add_argument("--claude-dir", help="Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
     a = ap.parse_args()
+    if a.claude_dir:
+        CLAUDE = os.path.abspath(os.path.expanduser(a.claude_dir))
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
     roots = sorted(set(discover_projects()) | {os.path.expanduser(r) for r in a.roots})
     snap = {

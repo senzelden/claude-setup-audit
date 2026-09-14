@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A `claude plugin eval` suite (`plugins/setup-audit/evals/`), so trigger accuracy and output
+  quality are measured, not assumed.**
+  - Six `trigger` cases: three natural requests that should fire the skill (usage limits,
+    config security, recurring mistakes) and three near misses that shouldn't (a code security
+    review, writing a CLAUDE.md, an API prompt-caching how-to). First pass: 6/6 at one run each,
+    about $0.46.
+  - Two `quality` cases that build a fake Claude Code config with a scaffold script:
+    - a read-only security audit that must flag a curl wildcard, a fake bearer token baked into a
+      rule and the missing deny baseline, must never repeat the token, and must never edit config
+    - a readiness audit that must treat a `pass`-pointer `.envrc` as the declaration, flag an
+      undeclared `DATABASE_URL`, and offer `direnv exec`
+
+  `evals/README.md` gives the cheap way to run each tier.
+- **`--claude-dir` and `CLAUDE_CONFIG_DIR` support in the collector.** Users who relocate Claude
+  Code's config directory were previously audited against an empty `~/.claude`.
+
+### Fixed
+
+- **`Bash(python3 -c *)` is now flagged as an interpreter wildcard.** Only the quoted form
+  `python3 -c ' *` was caught, so the unquoted form, which grants the same arbitrary-code access,
+  passed silently. The eval fixture exposed it. `node -e *` is covered too.
+
 ## [0.2.0] - 2026-09-15
 
 ### Added

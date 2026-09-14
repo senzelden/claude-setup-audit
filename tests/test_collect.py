@@ -46,6 +46,9 @@ class RiskClassification(unittest.TestCase):
     def test_broad_rules_are_flagged(self):
         self.assertIn("network-wildcard", flags("Bash(curl:*)"))
         self.assertIn("interpreter-wildcard", flags("Bash(python3:*)"))
+        self.assertIn("interpreter-wildcard", flags("Bash(python3 -c *)"))    # unquoted inline code
+        self.assertIn("interpreter-wildcard", flags("Bash(python3 -c ' *)"))  # quoted inline code
+        self.assertIn("interpreter-wildcard", flags("Bash(node -e *)"))
         self.assertIn("sudo", flags("Bash(sudo apt install -y ffmpeg)"))
         self.assertIn("read-outside-project", flags("Read(//proc/**)"))
 
@@ -246,6 +249,24 @@ class AppCaching(FakeHome):
     def test_repo_without_sdk(self):
         self.write("repo/app.py", "print('hi')\n")
         self.assertIsNone(collect.app_caching(os.path.join(self.home, "repo")))
+
+
+class ConfigDirOverride(unittest.TestCase):
+    def test_claude_dir_flag_and_env_var(self):
+        import subprocess
+        script = os.path.join(os.path.abspath(SCRIPTS), "collect.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "cfg")
+            os.makedirs(cfg)
+            with open(os.path.join(cfg, "settings.json"), "w") as f:
+                json.dump({"model": "fixture-model"}, f)
+            out = os.path.join(tmp, "snap.json")
+            env_without = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+            for args, env in ((["--claude-dir", cfg], env_without), ([], {**env_without, "CLAUDE_CONFIG_DIR": cfg})):
+                subprocess.run([sys.executable, "-B", script, "--days", "1", "--out", out, *args],
+                               check=True, capture_output=True, env=env, timeout=180)
+                with open(out) as f:
+                    self.assertEqual(json.load(f)["global"]["settings"][0]["model"], "fixture-model")
 
 
 class QuerySnapshot(FakeHome):

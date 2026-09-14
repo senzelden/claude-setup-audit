@@ -5,3 +5,5 @@ __pycache__/
 # Audit output contains machine-specific, potentially sensitive config details.
 audits/
 snapshot*.json
+# claude plugin eval run output
+plugins/*/evals/results/

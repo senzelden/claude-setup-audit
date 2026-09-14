@@ -49,7 +49,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-au
 ```
 
 It discovers projects from Claude Code's own records (transcript `cwd`, /insights metadata), so
-it doesn't assume any folder layout; `--roots DIR...` adds extra directories. It prints its
+it doesn't assume any folder layout; `--roots DIR...` adds extra directories. It reads
+`$CLAUDE_CONFIG_DIR` when set, else `~/.claude`. If the user says their Claude Code config lives
+somewhere else, pass `--claude-dir DIR`. It prints its
 estimated token size. Read it section by section with the bundled read-only helper, rather than all at once
 and rather than ad-hoc `python3 -c` (that needs arbitrary-code permission, and a security audit
 shouldn't ask for it):

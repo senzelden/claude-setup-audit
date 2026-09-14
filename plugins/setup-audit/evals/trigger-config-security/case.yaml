@@ -1,0 +1,15 @@
+schema_version: "1.1"
+name: trigger-config-security
+description: A request to check Claude Code permissions, hooks and MCP servers should trigger the audit skill.
+tags: [trigger]
+execution:
+  prompt: |
+    Before I copy my laptop setup to the team, check whether my Claude Code permissions, hooks and MCP servers are safe.
+  max_turns: 3
+  timeout_seconds: 180
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'

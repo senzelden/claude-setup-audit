@@ -1,0 +1,23 @@
+schema_version: "1.1"
+name: no-trigger-write-claude-md
+description: Near miss. Writing a CLAUDE.md is authoring, not auditing an existing setup.
+tags: [trigger]
+execution:
+  prompt: |
+    Write a short CLAUDE.md for a Python CLI project that uses uv, ruff and pytest. Just show it here.
+  max_turns: 4
+  timeout_seconds: 180
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: skill-not-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+    min: 0
+    max: 0
+    arm: both
+  - name: answered-the-question
+    type: regex
+    target: last_message
+    pattern: 'pytest'
+    flags: i
