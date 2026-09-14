@@ -1,6 +1,6 @@
 ---
 name: setup-audit
-description: Audit the user's whole Claude Code setup (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
+description: Audit the user's whole Claude Code setup (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, plus an agent-readiness check of a repo (one-command setup, env variables Claude's shell can't see, e.g. from direnv/.envrc, test loop, guardrails). Then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks whether a repo is ready for Claude Code to work in, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
 allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *)
 ---
 
@@ -14,11 +14,24 @@ A finding is worth reporting only if it names a concrete file or measured number
 consequence, and has a specific fix. Generic best-practice advice without evidence from this
 machine is noise, so leave it out.
 
+**Do these first, in order, for every request, including a quick question about one repo:**
+
+1. Run the collector (Step 1). Don't start by exploring with `ls`, `git`, Glob or Read. The
+   collector already measures what those would find, redacted and cheaper.
+2. Read `references/checklist.md`, at least the sections for the chosen focus. The fixes to
+   offer are defined there, e.g. the options for env variables Claude's shell can't see.
+3. Only then analyse, and open individual files just to confirm a finding.
+
 ## Step 0: Settle the run profile
 
 Read the user's request for these options. When one isn't given, use the default and state it
 in the report header. Only ask when the request is genuinely ambiguous; then ask everything in
 one batch.
+
+Map natural requests onto the profile. Security, cost or recurring-mistake questions about the
+setup set that focus. "Is this repo ready for Claude Code?" means `focus=readiness` and
+`scope=project`, and it means reading the Agent readiness section of `references/checklist.md`,
+because that section holds the options to offer (e.g. for env variables Claude's shell can't see).
 
 | Option | Values | Default |
 |---|---|---|
@@ -44,6 +57,12 @@ materially changed (e.g. a new risky rule of the same kind).
 
 ## Step 1: Collect the snapshot (cheap, deterministic)
 
+Always run the collector first, whatever the focus or scope, and even for one repo. Findings must
+rest on its measured, redacted evidence: the env contract, test-loop times, risky rules and
+transcript signals. Exploring by hand with `ls`, `git` or ad-hoc greps misses what the collector
+measures and costs more turns. If the user names a repo that Claude Code hasn't been used in yet,
+add it with `--roots <path>`.
+
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-audit-snapshot.json"
 ```
@@ -51,7 +70,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-au
 It discovers projects from Claude Code's own records (transcript `cwd`, /insights metadata), so
 it doesn't assume any folder layout; `--roots DIR...` adds extra directories. It reads
 `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`. If the user says their Claude Code config lives
-somewhere else, pass `--claude-dir DIR`. It prints its
+somewhere else, pass `--claude-dir DIR`. Don't put an environment assignment in front of the
+command (`CLAUDE_CONFIG_DIR=… python3 …`): that stops it matching permission allowlists such as
+`Bash(python3 *)`, so a non-interactive session denies it. It prints its
 estimated token size. Read it section by section with the bundled read-only helper, rather than all at once
 and rather than ad-hoc `python3 -c` (that needs arbitrary-code permission, and a security audit
 shouldn't ask for it):

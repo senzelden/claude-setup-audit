@@ -24,8 +24,37 @@ All notable changes to this project are documented here. The format follows
 - **`--claude-dir` and `CLAUDE_CONFIG_DIR` support in the collector.** Users who relocate Claude
   Code's config directory were previously audited against an empty `~/.claude`.
 
+### Changed
+
+- **The skill's own workflow is now followed on small requests.** The first quality runs showed two
+  gaps:
+  - "Is my repo ready for Claude Code to work in?" didn't trigger the skill at all, because the
+    description never mentioned readiness.
+  - Once triggered, the skill explored the repo by hand instead of running the collector and
+    reading the checklist.
+
+  The description now covers readiness, and a short "do these first, in order" block at the top
+  of SKILL.md requires the collector and the checklist before any analysis.
+- **Measured result of the quality tier after these fixes (one run each, Sonnet 5):**
+  - `audit-flags-risky-permissions`: 1.00 with the plugin vs 0.63 without. Without it, Claude
+    repeated the fake token and skipped deny rules.
+  - `readiness-envrc-pointers`: 1.00 vs 0.50. Without it, Claude missed that `.envrc` variables
+    don't reach Claude's shell.
+
+  Mean Δ +0.44, about $0.91 per run of the tier.
+
 ### Fixed
 
+- **The collector is no longer denied in non-interactive sessions.** The skill ran it as
+  `CLAUDE_CONFIG_DIR=… python3 …`, and the environment prefix stops a command matching allowlists
+  such as `Bash(python3 *)`. SKILL.md now says to pass `--claude-dir` and never to prefix the command.
+- **Eval graders now measure what they claim:**
+  - `collector-ran` requires the collector's success line in the transcript, not just an attempt
+    (a denied call used to pass).
+  - `no-settings-writes` matches the Write target path only, not report text that mentions
+    `settings.json`.
+  - The readiness judge rubric no longer fails a reply that mentions `.env.example` as a secondary
+    alternative.
 - **`Bash(python3 -c *)` is now flagged as an interpreter wildcard.** Only the quoted form
   `python3 -c ' *` was caught, so the unquoted form, which grants the same arbitrary-code access,
   passed silently. The eval fixture exposed it. `node -e *` is covered too.

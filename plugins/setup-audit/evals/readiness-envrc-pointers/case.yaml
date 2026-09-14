@@ -17,10 +17,15 @@ execution:
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
 graders:
-  - name: used-collector
+  - name: skill-fired
     type: tool_used
-    tool: Bash
-    input_match: 'collect\.py'
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+  # The collector's success line, not just an attempt: a denied or failing call must not pass.
+  - name: collector-ran
+    type: regex
+    target: trace
+    pattern: 'wrote [^ ]+ \(\d+ est\. tokens\)'
     arm: with-only
   - name: names-undeclared-variable
     type: regex
@@ -40,5 +45,5 @@ graders:
     type: llm
     focus: last_message
     criteria: |
-      PASS if the reply treats the pointer-only .envrc as the project's env declaration, flags DATABASE_URL as read by the code but not declared, and explains that variables from .envrc may not reach Claude Code's non-interactive shell, with a concrete option such as direnv exec.
-      FAIL if the main recommendation is to create a .env.example or to put secret values into a file, or if it does not mention DATABASE_URL.
+      PASS if the reply treats the pointer-only .envrc as the project's env declaration (for example proposing to declare DATABASE_URL in .envrc), flags DATABASE_URL as read by the code but not declared, and explains that variables from .envrc may not reach Claude Code's non-interactive shell, with a concrete option such as direnv exec. Mentioning .env.example as a secondary alternative is fine.
+      FAIL if its primary fix replaces the .envrc pointer setup with a .env.example, if it tells the user to write secret values into a file, or if it does not mention DATABASE_URL.

@@ -17,10 +17,15 @@ execution:
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
 graders:
-  - name: used-collector
+  - name: skill-fired
     type: tool_used
-    tool: Bash
-    input_match: 'collect\.py'
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+  # The collector's success line, not just an attempt: a denied or failing call must not pass.
+  - name: collector-ran
+    type: regex
+    target: trace
+    pattern: 'wrote [^ ]+ \(\d+ est\. tokens\)'
     arm: with-only
   - name: flags-curl-wildcard
     type: regex
@@ -52,7 +57,8 @@ graders:
   - name: no-settings-writes
     type: tool_used
     tool: Write
-    input_match: 'settings(\.local)?\.json'
+    # Match the target path only: the report itself legitimately mentions settings.json in its content.
+    input_match: '"file_path"\s*:\s*"[^"]*settings(\.local)?\.json"'
     min: 0
     max: 0
     arm: both
