@@ -201,6 +201,53 @@ class TranscriptEvidence(FakeHome):
         self.assertEqual(t["env_error_hits_by_project"], {"-home-x-repo": 1})
 
 
+class CacheHealth(FakeHome):
+    def test_hit_ratio_ttl_split_and_rewrite_causes(self):
+        def turn(msg_id, clock, model, read=0, write=0, split=None):
+            usage = {"cache_read_input_tokens": read, "cache_creation_input_tokens": write}
+            if split:
+                usage["cache_creation"] = split
+            return {"type": "assistant", "timestamp": f"2026-09-14T{clock}.000Z",
+                    "message": {"id": msg_id, "model": model, "usage": usage}}
+        records = [
+            turn("m1", "10:00:00", "opus", write=60000, split={"ephemeral_5m_input_tokens": 60000}),  # first write: expected
+            turn("m1", "10:00:00", "opus", write=60000, split={"ephemeral_5m_input_tokens": 60000}),  # duplicate line
+            turn("m2", "10:01:00", "opus", read=60000, write=1000, split={"ephemeral_1h_input_tokens": 1000}),
+            turn("m3", "10:21:00", "opus", write=60000, split={"ephemeral_1h_input_tokens": 60000}),  # 20 min idle
+            {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-09-14T10:21:30.000Z"},
+            turn("m4", "10:22:00", "opus", write=60000),                                              # after compaction
+            turn("m5", "10:23:00", "sonnet", write=60000),                                            # model switch
+        ]
+        self.write(".claude/projects/-home-x-repo/s.jsonl", "\n".join(json.dumps(r) for r in records))
+        c = collect.collect_transcripts(days=36500)["cache"]
+        self.assertEqual((c["read_tokens"], c["write_tokens"]), (60000, 241000))
+        self.assertEqual(c["hit_ratio"], 0.199)
+        self.assertEqual(c["write_1h_share"], 0.504)
+        br = c["big_rewrites"]
+        self.assertEqual((br["total"], br["gap_5_60m"], br["after_compaction"], br["after_model_change"], br["unexplained"]),
+                         (3, 1, 1, 1, 0))
+
+
+class AppCaching(FakeHome):
+    def test_sdk_files_caching_and_breakers(self):
+        self.write("repo/src/a.py", "import anthropic, datetime\nc = anthropic.Anthropic()\n"
+                                    "system = f'Today is {datetime.datetime.now()}'\n"
+                                    "c.messages.create(model='claude-haiku-4-5', system=system, messages=[])\n")
+        self.write("repo/src/b.py", "from anthropic import Anthropic\n"
+                                    "Anthropic().messages.create(model='claude-opus-5', cache_control={'type': 'ephemeral'}, messages=[])\n")
+        self.write("repo/src/plain.py", "import json\nprint(json.dumps({}))\n")  # no SDK: ignored
+        self.write("repo/tests/test_a.py", "import anthropic\n")  # tests: ignored
+        r = collect.app_caching(os.path.join(self.home, "repo"))
+        self.assertEqual((r["sdk_files"], r["files_with_cache_control"]), (2, 1))
+        self.assertEqual(r["uncached_files"], ["src/a.py"])
+        self.assertEqual(r["possible_cache_breakers"], {"timestamp": ["src/a.py"]})
+        self.assertEqual(r["model_ids"], ["claude-haiku-4-5", "claude-opus-5"])
+
+    def test_repo_without_sdk(self):
+        self.write("repo/app.py", "print('hi')\n")
+        self.assertIsNone(collect.app_caching(os.path.join(self.home, "repo")))
+
+
 class QuerySnapshot(FakeHome):
     def run_query(self, *args):
         import subprocess

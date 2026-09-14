@@ -380,10 +380,13 @@ def collect_transcripts(days, max_files=400):
     sub = [f for f in sub if os.path.getmtime(f) >= cutoff][: max_files * 4]
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
+    cache, rewrites = Counter(), Counter()
     for path in top + sub:
         need_baseline = is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
         pending = {}  # Bash tool_use id -> start time, for test commands
+        last_t = last_model = last_msg_id = None
+        compacted = False
         try:
             with open(path, errors="replace") as f:
                 for line in f:
@@ -413,6 +416,40 @@ def collect_transcripts(days, max_files=400):
                                 started = _ts(r.get("timestamp"))
                                 if started is not None:
                                     pending[item.get("id")] = started
+                    if is_top and '"compact_boundary"' in line:
+                        compacted = True
+                    if is_top and '"usage"' in line and '"assistant"' in line:
+                        try:
+                            r = json.loads(line)
+                        except ValueError:
+                            r = {}
+                        msg = r.get("message") or {}
+                        # One API response can be written as several lines sharing a message id: count it once.
+                        if r.get("type") == "assistant" and not r.get("isSidechain") and msg.get("id") != last_msg_id:
+                            last_msg_id = msg.get("id")
+                            u = msg.get("usage") or {}
+                            written = u.get("cache_creation_input_tokens") or 0
+                            cache["read"] += u.get("cache_read_input_tokens") or 0
+                            cache["write"] += written
+                            split = u.get("cache_creation") or {}
+                            cache["write_1h"] += split.get("ephemeral_1h_input_tokens") or 0
+                            cache["write_5m"] += split.get("ephemeral_5m_input_tokens") or 0
+                            t, model = _ts(r.get("timestamp")), msg.get("model")
+                            if written > BIG_REWRITE and last_t is not None:
+                                gap = t - last_t if t is not None else None
+                                if compacted:
+                                    rewrites["after_compaction"] += 1
+                                elif last_model and model and model != last_model:
+                                    rewrites["after_model_change"] += 1
+                                elif gap is not None and gap > 3600:
+                                    rewrites["gap_over_60m"] += 1
+                                elif gap is not None and gap > 300:
+                                    rewrites["gap_5_60m"] += 1
+                                else:
+                                    rewrites["unexplained"] += 1
+                            last_t = t if t is not None else last_t
+                            last_model = model or last_model
+                            compacted = False
                     if need_baseline and '"usage"' in line and '"assistant"' in line:
                         try:
                             r = json.loads(line)
@@ -443,6 +480,16 @@ def collect_transcripts(days, max_files=400):
         "context_baseline_by_project_median": sorted(
             ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
         "mcp_calls_by_server": mcp_calls.most_common(),
+        "cache": {
+            "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
+            "read_tokens": cache["read"],
+            "write_tokens": cache["write"],
+            "write_1h_share": round(cache["write_1h"] / (cache["write_1h"] + cache["write_5m"]), 3)
+                              if cache["write_1h"] + cache["write_5m"] else None,
+            "big_rewrites": {"threshold_tokens": BIG_REWRITE, "total": sum(rewrites.values()),
+                             **{k: rewrites.get(k, 0) for k in ("gap_5_60m", "gap_over_60m", "after_model_change",
+                                                                "after_compaction", "unexplained")}},
+        },
         "env_error_hits_by_project": dict(env_hits),
         "_baseline_lists": dict(per_project),  # joined per repo in main(), then dropped
         # Start of the Bash call to its result; includes any permission-prompt wait, so an upper bound.
@@ -485,6 +532,7 @@ ENV_ERROR_RE = re.compile(
     r"|(?i:env(?:ironment)? ?var(?:iable)?s?)[^\n]{0,60}?(?i:not set|missing|required|undefined)"
     r"|\b[A-Z][A-Z0-9_]{3,}\b (?i:is not set|not set|is required)")
 TEST_CMD_RE = re.compile(r"\b(pytest|vitest|jest|go test|cargo test|(?:npm|pnpm|yarn|bun) (?:run )?test|make test|mix test|rspec|phpunit)\b")
+BIG_REWRITE = 50_000  # cache-write tokens on a mid-session turn that indicate the prefix was re-cached
 SOURCE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".rb")
 SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__", "dist", "build", ".next", "target",
              ".worktrees", "vendor", ".tox", ".mypy_cache", "site-packages", "coverage"}
@@ -632,6 +680,58 @@ def git_age(root):
     return {"commits": int(count) if count.isdigit() else None, "first_commit": first[0] if first else None}
 
 
+TEST_PATH_RE = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)(/|$)|(\.test|\.spec|_test)\.\w+$|(^|/)test_[^/]*\.py$")
+SDK_IMPORT_RE = re.compile(r"^\s*(?:from anthropic\b|import anthropic\b)|['\"]@anthropic-ai/sdk['\"]", re.M)
+SDK_CALL_RE = re.compile(r"messages\.(?:create|stream|parse|count_tokens)|messages\.batches")
+CACHE_BREAKER_RES = {
+    "timestamp": re.compile(r"datetime\.now\(|datetime\.utcnow\(|time\.time\(\)|Date\.now\(\)|new Date\(\)"),
+    "random-id": re.compile(r"uuid4\(|randomUUID\("),
+    "unsorted-json": re.compile(r"json\.dumps\((?![^)\n]*sort_keys)"),
+}
+MODEL_ID_RE = re.compile(r"['\"](claude-[a-z0-9][a-z0-9.-]*)['\"]")
+
+
+def app_caching(root, max_files=4000):
+    """Anthropic SDK call sites vs prompt caching. Static signals only: whether caching pays depends
+    on prefix length (model minimum) and repeat rate, confirmed by usage.cache_read_input_tokens."""
+    sdk_files, cached, models = [], [], Counter()
+    breakers = defaultdict(list)
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(SOURCE_EXT) or scanned >= max_files:
+                continue
+            path = os.path.join(dirpath, fn)
+            rel = os.path.relpath(path, root)
+            if TEST_PATH_RE.search(rel):
+                continue
+            try:
+                if os.path.getsize(path) > 400_000:
+                    continue
+                with open(path, errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            scanned += 1
+            if not SDK_IMPORT_RE.search(text):
+                continue
+            sdk_files.append(rel)
+            if "cache_control" in text:
+                cached.append(rel)
+            if SDK_CALL_RE.search(text):
+                for kind, rx in CACHE_BREAKER_RES.items():
+                    if rx.search(text):
+                        breakers[kind].append(rel)
+            models.update(MODEL_ID_RE.findall(text))
+    if not sdk_files:
+        return None
+    return {"sdk_files": len(sdk_files), "files_with_cache_control": len(cached),
+            "uncached_files": sorted(set(sdk_files) - set(cached))[:8],
+            "possible_cache_breakers": {k: sorted(v)[:5] for k, v in breakers.items()},
+            "model_ids": sorted(m for m, _ in models.most_common(6))}
+
+
 def readiness(root):
     """Agent-readiness signals for one repo: can Claude set up, run, verify and understand it cheaply?"""
     exists = lambda *names: [n for n in names if os.path.exists(os.path.join(root, n))]  # noqa: E731
@@ -674,6 +774,7 @@ def readiness(root):
         "repo": git_age(root),
         "envrc": envrc_info(root),
         "env": env_contract(root),
+        "app_caching": app_caching(root),
         # Claude Code names transcript folders after the path with non-alphanumerics replaced by '-'.
         "transcript_key": re.sub(r"[^A-Za-z0-9]", "-", root),
     }

@@ -8,7 +8,9 @@ short, ranked list of fixes for:
 - **Security**: risky standing permissions, secrets baked into rules, missing deny rules, broken
   hooks, sandbox gaps.
 - **Cost & context**: your *measured* per-session context baseline, oversized CLAUDE.md files,
-  unused MCP servers, skill-listing overflow, model and compaction settings.
+  unused MCP servers, skill-listing overflow, model and compaction settings, and prompt-cache
+  health (hit ratio, 1-hour vs 5-minute cache writes, and mid-session cache rewrites classified
+  by cause: idle gap, model switch, compaction).
 - **Learning from repeated mistakes**: recurring friction and corrections across sessions and
   projects, turned into the lightest mechanism that stops them (memory → rule → hook → skill),
   and re-measured on the next run.
@@ -69,6 +71,7 @@ Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on 
 | Guardrails | formatter configured *and* enforced (pre-commit/lefthook/husky, plus a format-on-edit hook for Claude), type strictness |
 | Test loop | measured test-run time from transcripts, test data (seeds, Testcontainers), CI caching |
 | Context | ADRs (`docs/adr/`), module-boundary tooling |
+| Prompt caching in your app | Anthropic SDK call sites without `cache_control`, likely cache breakers (timestamps, random IDs, unsorted JSON in files that call the API), and the model IDs used, since each model has a minimum cacheable prompt length. Static signals; for a measured analysis it points to `/claude-api cost-optimize` |
 
 A `.envrc` is never executed and secret values are never read: literal secrets are reported by
 variable name only. Structured logging and feature flags are out of scope, since they're product

@@ -71,6 +71,28 @@ the collector snapshot.
   re-reading context, or a top-tier model on mechanical agents.
 - **COST-tool-errors** (`avg_tool_errors_per_session`, `tool_error_categories`): every failed call
   is a paid retry. Recurring categories point at missing commands in CLAUDE.md or a missing script.
+- **COST-cache-health** (`transcripts.cache`, measured): Claude Code places cache points itself, so
+  there's no `cache_control` to set. What the user controls is the cache lifetime (TTL) and the
+  habits that break the cache.
+  - `hit_ratio` (reads / (reads + writes)) above ~90% is healthy; say so and move on.
+  - `write_1h_share`: Claude Code uses the 1-hour TTL for the main conversation only within a
+    subscription's included usage. Usage credits, API keys, subagents and cloud providers get 5
+    minutes. Writes cost 1.25× base input on the 5-minute TTL and 2× on the 1-hour TTL, while
+    reads cost 0.1×.
+  - `big_rewrites` by cause:
+    - `gap_5_60m` large on credits or an API key: propose `promptCacheTtl: "1h"` (and
+      `subagentPromptCacheTtl` if subagents idle that long). The 2× writes only pay off for
+      pauses in the 5–60 minute range.
+    - `gap_over_60m`: no TTL helps; suggest `/clear` plus a handoff instead of resuming huge contexts.
+    - `after_model_change`: `/model` or fast-mode switches mid-session re-read everything; switch
+      at task boundaries.
+    - `after_compaction`: compaction rewrites the conversation cache by design. Weigh it against
+      `autoCompactWindow`: a smaller window means cheaper turns but more rewrites, so compare with
+      the previous audit's metrics.
+    - `unexplained` large: suspect MCP servers connecting or disconnecting while tool search is off,
+      or effort changes on older models (see the prompt-caching docs' invalidation list).
+
+  Quote exact setting names and values from `settings-reference` / `prompt-caching`.
 
 ## Learning from repeated mistakes (`LRN-`)
 
@@ -171,6 +193,20 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   questions. Propose `docs/adr/` in the repo's existing style, and link it from CLAUDE.md.
 - **RDY-boundaries** (`boundaries`): report only with evidence of cross-boundary edits or circular
   imports.
+- **COST-app-caching** (`app_caching`, static signals; readiness track because it's app code):
+  Anthropic SDK call sites with no `cache_control` (`uncached_files`), and possible cache breakers
+  (`timestamp`, `random-id`, `unsorted-json`) in files that call the API. Before proposing:
+  - Confirm the breaker feeds the prompt prefix (system prompt, tools, early messages) rather than
+    being a log timestamp.
+  - Caching only pays when the shared prefix clears the model's minimum (512 tokens on Opus 5,
+    1,024 on Sonnet 5, 4,096 on Haiku 4.5, per `model_ids`) and repeats within the TTL. Two
+    requests break even on the 5-minute TTL, three on the 1-hour TTL.
+  - Proposal shape: top-level `cache_control={"type": "ephemeral"}` on the create call (automatic
+    placement), move volatile content after the last breakpoint, verify with
+    `usage.cache_read_input_tokens` > 0 on repeat requests.
+
+  For a measured analysis of spend, point the user to `/claude-api cost-optimize` in that repo
+  instead of estimating savings here.
 - Out of scope unless the user asks: structured logging and feature flags (product architecture,
   with no agent-side signal).
 
