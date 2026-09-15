@@ -223,6 +223,8 @@ class Transcripts(FakeHome):
              "content": [{"type": "tool_use", "name": "mcp__github__create_issue"}]},
             {"type": "assistant", "message": {"usage": {"input_tokens": 99999}}},
         ]
+        for record in records:
+            record["timestamp"] = collect.datetime.now(collect.timezone.utc).isoformat()
         for i in range(3):
             self.write(f".claude/projects/-p/s{i}.jsonl", "\n".join(json.dumps(r) for r in records))
         t = collect.collect_transcripts(days=30)
@@ -548,19 +550,18 @@ class ScopedCollection(FakeHome):
         self.assertEqual(t["env_error_hits_by_project"], {"-home-x-repo-a": 1, "-home-x-repo-b": 1})
 
     def test_usage_project_filter_only_counts_the_requested_project(self):
-        self.write(".claude/usage-data/session-meta/a.json", {"project_path": "/home/x/repo-a", "tool_counts": {"Bash": 3}})
-        self.write(".claude/usage-data/session-meta/b.json", {"project_path": "/home/x/repo-b", "tool_counts": {"Bash": 5}})
+        self.write(".claude/usage-data/session-meta/a.json", {"start_time": "2026-09-14T10:00:00Z", "project_path": "/home/x/repo-a", "tool_counts": {"Bash": 3}})
+        self.write(".claude/usage-data/session-meta/b.json", {"start_time": "2026-09-14T10:00:00Z", "project_path": "/home/x/repo-b", "tool_counts": {"Bash": 5}})
         u = collect.collect_usage(days=36500, project_filter={"/home/x/repo-a"})
         self.assertEqual(u["session_meta_count"], 1)
         self.assertEqual(dict(u["top_tools"]), {"Bash": 3})
 
     def test_usage_project_filter_excludes_facets_with_a_documented_reason(self):
-        # Facet files carry no project identifier in the current schema, so a project-scoped
-        # audit can't safely attribute them -- exclude rather than guess, and say so.
+        # A facet without a session link is unattributable in every scope.
         self.write(".claude/usage-data/facets/f.json", {"outcome": "clean", "friction_counts": {"x": 1}})
         u_all = collect.collect_usage(days=36500, project_filter=None)
-        self.assertEqual(u_all["facet_outcomes"], {"clean": 1})
-        self.assertIsNone(u_all["facets_scope_note"])
+        self.assertEqual(u_all["facet_outcomes"], {})
+        self.assertEqual(u_all["coverage"]["facets"]["unattributable"], 1)
         u_scoped = collect.collect_usage(days=36500, project_filter={"/home/x/repo-a"})
         self.assertEqual(u_scoped["facet_outcomes"], {})
         self.assertIn("attributable", u_scoped["facets_scope_note"])
@@ -781,3 +782,106 @@ class QuerySnapshot(FakeHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UsageMeasurements(FakeHome):
+    NOW = 1789473600  # 2026-09-15 12:00 UTC
+
+    def stamp(self, offset=0):
+        return collect.datetime.fromtimestamp(self.NOW + offset, collect.timezone.utc).isoformat()
+
+    def meta(self, sid, start, project="/a", amount=1):
+        return self.write(f".claude/usage-data/session-meta/{sid}.json", {
+            "session_id": sid, "start_time": start, "project_path": project,
+            "tool_counts": {"Bash": amount}, "output_tokens": amount,
+            "tool_errors": amount, "uses_task_agent": amount > 1})
+
+    def test_usage_window_and_facet_join(self):
+        for sid, date, project in [("edge", self.stamp(-86400), "/a"),
+                                   ("old", self.stamp(-86401), "/a"),
+                                   ("future", self.stamp(1), "/a"),
+                                   ("missing", None, "/a"), ("bad", "garbage", "/a"),
+                                   ("other", self.stamp(), "/b")]:
+            self.meta(sid, date, project, 1 if sid == "edge" else 100)
+            self.write(f".claude/usage-data/facets/{sid}.json", {
+                "session_id": sid, "outcome": sid, "friction_counts": {sid: 1}})
+        self.write(".claude/usage-data/facets/orphan.json", {"session_id": "absent"})
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            result = collect.collect_usage(1, {"/a"})
+        self.assertEqual(result["session_meta_count"], 1)
+        self.assertEqual(result["top_tools"], [("Bash", 1)])
+        self.assertEqual(result["avg_tool_errors_per_session"], 1)
+        self.assertEqual(result["facet_outcomes"], {"edge": 1})
+        self.assertEqual(result["coverage"]["session_meta"],
+                         dict(eligible=6, scanned=6, omitted=5, unknown_date=2))
+        self.assertEqual(result["coverage"]["facets"],
+                         dict(eligible=7, scanned=7, omitted=6, unknown_date=3, unattributable=1))
+
+    def test_ambiguous_facet_join_and_malformed_metadata(self):
+        self.meta("one", self.stamp())
+        self.write(".claude/usage-data/session-meta/copy.json", {
+            "session_id": "one", "start_time": self.stamp(), "project_path": "/b"})
+        self.write(".claude/usage-data/session-meta/broken.json", "{")
+        self.write(".claude/usage-data/facets/one.json", {"session_id": "one", "outcome": "bad"})
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            result = collect.collect_usage(1)
+        self.assertEqual(result["facet_outcomes"], {})
+        self.assertEqual(result["coverage"]["facets"]["unattributable"], 1)
+        self.assertEqual(result["coverage"]["session_meta"]["unknown_date"], 1)
+
+    def test_daily_dates_and_lifetime_label(self):
+        self.write(".claude/stats-cache.json", {"totalSessions": 99, "dailyModelTokens": [
+            {"date": d, "tokensByModel": {"x": 10}} for d in
+            ["2026-09-13", "2026-09-14", "2026-09-15", "2026-09-16", "bad"]]})
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            result = collect.collect_usage(1)
+            scoped = collect.collect_usage(1, {"/a"})
+        self.assertEqual([d["date"] for d in result["daily_token_totals_recent"]],
+                         ["2026-09-14", "2026-09-15"])
+        self.assertEqual(result["stats_total_sessions"], 99)
+        self.assertIn("lifetime", result["stats_scope_note"])
+        self.assertEqual(scoped["daily_token_totals_recent"], [])
+        self.assertEqual(result["coverage"]["daily_stats"]["unknown_date"], 1)
+
+    def test_transcript_dedup_window_and_missing_ids(self):
+        def record(session, tool_id, offset=0):
+            return {"type": "assistant", "sessionId": session, "timestamp": self.stamp(offset),
+                    "message": {"content": [{"type": "tool_use", "id": tool_id,
+                                              "name": "mcp__github__read"}]}}
+        records = [record("a", "t"), record("a", "t"), record("b", "t"),
+                   record("a", None), record("a", None), record("a", "old", -86401),
+                   record("a", "edge", -86400), record("a", "future", 1),
+                   {"type": "assistant"}]
+        self.write(".claude/projects/-a/s.jsonl", "\n".join(map(json.dumps, records)))
+        self.write(".claude/projects/-a/copy.jsonl", json.dumps(record("a", "t")))
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            result = collect.collect_transcripts(1)
+        self.assertEqual(dict(result["mcp_calls_by_server"]), {"github": 5})
+        self.assertEqual(result["mcp_calls_without_id"], 2)
+        self.assertEqual(result["coverage"]["records"],
+                         dict(eligible=10, scanned=10, omitted=3, unknown_date=1))
+
+    def test_transcript_cap_and_old_first_turn(self):
+        for i in range(3):
+            records = [{"type": "assistant", "timestamp": self.stamp(offset),
+                        "message": {"id": str(offset), "usage": {"input_tokens": 100,
+                            "cache_read_input_tokens": 50}}} for offset in [-86401, 0]]
+            self.write(f".claude/projects/-a/{i}.jsonl", "\n".join(map(json.dumps, records)))
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            result = collect.collect_transcripts(1, max_files=1)
+        self.assertEqual(result["sessions_measured"], 0)
+        self.assertEqual(result["cache"]["read_tokens"], 50)
+        self.assertEqual(result["coverage"]["main_files"],
+                         dict(eligible=3, scanned=1, omitted=2, unknown_date=0))
+
+    def test_quantiles(self):
+        self.assertIsNone(collect.pct([], .5))
+        for values, median, p90 in [([7], 7, 7), ([0, 10], 5, 9),
+                                    ([0, 10, 20], 10, 18), ([30, 0, 20, 10], 15, 27)]:
+            self.assertEqual(collect.pct(values, .5), median)
+            self.assertAlmostEqual(collect.pct(values, .9), p90)
+            self.assertEqual(collect.pct(values, 0), min(values))
+            self.assertEqual(collect.pct(values, 1), max(values))
+        for p in [-.1, 1.1]:
+            with self.assertRaises(ValueError):
+                collect.pct([1], p)

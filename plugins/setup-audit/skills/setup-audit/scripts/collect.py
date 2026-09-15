@@ -27,7 +27,7 @@ import sys
 import tempfile
 import time
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
 # Claude Code's documented override; --claude-dir takes precedence (see main()).
@@ -522,6 +522,36 @@ def dead_references(md_path, repo_root):
     return sorted(missing)[:15]
 
 
+def pct(values, p):
+    """Linear interpolated quantile at (n - 1) * p (type 7); empty -> None.
+
+    At p=.5 this is the usual median, including the mean of the middle pair.
+    """
+    if not 0 <= p <= 1:
+        raise ValueError("quantile must be between 0 and 1")
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    position = (len(ordered) - 1) * p
+    lower = int(position)
+    return ordered[lower] + (ordered[min(lower + 1, len(ordered) - 1)] - ordered[lower]) * (position - lower)
+
+
+def _dated(value):
+    """Require an ISO timestamp with timezone; never infer session time from mtime."""
+    try:
+        d = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return d.timestamp() if d.tzinfo is not None else None
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _coverage():
+    # eligible = candidates after file-level scope; scanned = inspected; omitted =
+    # candidates not contributing, including unknown dates and out-of-window records.
+    return dict(eligible=0, scanned=0, omitted=0, unknown_date=0)
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -534,7 +564,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     those roots -- matched by Claude Code's own transcript-directory naming convention, the same
     sanitization used for the readiness join in main(). An empty set means "read nothing."
     """
-    cutoff = time.time() - days * 86400
+    now = time.time()
+    cutoff = now - days * 86400
     top = glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl"))
     sub = glob.glob(os.path.join(CLAUDE, "projects", "*", "*", "subagents", "*.jsonl"))
     if project_filter is not None:
@@ -542,8 +573,16 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         matches = lambda key: key in allowed_keys or any(key.startswith(k + "--") for k in allowed_keys)  # noqa: E731
         top = [f for f in top if matches(os.path.basename(os.path.dirname(f)))]
         sub = [f for f in sub if matches(os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(f)))))]
-    top = sorted((f for f in top if os.path.getmtime(f) >= cutoff), key=os.path.getmtime, reverse=True)[:max_files]
-    sub = [f for f in sub if os.path.getmtime(f) >= cutoff][: max_files * 4]
+    coverage = {k: _coverage() for k in ("main_files", "subagent_files", "records")}
+    selected = []
+    for name, files, cap in (("main_files", top, max_files), ("subagent_files", sub, max_files * 4)):
+        files = sorted(files, key=lambda f: (-os.path.getmtime(f), f))
+        coverage[name]["eligible"] = len(files)
+        coverage[name]["omitted"] = max(0, len(files) - cap)
+        selected.append(files[:cap])
+    top, sub = selected
+    seen_mcp = set()
+    mcp_without_id = 0
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
@@ -555,7 +594,25 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         compacted = False
         try:
             with open(path, errors="replace") as f:
+                coverage["main_files" if is_top else "subagent_files"]["scanned"] += 1
                 for line in f:
+                    c = coverage["records"]
+                    c["eligible"] += 1
+                    c["scanned"] += 1
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        record = {}
+                    if not isinstance(record, dict):
+                        record = {}
+                    timestamp = _dated(record.get("timestamp"))
+                    if timestamp is None or not cutoff <= timestamp <= now:
+                        c["omitted"] += 1
+                        c["unknown_date"] += timestamp is None
+                        # An older first response is not a recent session baseline.
+                        if record.get("type") == "assistant" and not record.get("isSidechain"):
+                            need_baseline = False
+                        continue
                     if is_top and '"tool_result"' in line:
                         if ENV_ERROR_RE.search(line):
                             env_hits[proj_key] += 1
@@ -628,19 +685,41 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 baselines.append(total)
                                 per_project[os.path.basename(os.path.dirname(path))].append(total)
                                 need_baseline = False
-                    if '"mcp__' in line and '"tool_use"' in line:
-                        for name in re.findall(r'"name"\s*:\s*"(mcp__[^"]+)"', line):
+                    if record.get("type") == "assistant":
+                        content = (record.get("message") or {}).get("content", record.get("content", []))
+                        for item in content if isinstance(content, list) else []:
+                            if not isinstance(item, dict) or item.get("type") != "tool_use":
+                                continue
+                            name = item.get("name", "")
+                            if not isinstance(name, str) or not name.startswith("mcp__"):
+                                continue
                             parts = name.split("__")
-                            if len(parts) >= 3:
-                                mcp_calls[parts[1]] += 1
+                            if len(parts) < 3:
+                                continue
+                            tool_id = item.get("id")
+                            if isinstance(tool_id, str) and tool_id:
+                                # Parent directory isolates projects; sessionId joins copied records.
+                                session = record.get("sessionId")
+                                if not isinstance(session, str) or not session:
+                                    session = path
+                                key = (os.path.dirname(path), session, tool_id)
+                                if key in seen_mcp:
+                                    continue
+                                seen_mcp.add(key)
+                            else:
+                                mcp_without_id += 1
+                            mcp_calls[parts[1]] += 1
         except OSError:
+            coverage["main_files" if is_top else "subagent_files"]["omitted"] += 1
             continue
 
-    def pct(values, p):
-        s = sorted(values)
-        return s[min(len(s) - 1, int(p * len(s)))] if s else None
-
     return {
+        "coverage": coverage,
+        "coverage_note": "Eligible counts candidates after file-level scope; scanned counts inspected candidates; omitted counts candidates not contributing (including unknown dates). File dates are assessed in records, not from mtime.",
+        "window_note": "Inclusive timestamp window; file mtime only orders the bounded scan. Unknown dates excluded.",
+        "quantile_method": "linear interpolation at (n-1)*p (type 7)",
+        "mcp_calls_without_id": mcp_without_id,
+        "mcp_count_note": "Deduplicated by project directory, sessionId (file path fallback), and tool ID; missing IDs count per occurrence.",
         "sessions_measured": len(baselines),
         "context_baseline_tokens": {"median": pct(baselines, 0.5), "p90": pct(baselines, 0.9), "max": max(baselines, default=None)},
         "context_baseline_by_project_median": sorted(
@@ -947,23 +1026,54 @@ def readiness(root):
 
 
 def collect_usage(days, project_filter=None):
-    """project_filter: None reads every project's usage data (default). A set of project root
-    paths (possibly empty) restricts session-meta to sessions in one of those roots. Facet files
-    carry no project identifier in the current schema, so a project-scoped audit excludes them
-    entirely (facets_scope_note explains why) rather than guessing an attribution."""
-    cutoff = time.time() - days * 86400
+    """Filter metadata by start_time; join facets by explicit session_id.
+
+    Schema observed locally 2026-09-15: session-meta has start_time/project_path/session_id;
+    facets has session_id, with no date or project. Ambiguous joins are excluded.
+    """
+    now = time.time()
+    cutoff = now - days * 86400
+    coverage = {k: _coverage() for k in ("daily_stats", "session_meta", "facets")}
     stats = load_json(os.path.join(CLAUDE, "stats-cache.json")) or {}
     models = {}
     for m, u in (stats.get("modelUsage") or {}).items():
         models[m] = {k: u.get(k, 0) for k in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")}
-    recent_daily = [d for d in stats.get("dailyModelTokens", []) or []
-                    if d.get("date", "") >= time.strftime("%Y-%m-%d", time.localtime(cutoff))]
+    recent_daily = []
+    for d in stats.get("dailyModelTokens", []) or []:
+        c = coverage["daily_stats"]
+        c["eligible"] += 1
+        c["scanned"] += 1
+        try:
+            date = datetime.strptime(d.get("date", ""), "%Y-%m-%d").date()
+        except (ValueError, TypeError, AttributeError):
+            date = None
+        if project_filter is None and date is not None and datetime.fromtimestamp(cutoff, timezone.utc).date() <= date <= datetime.fromtimestamp(now, timezone.utc).date():
+            recent_daily.append(d)
+        else:
+            c["omitted"] += 1
+            c["unknown_date"] += date is None
+    recent_daily.sort(key=lambda d: d["date"])
 
     tools, err_cats, per_project = Counter(), Counter(), Counter()
     sessions = []
-    for f in glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json")):
+    metadata = {}
+    for f in sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json"))):
         m = load_json(f) or {}
+        if not isinstance(m, dict):
+            m = {}
+        sid = m.get("session_id")
+        if isinstance(sid, str) and sid:
+            metadata[sid] = m if sid not in metadata else None
+        c = coverage["session_meta"]
+        c["eligible"] += 1
+        c["scanned"] += 1
+        stamp = _dated(m.get("start_time"))
+        c["unknown_date"] += stamp is None
+        if stamp is None or not cutoff <= stamp <= now:
+            c["omitted"] += 1
+            continue
         if project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter:
+            c["omitted"] += 1
             continue
         tools.update(m.get("tool_counts", {}))
         err_cats.update(m.get("tool_error_categories", {}) or {})
@@ -980,16 +1090,27 @@ def collect_usage(days, project_filter=None):
     errorful = sorted(sessions, key=lambda s: (s["tool_errors"] or 0) + 3 * (s["interruptions"] or 0), reverse=True)[:8]
 
     friction, outcomes, details = Counter(), Counter(), []
-    facets_scope_note = None
-    if project_filter is None:
-        for f in glob.glob(os.path.join(CLAUDE, "usage-data", "facets", "*.json")):
-            d = load_json(f) or {}
-            friction.update(d.get("friction_counts", {}) or {})
-            outcomes[d.get("outcome")] += 1
-            if d.get("friction_detail"):
-                details.append(redact(d["friction_detail"][:400]))
-    else:
-        facets_scope_note = "excluded: facet files aren't attributable to a single project, so a project-scoped audit doesn't read them"
+    for f in sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "facets", "*.json"))):
+        d = load_json(f) or {}
+        if not isinstance(d, dict):
+            d = {}
+        c = coverage["facets"]
+        c["eligible"] += 1
+        c["scanned"] += 1
+        sid = d.get("session_id")
+        m = metadata.get(sid) if isinstance(sid, str) else None
+        stamp = _dated(m.get("start_time")) if m else None
+        c["unknown_date"] += stamp is None
+        if m is None:
+            c["unattributable"] = c.get("unattributable", 0) + 1
+        if stamp is None or not cutoff <= stamp <= now or (project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter):
+            c["omitted"] += 1
+            continue
+        friction.update(d.get("friction_counts", {}) or {})
+        outcomes[d.get("outcome")] += 1
+        if d.get("friction_detail"):
+            details.append(redact(d["friction_detail"][:400]))
+    facets_scope_note = "Only facets attributable by unique session_id to in-window, in-scope metadata are included; unknown dates excluded."
 
     reports = sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "report*.html")), key=os.path.getmtime)
     grand = sum(sum(u.values()) for u in models.values()) or 1
@@ -998,8 +1119,12 @@ def collect_usage(days, project_filter=None):
     daily_totals = [{"date": d.get("date"), "total": sum((d.get("tokensByModel") or {}).values())}
                     for d in recent_daily]
     return {
+        "coverage": coverage,
+        "coverage_note": "Eligible counts candidates after file-level scope; scanned counts inspected candidates; omitted counts candidates not contributing (including unknown dates). File dates are assessed in records, not from mtime.",
+        "window_note": "Inclusive start_time window; daily stats use UTC calendar dates, including the cutoff day. Unknown dates excluded.",
+        "stats_scope_note": "Model totals and stats_total_sessions are lifetime, global; daily stats are omitted for project scope.",
         "stats_lifetime_by_model": models,
-        "daily_token_totals_recent": daily_totals[-days:],
+        "daily_token_totals_recent": daily_totals,
         "stats_total_sessions": stats.get("totalSessions"),
         "session_meta_count": len(sessions),
         "avg_tool_errors_per_session": round(sum(s["tool_errors"] or 0 for s in sessions) / n, 2),

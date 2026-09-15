@@ -21,6 +21,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Usage measurements now filter session metadata by the inclusive timestamp window and join
+  facets through unique session IDs for date and project attribution. Unknown dates and
+  unattributable facets are excluded and counted. Global lifetime totals are explicitly labeled;
+  daily totals use UTC calendar dates and are omitted for project scope.
+- Transcript metrics filter record timestamps, with file modification times used only to order
+  bounded scans. Coverage counts expose scanned, omitted and unknown-date evidence. MCP calls
+  deduplicate tool IDs within project/session scope; calls without IDs count per occurrence.
+- Median and P90 use linear interpolation at `(n - 1) * p`, including the usual even-sized
+  median. Six regression tests cover usage windows, attribution, quantiles and transcript counts.
+
 - Narrowed the README's audit-coverage claim and clarified that `.envrc` is read locally for
   classification, without emitting its literal secret values into the snapshot.
 - Report guidance explicitly treats sensitive non-secret information as private; secret
