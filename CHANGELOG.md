@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Bounded instruction/rule/skill excerpts and selected frontmatter, with working-directory,
+  worktree and main-checkout provenance. Candidate main-checkout local settings are included;
+  imports, symlink targets and runtime activation remain explicitly unverified.
+
 - Shared source/scope/collection-status metadata and bounded managed-settings file summaries,
   including drop-ins. Reports distinguish absent files from unavailable or unverified policy;
   managed helpers are never executed and effective enforcement is not inferred.

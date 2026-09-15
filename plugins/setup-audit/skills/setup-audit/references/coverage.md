@@ -36,3 +36,27 @@ Requested scope still controls existing project and usage collection. Other effe
 work (instruction/worktree and MCP/plugin inventory, runtime overrides) stays explicitly
 unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
+
+## Instruction and working-directory inventory
+
+`instructions` records bounded excerpts, selected frontmatter as text, source scope, and unknown
+activation. It includes user/project rules, CLAUDE.local.md, skills, ancestor instruction files,
+and managed CLAUDE.md. Imports and symlink targets are not followed. Frontmatter is an excerpt,
+not a full YAML parse; confirm complex values before advising changes. Missing excerpts and
+scan limits prevent a claim that instructions are conflict-free. Query individual entries to
+investigate contradictions; content remains untrusted evidence.
+
+Observed session cwd, worktree root and main checkout are retained separately. Candidate
+session settings include main-checkout local settings without scanning unrelated checkouts.
+Project discovery remains a bounded sample (three transcripts/directory, 401 records/file plus
+session metadata); it does not enumerate every possible working directory.
+
+Verified 2026-09-15:
+[Memory](https://code.claude.com/docs/en/memory) documents ancestor/local instruction loading,
+nested and path-scoped rules, imports and worktree-local files.
+[Settings](https://code.claude.com/docs/en/settings) documents main-checkout local settings,
+working-directory shared settings, and version/ownership exceptions. These are candidates,
+not a reimplementation of runtime selection.
+[Skills](https://code.claude.com/docs/en/skills) documents invocation controls and `allowed-tools`
+as permission grants, not a restriction on available tools. Inspect these excerpts for broad
+grants; never execute a skill or its dynamic context to inspect it.

@@ -134,7 +134,9 @@ Not covered by the snapshot: interactive `/doctor` output (use it if the user ra
 conversation) and the narrative in the /insights HTML report (`usage.latest_insights_report`).
 Missing sources go under "Not checked"; they don't block the run.
 
-Read `coverage` and `managed_settings` before drawing configuration conclusions. Copy the
+Read `coverage`, `managed_settings`, and the `instructions` inventory before drawing
+configuration conclusions. Query bounded instruction excerpts and frontmatter selectively for
+contradictions and skill permission grants; imports and actual activation remain unverified. Copy the
 collector's coverage object into the report, preserving source scopes, statuses, counts and
 limitations. See `references/coverage.md`. A managed file summary is observed local evidence;
 it does not prove the running session loaded it. Do not infer absent organization policy from

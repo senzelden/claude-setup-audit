@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 from collections import Counter, defaultdict
+import inventory
 from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
@@ -389,14 +390,15 @@ def snapshot_coverage(snap, roots):
         for name, counts in snap[family]["coverage"].items():
             sources.append(source_coverage(f"{family}.{name}", scope,
                                           "partial" if counts.get("omitted") else "collected", **counts))
-    for source in ("instruction/worktree inventory", "MCP/plugin inventory", "runtime settings overrides"):
+    sources.extend(snap.get("instructions", {}).get("sources", []))
+    for source in ("MCP/plugin inventory", "runtime settings overrides"):
         sources.append(source_coverage(source, scope, "not_checked", reason="effective_coverage_not_established"))
     return {"version": 1, "requested_scope": scope, "projects_collected": roots,
             "sources": sources, "summary": "Local evidence collected; effective configuration remains unverified.",
             "limitations": [
                 "Managed files are selected-field observations, not proof of active policy. Missing files do not establish absence of organization policy.",
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
-                "User/project settings and instruction, worktree, MCP/plugin inventories do not yet establish complete effective configuration coverage.",
+                "Instruction imports, symlink targets, runtime loading and complete MCP/plugin coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity."]}
 
 
@@ -454,7 +456,7 @@ def plugin_session_start_hooks(settings):
     return found
 
 
-def discover_projects():
+def discover_projects(with_context=False):
     """Directories the user has actually run Claude Code in, from Claude Code's own records.
 
     Transcript records carry an exact `cwd`; /insights session-meta carries `project_path`.
@@ -480,20 +482,10 @@ def discover_projects():
         path = (load_json(f) or {}).get("project_path")
         if path:
             found.add(path)
-    # Collapse subdirectories into their git root, and drop paths that no longer exist.
-    roots = set()
-    for path in found:
-        if not os.path.isdir(path) or os.path.realpath(path) == os.path.realpath(HOME):
-            continue
-        try:
-            # --git-common-dir points a linked worktree back at its main repository's .git.
-            common = subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                                    capture_output=True, text=True, timeout=5).stdout.strip()
-            top = os.path.dirname(common) if common.endswith(os.sep + ".git") else ""
-        except Exception:
-            top = ""
-        roots.add(top or path)
-    return sorted(roots)
+    contexts = [inventory.git_context(path) for path in sorted(found)
+                if os.path.isdir(path) and os.path.realpath(path) != os.path.realpath(HOME)]
+    roots = sorted({c['worktree_root'] or c['session_cwd'] for c in contexts})
+    return (roots, contexts) if with_context else roots
 
 
 def collect_projects(roots):
@@ -1290,12 +1282,17 @@ def main():
     if a.roots and a.scope != "all":
         ap.error("--roots is only used with --scope all")
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
+    contexts = []
     if a.scope == "global":
         roots = []
     elif a.scope == "project":
-        roots = [os.path.expanduser(a.project)]
+        roots = [os.path.abspath(os.path.expanduser(a.project))]
+        contexts = [inventory.git_context(roots[0])]
     else:
-        roots = sorted(set(discover_projects()) | {os.path.expanduser(r) for r in a.roots})
+        discovered, contexts = discover_projects(with_context=True)
+        extra = {os.path.abspath(os.path.expanduser(r)) for r in a.roots}
+        roots = sorted(set(discovered) | extra)
+        contexts.extend(inventory.git_context(r) for r in sorted(extra))
     # None (scope=all) means no filtering, matching every prior release's behavior; scope=project/
     # global restrict usage/corrections/transcripts to the same roots collect_projects()/readiness()
     # already got, including the empty set for scope=global (matches no project, so none get read).
@@ -1315,6 +1312,7 @@ def main():
         "skill_listing": skill_listing(),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
+    snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
     snap["coverage"] = snapshot_coverage(snap, roots)
     # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
     env_hook = lambda cmds: any("direnv" in c or "CLAUDE_ENV_FILE" in c for c in cmds)  # noqa: E731
