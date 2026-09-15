@@ -38,9 +38,29 @@ Fixes from two external reviews of the released source.
   (`token=`, `password=`, ...) now has the same reference-vs-value guard as the literal-secret
   pattern, so `token=$FOO` or `password=<set>` survive redaction instead of being masked like a
   real value — that's the "which env vars are wired in" signal several checks depend on.
+- **SKILL.md now covers the case where Bash — or just the collector — can't run at all.**
+  Discovered via the eval suite itself: with the collector unavailable, the skill fell back to
+  reading settings files directly and reproduced a real-looking bearer token verbatim in its
+  report, failing the `never-repeats-token-value` grader in `audit-flags-risky-permissions`. The
+  degraded path is still useful (Read/Glob against the same files the collector would have read),
+  but the skill is now the only redaction pass in that mode and says so explicitly: cite the file,
+  line and rule shape for anything secret-looking, never the value. Re-run after the fix: 3/3
+  clean, including the no-plugin baseline leaking the token in 2/3 runs for contrast. `collector-ran`
+  itself still fails in this eval environment (a Linux nested-user-namespace ordering bug in
+  Claude Code's own `apply-seccomp` helper, [anthropics/claude-code#43454](https://github.com/anthropics/claude-code/issues/43454),
+  reproduced independently on 2.1.272 — outside this plugin's control) but that grader is
+  with-only/informational and doesn't affect score.
 - Test suite: 20 → 32, covering the hostile-input and failure-mode cases (interrupted write,
   symlink swap between plan and apply, an `--allow-symlinks` apply that must rewrite the target
   and preserve the link, secret-shape gaps) that the reviews specifically asked for.
+
+### Known issues
+
+- `readiness-envrc-pointers` (the other `quality` eval case) is inconsistent without the
+  collector — 1/3 runs miss the checklist's specific `direnv exec`/`CLAUDE_ENV_FILE` recommendation
+  in favor of a generic fix, and a borderline-good answer that does mention `direnv exec` still
+  drew 3/3 judge FAILs for hedging between `.envrc` and `.env.example`. Pre-dates this release
+  (same flakiness observed before 0.3.0 shipped); not a secret-handling issue, left open.
 
 ## [0.3.0] - 2026-09-15
 

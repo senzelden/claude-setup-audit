@@ -67,6 +67,25 @@ add it with `--roots <path>`.
 python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-audit-snapshot.json"
 ```
 
+**If this command — or Bash itself — fails to run at all** (permission denied, a sandbox/seccomp
+error, or any other failure before the collector produces output), tell the user up front, once,
+that the collector couldn't run (quote the exact error) and that findings below come from reading
+files directly instead of the collector's redacted, pre-classified snapshot. Don't retry the same
+failing command in a loop. Then keep going with Read/Glob against the same files the collector
+would have read (settings files, CLAUDE.md, memory, permission rules) — a degraded audit is much
+more useful than none, and the checklist findings still apply.
+
+The one thing that changes without the collector is that **you**, not `query_snapshot.py`, are now
+the only redaction pass. Its heuristics (`references/checklist.md`'s secret-pattern list: bearer
+tokens, API keys, JWTs, PEM keys, `user:pass@host`) are exactly what to apply by eye before writing
+anything into the report. When a permission rule, `.env`-style file, or other credential-adjacent
+content contains something that looks like a real secret, cite the file, line, and rule shape (e.g.
+"a bearer token is baked into this `curl` allow rule") and never the value itself — not even a
+partial or truncated copy. Redact it in your own head the way the script would (`<redacted>` or
+similar) before it ever reaches a message, a file you write, or a tool call. This applies whether
+or not the collector ran; losing the automated pass just means the discipline is now entirely on
+you.
+
 It discovers projects from Claude Code's own records (transcript `cwd`, /insights metadata), so
 it doesn't assume any folder layout; `--roots DIR...` adds extra directories. It reads
 `$CLAUDE_CONFIG_DIR` when set, else `~/.claude`. If the user says their Claude Code config lives
