@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Two small drifts caught by spot-checking `checklist.md`/`docs-map.md` against the current docs
+  (8/10 claims checked verified accurate verbatim): `COST-skill-listing` cited an unverifiable
+  "8,000-char fallback" for the skill-listing budget, replaced with the actual setting names
+  (`skillListingBudgetFraction`, `skillListingMaxDescChars`); `docs-map.md` called the trailing
+  `:*` permission-rule suffix "legacy", which current docs treat as a live equivalent form, not
+  deprecated.
+
 ## [0.3.1] - 2026-09-15
 
 ### Security

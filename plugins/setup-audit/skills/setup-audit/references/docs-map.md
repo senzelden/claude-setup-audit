@@ -17,7 +17,7 @@ re-read llms.txt, because pages get renamed. Any setting you propose must appear
 | Area | Pages | Extract |
 |------|-------|---------|
 | Settings keys & precedence | settings, settings-reference | exact key names, precedence order, new/deprecated keys, `cleanupPeriodDays`, `env` |
-| Permissions | permissions, permission-modes | rule syntax (`Bash(cmd *)` vs legacy `:*`), deny/ask semantics, how compound commands are matched, defaultMode options |
+| Permissions | permissions, permission-modes | rule syntax (`Bash(cmd *)` and the equivalent trailing `:*` form), deny/ask semantics, how compound commands are matched, defaultMode options |
 | Sandboxing | sandboxing, sandbox-environments | sandbox settings keys, network allowlist, when sandbox replaces permission prompts |
 | Security | security, security-guidance, data-usage | recommended protections, prompt-injection guidance, what is sent where |
 | Hooks | hooks, hooks-guide | event names, input JSON schema, exit-code semantics (block vs warn), matcher syntax, timeouts |

@@ -95,7 +95,8 @@ the collector snapshot.
   called in the window. Propose removing or disabling them per project. A server used in only one
   project belongs in that project's `.mcp.json`, not user scope.
 - **COST-skill-listing** (`skill_listing`): the listing budget is 1% of the context window
-  (8,000-char fallback), and each entry is capped at 1,536 chars. When many skills overflow it,
+  (`skillListingBudgetFraction`, default 0.01), and each entry is capped at 1,536 chars
+  (`skillListingMaxDescChars`). When many skills overflow it,
   descriptions of rarely used skills get dropped. Fix with `skillOverrides: "name-only"`, trimmed
   descriptions, or disabling unused plugins.
 - **COST-startup-hooks** (`plugin_session_start_hooks`, estimated): text injected on every
