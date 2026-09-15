@@ -269,8 +269,8 @@ def hook_handler_entry(event, matcher, x):
     return {"event": event, "matcher": matcher, "type": kind, "target": redact(target)[:200], **extra}
 
 
-def summarize_settings(path):
-    d = load_json(path)
+def summarize_settings(path, data=None, managed=False):
+    d = load_json(path) if data is None else data
     if d is None:
         return None
     hooks = d.get("hooks", {}) or {}
@@ -281,7 +281,7 @@ def summarize_settings(path):
     raw_commands = [x.get("command", "") for _, _, x in handlers if x.get("type", "command") == "command"]
     # Project settings live in <project>/.claude/; user settings in ~/.claude (no project dir).
     settings_dir = os.path.dirname(os.path.abspath(path))
-    project_dir = None if settings_dir == CLAUDE else os.path.dirname(settings_dir)
+    project_dir = None if managed or settings_dir == CLAUDE else os.path.dirname(settings_dir)
     return {
         "path": path.replace(HOME, "~"),
         "keys": sorted(d.keys()),
@@ -302,6 +302,102 @@ def summarize_settings(path):
         "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
                                      "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
     }
+
+
+
+# Locations and drop-in rules verified 2026-09-15:
+# https://code.claude.com/docs/en/managed-settings
+MANAGED_MAX_BYTES = 1024 * 1024
+MANAGED_MAX_FILES = 100
+
+
+def source_coverage(source, scope, status, **details):
+    """Shared additive provenance; status describes collection, never enforcement."""
+    return {"source": source, "scope": scope, "status": status, **details}
+
+
+def managed_directory():
+    if sys.platform == "darwin":
+        return "/Library/Application Support/ClaudeCode"
+    if sys.platform.startswith("linux"):
+        return "/etc/claude-code"
+    return None  # Windows file/registry support requires separate verification.
+
+
+def collect_managed_settings():
+    out = {"settings": [], "sources": [], "effective_policy": "unknown"}
+    base = managed_directory()
+    def record(path):
+        info = source_coverage(path, "managed", "unavailable", basis="observed")
+        try:
+            # Nonblocking open prevents discovered FIFOs from stalling collection.
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as f:
+                import stat
+                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                    info["reason"] = "not_regular_file"
+                    return info
+                raw = f.read(MANAGED_MAX_BYTES + 1)
+            if len(raw) > MANAGED_MAX_BYTES:
+                info.update(status="partial", reason="byte_limit", truncated=True)
+                return info
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("expected object")
+            summary = summarize_settings(path, data=data, managed=True)
+            summary["scope"] = "managed"
+            out["settings"].append(summary)
+            info.update(status="collected", presence="present", representation="selected_fields")
+        except FileNotFoundError:
+            # A dangling symlink is unavailable, not evidence of absence.
+            info.update(status="unavailable" if os.path.lexists(path) else "absent",
+                        reason="missing_target" if os.path.lexists(path) else "not_found")
+        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
+            info["reason"] = "invalid_settings"
+        except OSError:
+            info["reason"] = "read_failed"
+        return info
+    if base is not None:
+        out["sources"].append(record(os.path.join(base, "managed-settings.json")))
+        directory = os.path.join(base, "managed-settings.d")
+        info = source_coverage(directory, "managed", "collected", basis="observed")
+        try:
+            names = sorted(n for n in os.listdir(directory) if not n.startswith(".") and n.endswith(".json"))
+            selected = names[:MANAGED_MAX_FILES]
+            info.update(eligible=len(names), scanned=len(selected), omitted=len(names)-len(selected))
+            if len(names) > len(selected):
+                info.update(status="partial", reason="file_limit")
+            for name in selected:
+                out["sources"].append(record(os.path.join(directory, name)))
+        except FileNotFoundError:
+            info.update(status="unavailable" if os.path.lexists(directory) else "absent")
+        except OSError:
+            info.update(status="unavailable", reason="list_failed")
+        out["sources"].append(info)
+    else:
+        out["sources"].append(source_coverage("managed files", "managed", "not_checked", reason="unsupported_platform"))
+    for source in ("server-managed policy", "OS policy (MDM/registry, including WSL inheritance)",
+                   "policy helper output", "embedding host policy"):
+        out["sources"].append(source_coverage(source, "managed", "not_checked", reason="requires_runtime_verification"))
+    return out
+
+
+def snapshot_coverage(snap, roots):
+    sources = list(snap["managed_settings"]["sources"])
+    scope = snap["collection_scope"]["requested"]
+    for family in ("usage", "transcripts"):
+        for name, counts in snap[family]["coverage"].items():
+            sources.append(source_coverage(f"{family}.{name}", scope,
+                                          "partial" if counts.get("omitted") else "collected", **counts))
+    for source in ("instruction/worktree inventory", "MCP/plugin inventory", "runtime settings overrides"):
+        sources.append(source_coverage(source, scope, "not_checked", reason="effective_coverage_not_established"))
+    return {"version": 1, "requested_scope": scope, "projects_collected": roots,
+            "sources": sources, "summary": "Local evidence collected; effective configuration remains unverified.",
+            "limitations": [
+                "Managed files are selected-field observations, not proof of active policy. Missing files do not establish absence of organization policy.",
+                "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
+                "User/project settings and instruction, worktree, MCP/plugin inventories do not yet establish complete effective configuration coverage.",
+                "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity."]}
 
 
 def collect_global():
@@ -1209,6 +1305,7 @@ def main():
         "window_days": a.days,
         "collection_scope": {"requested": a.scope, "project": a.project, "projects_collected": len(roots)},
         "global": collect_global(),
+        "managed_settings": collect_managed_settings(),
         "projects": collect_projects(roots),
         "readiness": {r.replace(HOME, "~"): readiness(r) for r in roots},
         "memory": collect_memory(),
@@ -1218,6 +1315,7 @@ def main():
         "skill_listing": skill_listing(),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
+    snap["coverage"] = snapshot_coverage(snap, roots)
     # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
     env_hook = lambda cmds: any("direnv" in c or "CLAUDE_ENV_FILE" in c for c in cmds)  # noqa: E731
     global_env_hook = env_hook([c for s in snap["global"]["settings"] for c in s["hook_commands"]])

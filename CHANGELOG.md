@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Shared source/scope/collection-status metadata and bounded managed-settings file summaries,
+  including drop-ins. Reports distinguish absent files from unavailable or unverified policy;
+  managed helpers are never executed and effective enforcement is not inferred.
+
 - Every audit now includes a deterministic, self-contained HTML report rendered from audit JSON,
   with scope/coverage, ranked findings, evidence, labeled metrics and action results. The renderer
   escapes all report text and writes private files; the workflow refreshes HTML after applying fixes.

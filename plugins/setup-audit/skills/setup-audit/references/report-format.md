@@ -51,8 +51,9 @@ sections. Set `example: true` only for fictional demonstrations.
 
 A complete fictional example is in `examples/readable-audit.json` in the plugin directory.
 
-- Copy scope and coverage from available collection evidence. Use source statuses `collected`,
-  `partial`, `unavailable`, or `not_checked`. Keep unknown counts absent, never invent zeros.
+- Copy the snapshot `coverage` object, including managed sources and limitations (see
+  `coverage.md`); add separately sourced runtime evidence if available. Use source statuses `collected`,
+  `partial`, `absent`, `unavailable`, or `not_checked`. Keep unknown counts absent, never invent zeros.
   Include collector failure and bounded-scan omissions. Requested scope is not proof of coverage.
 - Keep existing metric keys for comparison. New reports wrap each metric in `value`, `unit`,
   `basis` (`measured`, `estimated`, or `unknown`), and `source`. Older bare metrics remain

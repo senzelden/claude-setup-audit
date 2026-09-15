@@ -83,7 +83,8 @@ flags are out of scope, since they're product architecture with no agent-side si
 
 ## What it reads, writes and sends
 
-- **Reads** `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
+- **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
+  active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.
 - **Writes** reports to `~/.claude/audits/` (`*-audit.html`, `*-audit.md`, and a machine-readable `*-audit.json`
   used for trends). It edits config only for approved items, after backing up to

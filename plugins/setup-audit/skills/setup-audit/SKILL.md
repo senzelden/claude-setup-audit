@@ -1,6 +1,6 @@
 ---
 name: setup-audit
-description: Audit the user's whole Claude Code setup (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, plus an agent-readiness check of a repo (one-command setup, env variables Claude's shell can't see, e.g. from direnv/.envrc, test loop, guardrails). Then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks whether a repo is ready for Claude Code to work in, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
+description: Audit the user's Claude Code configuration and usage (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, plus an agent-readiness check of a repo (one-command setup, env variables Claude's shell can't see, e.g. from direnv/.envrc, test loop, guardrails). Then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks whether a repo is ready for Claude Code to work in, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
 allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *)
 ---
 
@@ -133,6 +133,15 @@ What is **measured** versus **estimated** matters for credibility; say which in 
 Not covered by the snapshot: interactive `/doctor` output (use it if the user ran it in this
 conversation) and the narrative in the /insights HTML report (`usage.latest_insights_report`).
 Missing sources go under "Not checked"; they don't block the run.
+
+Read `coverage` and `managed_settings` before drawing configuration conclusions. Copy the
+collector's coverage object into the report, preserving source scopes, statuses, counts and
+limitations. See `references/coverage.md`. A managed file summary is observed local evidence;
+it does not prove the running session loaded it. Do not infer absent organization policy from
+absent files or infer effective permissions by merging summaries. Include managed observations
+in security analysis, but direct managed-policy changes to the administrator; never apply them
+with the personal configuration fix flow. Unknown policy is a coverage limitation, not by itself
+a security finding. If the user supplies `/status` evidence, cite it separately; never invent it.
 
 ## Step 2: Current docs (`depth=full` only)
 
