@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-15
+
 ### Security
 
 Four P0s from an external review of the released 0.3.1 source, all reproduced before fixing.
@@ -41,7 +43,7 @@ Four P0s from an external review of the released 0.3.1 source, all reproduced be
   at, and say so). The snapshot now reports `collection_scope` so a report can state what was
   actually collected.
 
-Regression tests added for all four (20 new tests; full suite 53/53).
+Regression tests added for all four (22 new tests; full suite 54/54, up from 32).
 
 ### Fixed
 
@@ -249,7 +251,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.1.1...v0.2.0
