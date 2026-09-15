@@ -6,6 +6,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+Fixes from two external reviews of the released source.
+
+- **The collected snapshot is now explicitly untrusted evidence, not instructions.** Previously
+  only fetched docs pages carried that rule. `query_snapshot.py` output is now wrapped in
+  `<untrusted_snapshot_data>` tags, and SKILL.md/checklist.md extend the "data, not instructions"
+  boundary to memory, transcripts, hooks and permission rules, closing an indirect
+  prompt-injection route through local content the collector reads.
+- **Output redaction is now recursive and covers the whole snapshot,** not just the fields that
+  went through `redact()` individually. `modelSettings`, `sandbox` and other structurally-copied
+  settings previously bypassed redaction entirely. `collect.py`'s docstring now says
+  "best-effort", matching what the heuristics can actually guarantee. Added JWT, PEM private-key
+  and URL-userinfo (`user:pass@host`) patterns.
+- **`prune_permissions.py --apply` writes are now atomic** (temp file, fsync, `os.replace`,
+  best-effort directory fsync) instead of truncating the settings file in place, and it refuses
+  to write through a symlink or a file that changed since it was planned (`--allow-symlinks` to
+  override the former). The re-check and the backup now go through the same file descriptor the
+  plan was read from, not the path again, so a swap after the check can't feed the backup step
+  something other than what was verified. A first pass of `--allow-symlinks` shipped a bug where
+  `os.replace()` on a symlink path replaces the link itself, not its target — silently breaking
+  the symlink and leaving the real file untouched; caught by an independent review before release
+  and fixed by resolving to the real target first.
+- **Hooks are now classified by real handler type** (`command`/`http`/`mcp_tool`/`prompt`/
+  `agent`) instead of treated as uniform shell commands; fixes a case where an HTTP hook's URL
+  would've been checked as a local script path once non-command hooks were collected. HTTP hooks
+  also report their header and allowed-env-var *names* (never values), since that's what would
+  reveal a secret being sent to an unfamiliar host.
+- Fixed a regression the redaction rewrite would have introduced: the labeled-secret pattern
+  (`token=`, `password=`, ...) now has the same reference-vs-value guard as the literal-secret
+  pattern, so `token=$FOO` or `password=<set>` survive redaction instead of being masked like a
+  real value — that's the "which env vars are wired in" signal several checks depend on.
+- Test suite: 20 → 32, covering the hostile-input and failure-mode cases (interrupted write,
+  symlink swap between plan and apply, an `--allow-symlinks` apply that must rewrite the target
+  and preserve the link, secret-shape gaps) that the reviews specifically asked for.
+
 ## [0.3.0] - 2026-09-15
 
 ### Added

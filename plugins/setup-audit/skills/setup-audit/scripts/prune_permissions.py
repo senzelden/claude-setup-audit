@@ -4,6 +4,15 @@
 Dry-run by default: prints a JSON plan and changes nothing. With --apply, backs up every file it
 touches into --backup-dir first, rewrites only the selected categories, and validates the JSON.
 
+Writes are atomic (temp file + fsync + os.replace, so a crash or full disk mid-write can't leave
+settings.json truncated) and refuse to follow a symlink by default (pass --allow-symlinks to
+override; the symlink itself is preserved and its target is rewritten, not the link node). Each
+file's identity (device, inode, size, mtime) is captured via the file descriptor used to plan it,
+and re-checked through a freshly opened descriptor right before the backup and write; a file that
+changed, or was swapped for a symlink, in between is skipped rather than overwritten. The final
+rename is still by path, since POSIX rename has no fd-scoped form -- that narrow window is the one
+part this can't close.
+
 Categories (pass with --remove, comma-separated):
   risky flags from collect.py: wildcard-all, sudo, rm-recursive, network-wildcard, git-destructive,
     gh-api, interpreter-wildcard, package-install, docker, read-outside-project,
@@ -17,11 +26,13 @@ Usage:
   prune_permissions.py --remove one-off --files path/to/settings.json           # limit files
 """
 import argparse
+import errno
 import json
 import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 
 sys.dont_write_bytecode = True
@@ -29,6 +40,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import collect  # noqa: E402  (shares the risk classification with the collector)
 
 KEEP_REUSABLE = re.compile(r"(localhost|127\.0\.0\.1):\d+|lsof -i:\d+")
+
+
+class SymlinkRefused(Exception):
+    """The settings path is (or became) a symlink and --allow-symlinks wasn't given."""
+
+
+class ChangedSincePlan(Exception):
+    """The file's identity at apply time doesn't match what was read during planning."""
 
 
 def is_one_off(rule):
@@ -51,9 +70,75 @@ def settings_files(snapshot):
     return [f for f in dict.fromkeys(files) if os.path.exists(f)]
 
 
-def plan_file(path, remove):
-    with open(path) as f:
+def open_no_symlink(path, allow_symlinks=False):
+    """Open path for reading; raises SymlinkRefused if it is a symlink and that's not allowed."""
+    flags = os.O_RDONLY
+    if not allow_symlinks and hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        if getattr(e, "errno", None) == errno.ELOOP:
+            raise SymlinkRefused(path) from e
+        raise
+    try:
+        return fd, os.fstat(fd)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def identity_of(st):
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def atomic_write(path, text, allow_symlinks=False):
+    """Write text to path without ever leaving it truncated or partially written.
+
+    With allow_symlinks, path may be a symlink: os.replace() operates on the path itself, not
+    what it points to, so writing "through" path would silently unlink the symlink and drop a
+    regular file in its place, leaving the real target untouched. Resolve to the real target
+    first so the symlink survives and the target is what actually gets rewritten.
+    """
+    target = os.path.realpath(path) if allow_symlinks else path
+    dirpath = os.path.dirname(target) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".prune_permissions.", dir=dirpath)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, os.stat(target).st_mode)
+        except OSError:
+            pass
+        os.replace(tmp, target)
+    except BaseException:
+        # tmp is only still at its own path if we didn't reach os.replace above.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    # Persist the directory entry too, so a crash right after replace can't leave it unrecorded.
+    # tmp is gone (renamed onto target) by this point, so a failure here doesn't touch the cleanup
+    # above. Best-effort: not every filesystem supports fsync on a directory fd, and the write
+    # already succeeded, so a failure here must not be mistaken for the write itself failing.
+    try:
+        dir_fd = os.open(dirpath, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
+
+
+def plan_file(path, remove, allow_symlinks=False):
+    fd, st = open_no_symlink(path, allow_symlinks)
+    with os.fdopen(fd) as f:
         data = json.load(f)
+    identity = identity_of(st)
     perms = data.get("permissions") or {}
     removals = []
     for rule in perms.get("allow") or []:
@@ -66,7 +151,45 @@ def plan_file(path, remove):
     if "stale-dirs" in remove:
         dirs = [d for d in perms.get("additionalDirectories") or []
                 if d.rstrip("/") == "/tmp" or not os.path.isdir(os.path.expanduser(d))]
-    return data, removals, dirs
+    return data, removals, dirs, identity
+
+
+def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=False):
+    """Re-validate the file is unchanged and not a symlink, back it up, then atomically rewrite it.
+
+    Raises SymlinkRefused or ChangedSincePlan instead of writing when that check fails; the caller
+    decides how to report it. Returns the backup path on success.
+
+    The identity check and the backup both go through the same file descriptor opened here, so a
+    path swap after the check can't make the backup step read (or the rewrite target be) something
+    other than what was actually verified — reading or writing by path again, as a naive re-check
+    would, leaves that exact gap open. os.replace() inside atomic_write() is still path-based
+    (rename has no fd-scoped equivalent), so that one step remains a narrow, irreducible window.
+    """
+    fd, st = open_no_symlink(path, allow_symlinks)
+    try:
+        if identity_of(st) != identity:
+            raise ChangedSincePlan(path)
+        os.makedirs(backup_dir, exist_ok=True)
+        backup = os.path.join(backup_dir, path.replace(collect.HOME, "").strip(os.sep).replace(os.sep, "__")
+                              + f".{int(time.time())}.bak")
+        with os.fdopen(fd, "rb", closefd=False) as src, open(backup, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        try:
+            os.chmod(backup, st.st_mode)
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+    raw = {r["_raw"] for r in removals}
+    perms = data["permissions"]
+    perms["allow"] = [r for r in perms.get("allow", []) if r not in raw]
+    if dirs:
+        perms["additionalDirectories"] = [d for d in perms["additionalDirectories"] if d not in dirs]
+    text = json.dumps(data, indent=2) + "\n"
+    json.loads(text)
+    atomic_write(path, text, allow_symlinks)
+    return backup
 
 
 def main():
@@ -76,6 +199,8 @@ def main():
     ap.add_argument("--snapshot", help="use the project list from a collect.py snapshot")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--backup-dir")
+    ap.add_argument("--allow-symlinks", action="store_true",
+                    help="operate on a settings path even if it is a symlink (refused by default)")
     a = ap.parse_args()
     remove = {c.strip() for c in a.remove.split(",") if c.strip()}
     known = {name for name, _ in collect.RISKY_RULES} | {"one-off", "stale-dirs"}
@@ -87,8 +212,8 @@ def main():
     plan, total, skipped = [], 0, []
     for path in a.files or settings_files(a.snapshot):
         try:
-            data, removals, dirs = plan_file(path, remove)
-        except (OSError, ValueError) as e:  # unreadable (sandbox, permissions) or invalid JSON
+            data, removals, dirs, identity = plan_file(path, remove, a.allow_symlinks)
+        except (OSError, ValueError, SymlinkRefused) as e:  # unreadable (sandbox, permissions), symlink, bad JSON
             skipped.append({"file": path.replace(collect.HOME, "~"), "error": type(e).__name__})
             continue
         if not removals and not dirs:
@@ -98,20 +223,12 @@ def main():
                      "remove_rules": [{k: v for k, v in r.items() if k != "_raw"} for r in removals],
                      "remove_dirs": dirs})
         if a.apply:
-            backup_dir = os.path.expanduser(a.backup_dir)
-            os.makedirs(backup_dir, exist_ok=True)
-            backup = os.path.join(backup_dir, path.replace(collect.HOME, "").strip(os.sep).replace(os.sep, "__")
-                                  + f".{int(time.time())}.bak")
-            shutil.copy2(path, backup)
-            raw = {r["_raw"] for r in removals}
-            perms = data["permissions"]
-            perms["allow"] = [r for r in perms.get("allow", []) if r not in raw]
-            if dirs:
-                perms["additionalDirectories"] = [d for d in perms["additionalDirectories"] if d not in dirs]
-            text = json.dumps(data, indent=2) + "\n"
-            json.loads(text)
-            with open(path, "w") as f:
-                f.write(text)
+            try:
+                backup = apply_file(path, data, removals, dirs, identity,
+                                    os.path.expanduser(a.backup_dir), a.allow_symlinks)
+            except (SymlinkRefused, ChangedSincePlan) as e:
+                plan[-1]["apply_error"] = type(e).__name__
+                continue
             plan[-1]["backup"] = backup.replace(collect.HOME, "~")
     print(json.dumps({"applied": a.apply, "rules": total, "files": plan, "skipped": skipped}, indent=1))
 

@@ -68,6 +68,35 @@ class RiskClassification(unittest.TestCase):
         out = collect.redact("api_key=sk-THISISASECRETVALUE123456")
         self.assertNotIn("THISISASECRETVALUE", out)
 
+    def test_redaction_keeps_env_var_references(self):
+        # 'token=$FOO' etc. name which env var is wired in without exposing anything; that's
+        # exactly the signal readiness/env-contract findings rely on, so it must survive redact().
+        for ref in ("token=$FOO", "password=<set>", "secret={{VAR}}", "api_key=$(pass show x)"):
+            self.assertEqual(collect.redact(ref), ref)
+
+    def test_jwt_pem_and_url_userinfo_are_redacted(self):
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        self.assertNotIn(jwt, collect.redact(f"Authorization: {jwt}"))
+        pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK...\n-----END RSA PRIVATE KEY-----"
+        out = collect.redact(f"key material:\n{pem}\nend")
+        self.assertNotIn("MIIBOgIBAAJBAK", out)
+        url = "postgresql://dbuser:hunter2secret@db.example.com:5432/app"
+        out = collect.redact(url)
+        self.assertNotIn("hunter2secret", out)
+        self.assertIn("postgresql://", out)  # scheme and host survive; only the credential is masked
+        self.assertIn("db.example.com", out)
+
+    def test_sanitize_recurses_through_nested_structures(self):
+        secret = "api_key=sk-THISISASECRETVALUE123456"
+        obj = {"a": [{"b": secret}], "c": (secret, 1), "d": None, "e": 3, "f": True}
+        out = collect.sanitize(obj)
+        dumped = json.dumps(out)
+        self.assertNotIn("THISISASECRETVALUE", dumped)
+        self.assertEqual(out["d"], None)
+        self.assertEqual(out["e"], 3)
+        self.assertEqual(out["f"], True)
+        self.assertEqual(out["c"], [collect.redact(secret), 1])  # tuples become sanitized lists
+
 
 class OneOffRules(unittest.TestCase):
     def test_one_off_detection(self):
@@ -100,6 +129,38 @@ class HookScripts(FakeHome):
         missing = collect.missing_hook_scripts(cmds, proj)
         self.assertEqual(len(missing), 1)
         self.assertIn("gone.py", missing[0])
+
+
+class HookClassification(FakeHome):
+    def test_handler_types_and_missing_script_ignores_non_command_hooks(self):
+        settings = self.write("proj/.claude/settings.local.json", {
+            "allowManagedHooksOnly": True,
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [
+                    {"type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/gone.py"},
+                    {"type": "http", "url": "http://localhost:8080/hooks/pre-tool-use",
+                     "headers": {"Authorization": "Bearer $MY_TOKEN"}, "allowedEnvVars": ["MY_TOKEN"]},
+                    {"type": "mcp_tool", "server": "my_server", "tool": "security_scan"},
+                    {"type": "prompt", "prompt": "Block if this looks destructive: $ARGUMENTS"},
+                    {"type": "agent", "prompt": "Verify this edit doesn't touch prod config"},
+                ]}],
+            },
+        })
+        s = collect.summarize_settings(settings)
+        self.assertTrue(s["allow_managed_hooks_only"])
+        types = {h["type"] for h in s["hook_handlers"]}
+        self.assertEqual(types, {"command", "http", "mcp_tool", "prompt", "agent"})
+        http = next(h for h in s["hook_handlers"] if h["type"] == "http")
+        self.assertEqual(http["target"], "http://localhost:8080/hooks/pre-tool-use")
+        self.assertEqual(http["header_keys"], ["Authorization"])  # names only, never header values
+        self.assertEqual(http["allowed_env_vars"], ["MY_TOKEN"])
+        mcp = next(h for h in s["hook_handlers"] if h["type"] == "mcp_tool")
+        self.assertEqual(mcp["target"], "my_server:security_scan")
+        agent = next(h for h in s["hook_handlers"] if h["type"] == "agent")
+        self.assertEqual(agent["target"], "Verify this edit doesn't touch prod config")
+        # Only the command hook's script is checked for existence; the URL isn't mistaken for a path.
+        self.assertEqual(len(s["missing_hook_scripts"]), 1)
+        self.assertIn("gone.py", s["missing_hook_scripts"][0])
 
 
 class Transcripts(FakeHome):
@@ -141,10 +202,124 @@ class PrunePlan(FakeHome):
                 return f.read()
 
         before = read()
-        _, removals, dirs = prune_permissions.plan_file(path, {"sudo", "stale-dirs"})
+        _, removals, dirs, _ = prune_permissions.plan_file(path, {"sudo", "stale-dirs"})
         self.assertEqual([r["_raw"] for r in removals], ["Bash(sudo -n true)"])
         self.assertEqual(dirs, ["/nonexistent/dir"])
         self.assertEqual(read(), before)
+
+
+class SymlinkAndRaceGuards(FakeHome):
+    def test_symlink_target_refused_by_default(self):
+        real = self.write("real-settings.json", {"permissions": {"allow": ["Bash(sudo -n true)"]}})
+        os.makedirs(os.path.join(self.home, "proj", ".claude"))
+        link_path = os.path.join(self.home, "proj", ".claude", "settings.local.json")
+        os.symlink(real, link_path)
+        # Assert the specific guard fired, not just "some OSError" (a typo'd path would also raise
+        # OSError and pass this test even with the O_NOFOLLOW guard deleted).
+        with self.assertRaises(prune_permissions.SymlinkRefused):
+            prune_permissions.plan_file(link_path, {"sudo"})
+
+    def test_allow_symlinks_flag_permits_read(self):
+        real = self.write("real-settings.json", {"permissions": {"allow": ["Bash(sudo -n true)"]}})
+        link_path = os.path.join(self.home, "linked-settings.json")
+        os.symlink(real, link_path)
+        _, removals, _, _ = prune_permissions.plan_file(link_path, {"sudo"}, allow_symlinks=True)
+        self.assertEqual([r["_raw"] for r in removals], ["Bash(sudo -n true)"])
+
+    def test_allow_symlinks_apply_rewrites_target_and_preserves_the_link(self):
+        # os.replace() on a symlink path replaces the link itself, not what it points to — so
+        # writing "through" path without resolving it first would unlink the symlink and drop a
+        # plain file in its place, leaving the real settings file (and the link) untouched.
+        real = self.write("real-settings.json",
+                          {"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"]}})
+        link_path = os.path.join(self.home, "linked-settings.json")
+        os.symlink(real, link_path)
+        data, removals, dirs, identity = prune_permissions.plan_file(link_path, {"sudo"}, allow_symlinks=True)
+        backup_dir = os.path.join(self.home, "backups")
+        backup = prune_permissions.apply_file(link_path, data, removals, dirs, identity, backup_dir,
+                                              allow_symlinks=True)
+        self.assertTrue(os.path.islink(link_path))
+        self.assertEqual(os.path.realpath(link_path), os.path.realpath(real))
+        with open(real) as f:
+            self.assertEqual(json.load(f)["permissions"]["allow"], ["Bash(uv run *)"])
+        with open(backup) as f:
+            self.assertIn("Bash(sudo -n true)", f.read())  # backup captured the pre-edit content
+
+    def test_changed_since_plan_blocks_apply_and_leaves_no_backup(self):
+        path = self.write("proj/.claude/settings.local.json",
+                          {"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"]}})
+        data, removals, dirs, identity = prune_permissions.plan_file(path, {"sudo"})
+        # The file changes on disk after planning but before apply (another process, or the
+        # two-step plan-then-apply workflow racing a concurrent edit).
+        with open(path, "w") as f:
+            f.write(json.dumps({"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"], "ask": []}}))
+        backup_dir = os.path.join(self.home, "backups")
+        with self.assertRaises(prune_permissions.ChangedSincePlan):
+            prune_permissions.apply_file(path, data, removals, dirs, identity, backup_dir)
+        self.assertFalse(os.path.isdir(backup_dir))
+        with open(path) as f:
+            self.assertIn("Bash(sudo -n true)", f.read())  # untouched
+
+    def test_symlink_swapped_in_between_plan_and_apply_is_refused(self):
+        path = self.write("proj/.claude/settings.local.json",
+                          {"permissions": {"allow": ["Bash(sudo -n true)"]}})
+        data, removals, dirs, identity = prune_permissions.plan_file(path, {"sudo"})
+        elsewhere = self.write("attacker-controlled.json", {"permissions": {"allow": []}})
+        os.remove(path)
+        os.symlink(elsewhere, path)  # the regular file was swapped for a symlink before apply
+        backup_dir = os.path.join(self.home, "backups")
+        with self.assertRaises(prune_permissions.SymlinkRefused):
+            prune_permissions.apply_file(path, data, removals, dirs, identity, backup_dir)
+        self.assertFalse(os.path.isdir(backup_dir))
+        self.assertTrue(os.path.islink(path))  # the swap itself is left alone; nothing was written
+
+
+class PrunePermissionsCLI(FakeHome):
+    def run_cli(self, *args):
+        import subprocess
+        script = os.path.join(os.path.abspath(SCRIPTS), "prune_permissions.py")
+        # collect.HOME is read from the environment at import time, so the subprocess needs it
+        # pointed at the fake home too, or its ~-relative output won't match this test's paths.
+        env = {**os.environ, "HOME": self.home}
+        return subprocess.run([sys.executable, "-B", script, *args], capture_output=True, text=True, env=env)
+
+    def test_apply_end_to_end_and_symlink_refusal_via_cli(self):
+        path = self.write("proj/.claude/settings.local.json",
+                          {"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"]}})
+        backup_dir = os.path.join(self.home, "backups")
+        result = self.run_cli("--remove", "sudo", "--files", path, "--apply", "--backup-dir", backup_dir)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["files"][0]["backup"][:1], "~")
+        self.assertNotIn("apply_error", report["files"][0])
+        with open(path) as f:
+            data = json.load(f)
+        self.assertEqual(data["permissions"]["allow"], ["Bash(uv run *)"])
+        self.assertTrue(os.path.isdir(backup_dir))
+
+        real = self.write("real2.json", {"permissions": {"allow": ["Bash(sudo -n true)"]}})
+        link_path = os.path.join(self.home, "linked.json")
+        os.symlink(real, link_path)
+        result = self.run_cli("--remove", "sudo", "--files", link_path, "--apply", "--backup-dir", backup_dir)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["skipped"], [{"file": "~/linked.json", "error": "SymlinkRefused"}])
+        with open(real) as f:
+            self.assertIn("Bash(sudo -n true)", f.read())  # not modified through the symlink
+
+
+class AtomicWrite(FakeHome):
+    def test_interrupted_write_preserves_original(self):
+        from unittest import mock
+        path = self.write("proj/.claude/settings.local.json", {"permissions": {"allow": []}})
+        with open(path) as f:
+            before = f.read()
+        with mock.patch("os.fsync", side_effect=OSError("simulated disk-full")):
+            with self.assertRaises(OSError):
+                prune_permissions.atomic_write(path, json.dumps({"x": 1}))
+        with open(path) as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(os.listdir(os.path.dirname(path)), ["settings.local.json"])  # no leftover temp file
 
 
 class EnvContract(FakeHome):
@@ -269,19 +444,48 @@ class ConfigDirOverride(unittest.TestCase):
                     self.assertEqual(json.load(f)["global"]["settings"][0]["model"], "fixture-model")
 
 
+class FullSnapshotSanitization(unittest.TestCase):
+    def test_fields_copied_without_field_specific_redaction_are_still_sanitized(self):
+        import subprocess
+        script = os.path.join(os.path.abspath(SCRIPTS), "collect.py")
+        secret = "sk-ABCDEFGHIJ1234567890"
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "cfg")
+            os.makedirs(cfg)
+            # modelSettings/statusLine/"other" fields are copied through structurally, not via
+            # a field-specific redactor, so they only get covered by the whole-snapshot pass.
+            with open(os.path.join(cfg, "settings.json"), "w") as f:
+                json.dump({
+                    "modelSettings": {"opus": {"note": f"leaked key={secret}"}},
+                    "statusLine": {"type": "command", "command": f"echo token={secret}"},
+                }, f)
+            out = os.path.join(tmp, "snap.json")
+            subprocess.run([sys.executable, "-B", script, "--claude-dir", cfg, "--days", "1", "--out", out],
+                           check=True, capture_output=True, timeout=180)
+            with open(out) as f:
+                text = f.read()
+            self.assertNotIn(secret, text)
+
+
 class QuerySnapshot(FakeHome):
     def run_query(self, *args):
         import subprocess
         script = os.path.join(os.path.abspath(SCRIPTS), "query_snapshot.py")
         return subprocess.run([sys.executable, "-B", script, *args], capture_output=True, text=True)
 
+    def unwrap(self, stdout):
+        self.assertTrue(stdout.startswith("<untrusted_snapshot_data>\n"))
+        self.assertTrue(stdout.rstrip("\n").endswith("</untrusted_snapshot_data>"))
+        inner = stdout.split("<untrusted_snapshot_data>\n", 1)[1]
+        return inner.rsplit("</untrusted_snapshot_data>", 1)[0]
+
     def test_select_keys_index_and_truncate(self):
         snap = self.write("snap.json", {"readiness": {"~/code/app": {"env": {"undeclared": [{"name": "A"}, {"name": "B"}]}}},
                                         "usage": {"big": "x" * 500}})
         self.assertIn("readiness", self.run_query(snap).stdout)
-        self.assertEqual(json.loads(self.run_query(snap, "readiness", "--keys").stdout), ["~/code/app"])
+        self.assertEqual(json.loads(self.unwrap(self.run_query(snap, "readiness", "--keys").stdout)), ["~/code/app"])
         out = self.run_query(snap, "readiness", "~/code/app", "env", "undeclared", "1")
-        self.assertEqual(json.loads(out.stdout), {"name": "B"})
+        self.assertEqual(json.loads(self.unwrap(out.stdout)), {"name": "B"})
         self.assertIn("truncated", self.run_query(snap, "usage", "--max-chars", "100").stdout)
         missing = self.run_query(snap, "readiness", "nope")
         self.assertNotEqual(missing.returncode, 0)

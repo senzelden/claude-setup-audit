@@ -16,6 +16,14 @@ the collector snapshot.
 
   Fix: remove or narrow the rule, and add `deny`/`ask` rules for the dangerous forms. When the
   same broad rule appears in many projects, propose one user-level rule instead.
+
+  Model permissions and hooks as one evaluation, not two independent lists (verified against the
+  permissions and hooks docs): deny and ask rules apply regardless of what a PreToolUse hook
+  returns — an "allow" from a hook never overrides a matching deny or ask rule. A blocking hook
+  (exit code 2) does take precedence over allow rules, stopping the call before they're evaluated.
+  So an allow rule that looks risky in isolation may already be constrained by a blocking hook
+  (check `hook_handlers` for a command hook on the same matcher before proposing a redundant deny
+  rule), and a hook that looks protective doesn't substitute for a missing deny rule.
 - **SEC-deny-baseline**: there are no `deny` rules anywhere. Propose a small user-level baseline,
   verified against the permissions docs: reads of `.env` files, `~/.ssh`, `~/.aws`, credential
   files and `/proc/*/environ`, and force-push. Anchor paths with `//` or `~/` so they apply in
@@ -29,10 +37,35 @@ the collector snapshot.
   `untracked` rather than `ignored`, can leak approvals when pushed. `not-a-git-repo` isn't a finding.
 - **SEC-auto-mode**: if `auto_mode_configured` is set, or sessions run unattended, raise the weight
   of risky allows and of a missing sandbox, because fewer actions reach a human.
-- **SEC-sandbox**: no `sandbox` is configured despite autonomous or long sessions. Check platform
-  prerequisites first (`/sandbox` lists missing dependencies).
-- **SEC-hooks** (`hook_commands`): hooks run with the user's permissions. Flag hooks that fetch
-  remote code, write outside the project, or match every tool with a slow command.
+- **SEC-sandbox** (`settings[].sandbox`): no sandbox configured despite autonomous or long
+  sessions, or one that's configured but leaves a gap. Check platform prerequisites first
+  (`/sandbox` lists missing dependencies). Filesystem and network isolation only protect together;
+  a filesystem-only sandbox with unrestricted network access can still exfiltrate what it can read,
+  and vice versa. Check specifically:
+  - `sandbox.enabled` (or the platform equivalent) — missing entirely is the base finding
+  - `sandbox.failIfUnavailable`: unset or `false` means Claude Code warns and *runs unsandboxed*
+    when the sandbox can't start (e.g. bubblewrap missing on Linux) — worth flagging wherever
+    `SEC-auto-mode` also fires, since that's exactly when silent unsandboxed fallback matters most
+  - filesystem write/read exceptions and the network allowlist: broad entries undermine the
+    boundary the sandbox exists for; note when a permission `allow` rule grants something the
+    sandbox would otherwise have blocked, since that rule is now the only remaining control
+- **SEC-hooks** (`hook_handlers`, `allow_managed_hooks_only`): hooks run with the user's
+  permissions, but the boundary differs by handler `type` (verified against the hooks docs) —
+  weigh each differently rather than reporting all hooks generically:
+  - `command`: local execution boundary. Flag ones that fetch remote code, write outside the
+    project, or match every tool with a slow command.
+  - `http`: a network egress point — every matching event's JSON is POSTed to that URL. Flag an
+    unfamiliar host, a matcher wide enough to send most tool calls, and whether `header_keys` /
+    `allowed_env_vars` on the handler (names only, never values) suggest a secret is being
+    interpolated into the request.
+  - `prompt` / `agent`: another LLM trust boundary. The hook's own `prompt` text is untrusted-in
+    reverse — it's instructions the *hook* sends to a model, so treat a hook prompt built from
+    unsanitized tool input the same way `SEC-risky-allow` treats an unsafe command: something that
+    can be steered by whatever text it's fed.
+  - `mcp_tool`: only as trustworthy as the target server; cross-reference `SEC-mcp`.
+
+  If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
+  type, including `http` — mention this once per audit rather than per hook when it's unset.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
