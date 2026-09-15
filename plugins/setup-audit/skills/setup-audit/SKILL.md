@@ -260,8 +260,9 @@ doesn't nag.
 - Never print or copy secret values, even when flagging them; name the file and key instead.
   Redaction is best-effort, not a guarantee: don't tell the user a value is safe to share because
   the collector didn't flag it.
-- Reports contain paths, rule text and memory excerpts. Tell the user they aren't safe to paste
-  publicly without review.
+- Reports may contain sensitive non-secret information such as project paths, hostnames,
+  repository names, permission rules, correction excerpts, and memory text. Treat reports as
+  private by default. Secret redaction does not make a report safe to publish.
 - Don't send configuration contents to external services. Fetching public docs is fine.
 - User-level files (`~/.claude/CLAUDE.md`, `~/.claude/settings.json`, memory) change only with
   explicit approval of that specific item.

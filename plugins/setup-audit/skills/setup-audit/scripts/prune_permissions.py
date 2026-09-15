@@ -92,15 +92,12 @@ def identity_of(st):
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
-def atomic_write(path, text, allow_symlinks=False):
+def atomic_write(target, text):
     """Write text to path without ever leaving it truncated or partially written.
 
-    With allow_symlinks, path may be a symlink: os.replace() operates on the path itself, not
-    what it points to, so writing "through" path would silently unlink the symlink and drop a
-    regular file in its place, leaving the real target untouched. Resolve to the real target
-    first so the symlink survives and the target is what actually gets rewritten.
+    The caller supplies the target used for identity verification. Never resolve a symlink here:
+    resolving the original settings path again could select a different, unverified target.
     """
-    target = os.path.realpath(path) if allow_symlinks else path
     dirpath = os.path.dirname(target) or "."
     fd, tmp = tempfile.mkstemp(prefix=".prune_permissions.", dir=dirpath)
     try:
@@ -161,12 +158,13 @@ def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=
     decides how to report it. Returns the backup path on success.
 
     The identity check and the backup both go through the same file descriptor opened here, so a
-    path swap after the check can't make the backup step read (or the rewrite target be) something
-    other than what was actually verified — reading or writing by path again, as a naive re-check
-    would, leaves that exact gap open. os.replace() inside atomic_write() is still path-based
-    (rename has no fd-scoped equivalent), so that one step remains a narrow, irreducible window.
+    retarget of the original symlink cannot redirect the backup or write. Resolve that symlink
+    once before opening and checking the target, and retain that target for the write.
+    Replacement of the resolved target or its parent directories can still race the final
+    path-based os.replace(); this does not provide protection against every filesystem race.
     """
-    fd, st = open_no_symlink(path, allow_symlinks)
+    target = os.path.realpath(path) if allow_symlinks else path
+    fd, st = open_no_symlink(target)
     try:
         if identity_of(st) != identity:
             raise ChangedSincePlan(path)
@@ -188,7 +186,7 @@ def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=
         perms["additionalDirectories"] = [d for d in perms["additionalDirectories"] if d not in dirs]
     text = json.dumps(data, indent=2) + "\n"
     json.loads(text)
-    atomic_write(path, text, allow_symlinks)
+    atomic_write(target, text)
     return backup
 
 

@@ -295,6 +295,50 @@ class SymlinkAndRaceGuards(FakeHome):
         with open(backup) as f:
             self.assertIn("Bash(sudo -n true)", f.read())  # backup captured the pre-edit content
 
+    def test_retarget_after_verification_never_writes_the_new_target(self):
+        from unittest import mock
+        original = {"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"]}}
+        real = self.write("real-settings.json", original)
+        other = self.write("other-settings.json", {"unrelated": True})
+        link = os.path.join(self.home, "linked-settings.json")
+        os.symlink(real, link)
+        data, removals, dirs, identity = prune_permissions.plan_file(link, {"sudo"}, True)
+        copyfileobj = prune_permissions.shutil.copyfileobj
+
+        def retarget_after_backup(src, dst):
+            copyfileobj(src, dst)
+            os.unlink(link)
+            os.symlink(other, link)
+
+        with mock.patch.object(prune_permissions.shutil, "copyfileobj", side_effect=retarget_after_backup):
+            backup = prune_permissions.apply_file(link, data, removals, dirs, identity,
+                                                 os.path.join(self.home, "backups"), True)
+        with open(real) as f:
+            self.assertEqual(json.load(f)["permissions"]["allow"], ["Bash(uv run *)"])
+        with open(other) as f:
+            self.assertEqual(json.load(f), {"unrelated": True})
+        with open(backup) as f:
+            self.assertEqual(json.load(f), original)
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual(os.readlink(link), other)
+
+    def test_retarget_before_apply_is_rejected_without_backup(self):
+        original = {"permissions": {"allow": ["Bash(sudo -n true)"]}}
+        real = self.write("real-settings.json", original)
+        other = self.write("other-settings.json", original)
+        link = os.path.join(self.home, "linked-settings.json")
+        os.symlink(real, link)
+        data, removals, dirs, identity = prune_permissions.plan_file(link, {"sudo"}, True)
+        os.unlink(link)
+        os.symlink(other, link)
+        backup_dir = os.path.join(self.home, "backups")
+        with self.assertRaises(prune_permissions.ChangedSincePlan):
+            prune_permissions.apply_file(link, data, removals, dirs, identity, backup_dir, True)
+        self.assertFalse(os.path.exists(backup_dir))
+        for path in (real, other):
+            with open(path) as f:
+                self.assertEqual(json.load(f), original)
+
     def test_changed_since_plan_blocks_apply_and_leaves_no_backup(self):
         path = self.write("proj/.claude/settings.local.json",
                           {"permissions": {"allow": ["Bash(sudo -n true)", "Bash(uv run *)"]}})

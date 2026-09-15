@@ -1,7 +1,8 @@
 # Setup Audit for Claude Code
 
-An evidence-backed auditor for your **whole** Claude Code setup. It reads your user and
-per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory,
+An evidence-backed auditor for Claude Code configuration, usage patterns, and common setup risks.
+It reads your user and per-project settings, permissions, hooks, MCP servers, skills, plugins,
+CLAUDE.md files, memory,
 and usage and transcript data, and compares them with the **current** official docs. You get a
 short, ranked list of fixes for:
 
@@ -73,9 +74,9 @@ Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on 
 | Context | ADRs (`docs/adr/`), module-boundary tooling |
 | Prompt caching in your app | Anthropic SDK call sites without `cache_control`, likely cache breakers (timestamps, random IDs, unsorted JSON in files that call the API), and the model IDs used, since each model has a minimum cacheable prompt length. Static signals; for a measured analysis it points to `/claude-api cost-optimize` |
 
-A `.envrc` is never executed and secret values are never read: literal secrets are reported by
-variable name only. Structured logging and feature flags are out of scope, since they're product
-architecture with no agent-side signal.
+A `.envrc` is read locally for classification, never executed. Literal secret values from it are
+not emitted into the snapshot; only variable names are reported. Structured logging and feature
+flags are out of scope, since they're product architecture with no agent-side signal.
 
 ## What it reads, writes and sends
 

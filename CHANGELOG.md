@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Permission pruning with `--allow-symlinks` now resolves the target once before identity
+  verification and keeps that target through backup and atomic write. Retargeting the original
+  symlink after verification no longer redirects the write to an unverified file. Replacement
+  of the resolved target or its parent directories can still race the final path-based rename.
+  Two regression tests cover retargeting before apply and after verification.
+
+### Added
+
+- Minimal GitHub Actions CI runs the standard-library Python regression suite on Linux/Python
+  3.13 for pushes and pull requests, with manual runs available. No paid model evaluations.
+
+### Changed
+
+- Narrowed the README's audit-coverage claim and clarified that `.envrc` is read locally for
+  classification, without emitting its literal secret values into the snapshot.
+- Report guidance explicitly treats sensitive non-secret information as private; secret
+  redaction does not make a report safe to publish.
+
 ## [0.4.0] - 2026-09-15
 
 ### Security
