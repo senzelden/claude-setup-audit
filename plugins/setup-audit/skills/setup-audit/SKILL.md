@@ -60,11 +60,20 @@ materially changed (e.g. a new risky rule of the same kind).
 Always run the collector first, whatever the focus or scope, and even for one repo. Findings must
 rest on its measured, redacted evidence: the env contract, test-loop times, risky rules and
 transcript signals. Exploring by hand with `ls`, `git` or ad-hoc greps misses what the collector
-measures and costs more turns. If the user names a repo that Claude Code hasn't been used in yet,
-add it with `--roots <path>`.
+measures and costs more turns.
+
+Pass the resolved `scope` through to the collector — it enforces the boundary itself now, not
+just the report, so a `scope=project` run never opens another project's files at all:
+
+- `scope=global`: `--scope global` (omit `--project`/`--roots`; there's no project to name).
+- `scope=project`: `--scope project --project <repo path>` — the current repo, or the one named.
+- `scope=all` (default): `--scope all`; add a repo Claude Code hasn't been used in yet with
+  `--roots <path>` (repeatable). `--roots` and `--project` are mutually exclusive with the other
+  scopes — the collector refuses them together.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --out "$TMPDIR/setup-audit-snapshot.json"
+python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --scope <scope> [--project <repo path>] \
+  --out "$TMPDIR/setup-audit-snapshot.json"
 ```
 
 **If this command — or Bash itself — fails to run at all** (permission denied, a sandbox/seccomp

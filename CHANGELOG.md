@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+Four P0s from an external review of the released 0.3.1 source, all reproduced before fixing.
+
+- **The untrusted-data wrapper in `query_snapshot.py` could be escaped.** `json.dumps` doesn't
+  escape `<`/`>`, so a snapshot value containing the literal `</untrusted_snapshot_data>` closed
+  the boundary early — confirmed the 0.3.1 hardening hadn't actually closed it. Fixed by escaping
+  `<`/`>` as their JSON unicode escapes (U+003C / U+003E) in the printed text before framing it, so
+  the delimiter can no longer appear literally anywhere except the two tags added around it.
+- **Secret redaction missed most real-world credential shapes.** `SECRET_RE`'s generic
+  labeled-value branch redacted only the word `Bearer` out of `"Authorization: Bearer <token>"`,
+  leaving the real token exposed right after it, and never matched JSON's own `"key": "value"`
+  shape at all — `{"api_key": "..."}`, `{"credential": "..."}` passed through completely
+  unredacted. Fixed by making `sanitize()` key-aware and structural first: a value under a
+  recognized secret-key name (`authorization`/`api_key`/`token`/`password`/`secret`/`credential`/
+  ..., normalized for casing/separators) is redacted outright regardless of quoting, with the
+  regex kept only as a second-line defense for secrets embedded in prose/commands/URLs (and fixed
+  there too, to consume the `Bearer`/`Basic`/`Digest` scheme word instead of stopping at it).
+  Reference values (`$FOO`, `<set>`, `{{VAR}}`) still survive, same guarantee as before.
+- **`collect.py --out` was an unrestricted, pre-approved arbitrary-file-write.** `SKILL.md`
+  pre-approves `collect.py *` with no argument restriction, and `--out` opened its target with
+  plain `open(path, "w")` — no directory restriction, no symlink check, no atomic write. A
+  conceptually read-only collector could therefore truncate any file the process could write to.
+  Fixed: `--out` now must resolve inside a system temp directory or `CLAUDE/audits`, refuses a
+  symlink at the target outright, and writes via tempfile + `os.replace()` in that directory.
+- **`--scope`/`--project` didn't exist; a "project" or "global" audit still read every project on
+  the machine.** SKILL.md documented `scope=global/project/all`, but the collector had no such
+  flag — it always ran `collect_global()` plus every discovered project's files (readiness,
+  source scanning included) regardless of what was asked. Added real `--scope {global,project,all}`
+  and `--project PATH`: `global` and `project` now skip `discover_projects()` and any root outside
+  the one requested entirely, and usage/history/transcript data is filtered by project too (facet
+  files, which carry no project identifier, are excluded under those scopes rather than guessed
+  at, and say so). The snapshot now reports `collection_scope` so a report can state what was
+  actually collected.
+
+Regression tests added for all four (20 new tests; full suite 53/53).
+
 ### Fixed
 
 - Two small drifts caught by spot-checking `checklist.md`/`docs-map.md` against the current docs

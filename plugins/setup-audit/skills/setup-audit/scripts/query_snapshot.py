@@ -48,6 +48,11 @@ def main():
     else:
         out = node
     text = json.dumps(out, indent=1, default=str)
+    # json.dumps doesn't escape '<'/'>', so snapshot data containing a literal
+    # "</untrusted_snapshot_data>" would otherwise close the wrapper early. Escaping them as their
+    # JSON unicode escapes keeps the value round-trippable through json.loads while guaranteeing
+    # neither delimiter can appear literally in the printed text outside the two we add ourselves.
+    text = text.replace("<", "\\u003c").replace(">", "\\u003e")
     if len(text) > a.max_chars:
         text = text[: a.max_chars] + f"\n... truncated ({len(text)} chars); narrow the path or raise --max-chars"
     print(f"<untrusted_snapshot_data>\n{text}\n</untrusted_snapshot_data>")
