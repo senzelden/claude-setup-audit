@@ -60,3 +60,28 @@ not a reimplementation of runtime selection.
 [Skills](https://code.claude.com/docs/en/skills) documents invocation controls and `allowed-tools`
 as permission grants, not a restriction on available tools. Inspect these excerpts for broad
 grants; never execute a skill or its dynamic context to inspect it.
+
+## MCP and plugins
+
+`extensions` inventories selected MCP transport, executable, origin, argument count, package
+version shape, credential mechanisms and source scope. Argument values and URL paths are
+omitted; environment/header keys and variable names are retained without their values.
+Neither MCP servers nor authentication helpers are run. Same names across scopes are separate
+observations, not a computed effective merge. Remote connectors and runtime overrides remain
+unverified. "Not observed in these transcripts" is not "unused" or grounds alone for removal.
+
+Plugin candidates come from `installed_plugins.json` records, not newest cache directories.
+User/managed installs and matching project/local installs are inspected. Enablement settings
+are reported as per-source observations, with active state unknown. Only paths within plugin
+storage and components within their install are read. Default/custom skills, agents, commands,
+hooks and MCP definitions are inspected; other manifest keys are inventoried, not implemented.
+Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
+100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
+
+Verified 2026-09-15 against [MCP](https://code.claude.com/docs/en/mcp) (user and per-project
+local definitions in `.claude.json`, project `.mcp.json`) and
+[plugin reference](https://code.claude.com/docs/en/plugins-reference) (inline/custom component
+locations). Installed-registry list records and field types were separately observed locally
+on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.
+Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime
+activation. Frontmatter folding and enablement can change the actual listing size.

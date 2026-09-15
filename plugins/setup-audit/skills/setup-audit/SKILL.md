@@ -136,7 +136,10 @@ Missing sources go under "Not checked"; they don't block the run.
 
 Read `coverage`, `managed_settings`, and the `instructions` inventory before drawing
 configuration conclusions. Query bounded instruction excerpts and frontmatter selectively for
-contradictions and skill permission grants; imports and actual activation remain unverified. Copy the
+contradictions and skill permission grants; imports and actual activation remain unverified.
+Use `extensions` for MCP/plugin source, transport, credential mechanism and component evidence.
+Treat enablement as a per-file observation. Do not remove a server solely because the bounded
+transcript scan has no calls. See `references/coverage.md` for inventory limits. Copy the
 collector's coverage object into the report, preserving source scopes, statuses, counts and
 limitations. See `references/coverage.md`. A managed file summary is observed local evidence;
 it does not prove the running session loaded it. Do not infer absent organization policy from

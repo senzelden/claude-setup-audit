@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- MCP provenance across user/local/project/managed/plugin sources and registry-selected plugin
+  components, with credential values omitted and activation kept unknown. Skill-listing size
+  now uses observed excerpts instead of fixed budget assumptions or newest-cache selection.
+
 - Bounded instruction/rule/skill excerpts and selected frontmatter, with working-directory,
   worktree and main-checkout provenance. Candidate main-checkout local settings are included;
   imports, symlink targets and runtime activation remain explicitly unverified.

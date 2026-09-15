@@ -28,6 +28,7 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 import inventory
+import extensions
 from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
@@ -391,15 +392,18 @@ def snapshot_coverage(snap, roots):
             sources.append(source_coverage(f"{family}.{name}", scope,
                                           "partial" if counts.get("omitted") else "collected", **counts))
     sources.extend(snap.get("instructions", {}).get("sources", []))
-    for source in ("MCP/plugin inventory", "runtime settings overrides"):
+    sources.extend(snap.get("extensions", {}).get("sources", []))
+    for source in ("runtime settings overrides", "remote connectors"):
         sources.append(source_coverage(source, scope, "not_checked", reason="effective_coverage_not_established"))
     return {"version": 1, "requested_scope": scope, "projects_collected": roots,
             "sources": sources, "summary": "Local evidence collected; effective configuration remains unverified.",
             "limitations": [
                 "Managed files are selected-field observations, not proof of active policy. Missing files do not establish absence of organization policy.",
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
-                "Instruction imports, symlink targets, runtime loading and complete MCP/plugin coverage remain unverified.",
-                "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity."]}
+                "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
+                "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
+                *snap.get("instructions", {}).get("limitations", []),
+                *snap.get("extensions", {}).get("limitations", [])]}
 
 
 def collect_global():
@@ -831,33 +835,15 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     }
 
 
-def skill_listing():
-    """Skill descriptions that load into every session's skill listing.
-
-    Per the skills docs: the listing budget is 1% of the context window (8,000-char fallback), and each
-    entry's description + when_to_use is capped at 1,536 chars (skillListingMaxDescChars).
-    """
-    enabled = set()
-    for n in ("settings.json", "settings.local.json"):
-        enabled |= {k for k, v in ((load_json(os.path.join(CLAUDE, n)) or {}).get("enabledPlugins") or {}).items() if v}
-    newest = {}
-    for skill_md in glob.glob(os.path.join(CLAUDE, "plugins", "cache", "*", "*", "*", "skills", "*", "SKILL.md")):
-        parts = skill_md.split(os.sep)
-        key = (parts[-6], parts[-5], parts[-2])  # marketplace, plugin, skill
-        if f"{parts[-5]}@{parts[-6]}" in enabled and (key not in newest or os.path.getmtime(skill_md) > os.path.getmtime(newest[key])):
-            newest[key] = skill_md
-    files = [(f"user:{os.path.basename(os.path.dirname(p))}", p) for p in glob.glob(os.path.join(CLAUDE, "skills", "*", "SKILL.md"))]
-    files += [(f"{k[1]}:{k[2]}", p) for k, p in newest.items()]
-    entries = []
-    for name, p in files:
-        head = open(p, errors="replace").read(6000)
-        fm = re.match(r"^---\n(.*?)\n---", head, re.S)
-        text = fm.group(1) if fm else ""
-        desc = sum(len(m.group(2).strip().strip("\"'")) for m in re.finditer(r"^(description|when_to_use):\s*(.+)$", text, re.M))
-        entries.append((name, desc))
-    over = [(n, c) for n, c in entries if c > 1536]
-    return {"skills": len(entries), "total_description_chars": sum(min(c, 1536) for _, c in entries),
-            "over_1536_char_cap": over, "budget_note": "listing budget = 1% of context window (8,000-char fallback)"}
+def skill_listing(instructions=None, extension_inventory=None, settings=()):
+    """Observed description size; runtime listing budget and activation are unverified."""
+    entries = [e for e in (instructions or {}).get('entries', []) if e.get('kind') == 'skill']
+    entries += [e for p in (extension_inventory or {}).get('plugins', [])
+                for e in p.get('components', []) if e.get('kind') == 'skills']
+    return {"candidate_skills": len(entries),
+            "observed_description_chars": sum(len(e.get('frontmatter', {}).get('description', '')) +
+                                               len(e.get('frontmatter', {}).get('when_to_use', '')) for e in entries),
+            "budget_note": "Selected frontmatter text only; runtime activation, configured budget and YAML folding are unverified. No fixed cap or fallback assumed."}
 
 
 ENV_ERROR_RE = re.compile(
@@ -1309,10 +1295,14 @@ def main():
         "usage": collect_usage(a.days, project_filter),
         "corrections": collect_corrections(a.days, project_filter),
         "transcripts": collect_transcripts(a.days, project_filter=project_filter),
-        "skill_listing": skill_listing(),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
+    settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
+    snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
+                                                       snap['managed_settings']['sources'], settings,
+                                                       redact, hook_handler_entry)
+    snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["coverage"] = snapshot_coverage(snap, roots)
     # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
     env_hook = lambda cmds: any("direnv" in c or "CLAUDE_ENV_FILE" in c for c in cmds)  # noqa: E731
