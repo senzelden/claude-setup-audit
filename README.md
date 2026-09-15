@@ -49,6 +49,9 @@ analysis is the main cost. For reference, a `depth=quick scope=project mode=audi
 Sonnet took about 4.5 minutes and ~$0.73 on one real machine. A `full` audit of all projects
 reads more and costs more.
 
+Each audit also produces a self-contained HTML report with scope and coverage, ranked findings,
+evidence, labeled metrics, and action results. It uses no external resources and stays private.
+
 **Where reports go:** Claude Code protects files under `~/.claude`, so interactive sessions ask
 you to approve the first write. In headless runs, point `report_dir` at a folder you own, or the
 report goes to a temporary folder.
@@ -82,7 +85,7 @@ flags are out of scope, since they're product architecture with no agent-side si
 
 - **Reads** `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.
-- **Writes** reports to `~/.claude/audits/` (`*-audit.md` and a machine-readable `*-audit.json`
+- **Writes** reports to `~/.claude/audits/` (`*-audit.html`, `*-audit.md`, and a machine-readable `*-audit.json`
   used for trends). It edits config only for approved items, after backing up to
   `~/.claude/backups/`.
 - **Sends** nothing except requests for the public Claude Code docs pages (`depth=full`).

@@ -170,9 +170,10 @@ memory line < CLAUDE.md or path-scoped rule < hook (must always hold) < skill (w
 motivated a previously applied fix (e.g. a friction count or a correction cluster). If it
 didn't improve, escalate the mechanism, e.g. from an instruction to a hook.
 
-## Step 4: Write the report and audit.json
+## Step 4: Write Markdown, JSON and HTML reports
 
-Save both to `<report_dir>/YYYY-MM-DD-audit.md` and `…-audit.json` (add `-2` etc. if taken).
+Save Markdown and JSON to `<report_dir>/YYYY-MM-DD-audit.md` and `…-audit.json`.
+Choose a common unused stem across `.md`, `.json` and `.html` (add `-2` etc. if taken).
 Claude Code protects files under `~/.claude`: an interactive session asks the user to approve
 the write, while headless or restricted sessions may refuse it. If the write is refused, don't
 retry or look for a way around it. Save both files to `$TMPDIR/setup-audit/` instead, tell the
@@ -206,10 +207,20 @@ Claude Code <version> · profile: focus=… depth=… scope=… mode=… · <N> 
 
 Cap the Proposals table at about 15 rows and put the rest under a short "Minor" list.
 
-`audit.json`:
-`{"version":1,"generated":…,"claude_code_version":…,"profile":{…},"metrics":{"context_baseline_median":…,"friction":{…},"risky_rules":…,"deny_rules":…},"findings":[{"id","check","area","type","severity","score","title","evidence","fix":{"kind":"edit|command|manual","target","before","after","steps"},"docs","status"}],"applied":[]}`
+Write `audit.json` using `references/report-format.md`, including scope/coverage, labeled
+metrics, evidence, and separate finding-history and action statuses. Reuse the Markdown summary
+and findings; do not write a second narrative for HTML. Generate HTML for every audit:
 
-Show the user the Summary and the Proposals table, with both paths. In `audit` mode, stop there.
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/render_report.py "<report_dir>/<stem>.json"
+```
+
+This writes a private, self-contained sibling `<stem>.html`. If it fails, correct malformed input
+or report the failure; do not claim the HTML exists. The same temporary-directory fallback above
+applies to all three formats. Treat the report as private; do not upload it or launch a browser.
+
+Show the user the Summary and the Proposals table, with links to HTML, Markdown and JSON.
+In `audit` mode, stop there.
 Otherwise ask which numbers to apply (e.g. `1,3,5`, `all high`, or `none`).
 
 ## Step 5: Apply approved items (`apply` mode, or `propose` after approval)
@@ -246,7 +257,8 @@ before writing it.
    blocked, and package caches the user needs should be writable (`sandbox.filesystem.allowWrite`).
 8. **Record and verify.** Append each result to `applied` in audit.json and to an "Applied" section
    in the report: files, backup paths, the verification you ran, and how to revert. Report
-   skipped or failed items plainly.
+   skipped or failed items plainly. Update each finding’s `action_status` and regenerate the
+   HTML from the updated JSON, so the linked report reflects the final results.
 
 Offer to record declined items in `decisions.yaml` with a `review_after` date, so the next run
 doesn't nag.

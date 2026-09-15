@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "example": true,
+  "generated": "2026-09-15",
+  "profile": {"scope": "project", "focus": "security,cost", "depth": "quick", "mode": "audit"},
+  "summary": "Two changes are worth reviewing in this fictional project. First, remove a permission that allows every shell command without asking. Then shorten the project instructions to make them easier to maintain. No configuration changes have been made.",
+  "coverage": {
+    "summary": "Reviewed the project’s permission settings, instruction file and 10 recorded sessions.",
+    "projects_collected": ["/example/recipe-app"],
+    "sources": [{"source": "Project settings and instructions", "status": "collected"}, {"source": "Recorded sessions", "status": "partial", "scanned": 10, "omitted": 2}],
+    "limitations": ["Two sessions were outside the scan limit, so the usage figures describe only the 10 sessions reviewed."]
+  },
+  "metrics": {
+    "context_baseline_median": {"value": 12400, "unit": "tokens", "basis": "measured", "label": "Typical context at session start", "explanation": "Half the reviewed sessions started with at least this much context already loaded. This includes more than the project instruction file; it does not tell us how much a single edit would save.", "source": "First responses in 10 fictional session transcripts"},
+    "instruction_tokens": {"value": 1800, "unit": "tokens", "basis": "estimated", "label": "Size of project instructions", "explanation": "Approximate size of CLAUDE.md, calculated from its character count. This is not a measured bill or a promised saving.", "source": "7,200 characters divided by 4"}
+  },
+  "findings": [
+    {
+      "id": "SEC-broad-shell:recipe-app", "area": "security", "type": "fix", "severity": "high", "score": 3,
+      "title": "Every shell command is pre-approved",
+      "why": "A blanket permission removes an approval checkpoint for shell commands. A mistaken command could change or delete files without pausing for your review.",
+      "evidence": "The project settings contain the allow rule Bash(*), which covers every shell command.",
+      "fix": {"kind": "edit", "summary": "Remove the blanket rule. Approve specific routine commands as they are needed.", "target": "/example/recipe-app/.claude/settings.json", "before": "\"allow\": [\"Bash(*)\"]", "after": "\"allow\": []"},
+      "effort": "5 minutes, including checking the resulting settings", "status": "new", "action_status": "proposed", "reversible": true
+    },
+    {
+      "id": "COST-instructions:recipe-app", "area": "cost", "type": "fix", "severity": "low", "score": 1,
+      "title": "The instruction file repeats the same setup steps",
+      "why": "Repeated instructions make the file harder to maintain. Updating one copy can leave another copy out of date.",
+      "evidence": "CLAUDE.md repeats the same installation and test commands in three sections. Its total length is 7,200 characters.",
+      "fix": {"kind": "manual", "summary": "Keep one setup section and remove the duplicate steps after checking that no unique guidance is lost.", "target": "/example/recipe-app/CLAUDE.md", "steps": ["Compare the three setup sections.", "Keep each unique instruction once.", "Check that the documented setup and test commands still work."]},
+      "effort": "15 minutes", "status": "new", "action_status": "proposed", "reversible": true
+    }
+  ],
+  "applied": [],
+  "caveats": ["This quick audit did not compare settings with current online documentation.", "The report does not establish whether organization-managed policy overrides these project settings."]
+}

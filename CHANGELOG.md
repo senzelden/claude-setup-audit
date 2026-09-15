@@ -16,10 +16,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Every audit now includes a deterministic, self-contained HTML report rendered from audit JSON,
+  with scope/coverage, ranked findings, evidence, labeled metrics and action results. The renderer
+  escapes all report text and writes private files; the workflow refreshes HTML after applying fixes.
+
 - Minimal GitHub Actions CI runs the standard-library Python regression suite on Linux/Python
   3.13 for pushes and pull requests, with manual runs available. No paid model evaluations.
 
 ### Changed
+
+- HTML reports now lead with a readable summary, consequences and next steps. Technical
+  metadata is expandable; metric labels and explanations give numbers context. A fictional
+  example demonstrates the layout.
 
 - Usage measurements now filter session metadata by the inclusive timestamp window and join
   facets through unique session IDs for date and project attribution. Unknown dates and
