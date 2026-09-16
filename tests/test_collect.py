@@ -381,6 +381,76 @@ class SymlinkAndRaceGuards(FakeHome):
         self.assertTrue(os.path.islink(path))  # the swap itself is left alone; nothing was written
 
 
+class PruneBackups(FakeHome):
+    def apply(self, path):
+        plan = prune_permissions.plan_file(path, {"sudo"})
+        return prune_permissions.apply_file(path, *plan, os.path.join(self.home, "backups"))
+
+    def test_same_second_applies_preserve_both_originals(self):
+        originals = ['{ "permissions": {"allow": ["Bash(sudo -n true)"]}, "round": 1 }\n',
+                     '{ "permissions": {"allow": ["Bash(sudo -n true)"]}, "round": 2 }\n']
+        backups = []
+        with mock.patch('time.time', return_value=1234567890):
+            for original in originals:
+                path = self.write('settings.json', original)
+                backups.append(self.apply(path))
+        self.assertNotEqual(*backups)
+        for backup, original in zip(backups, originals):
+            with open(backup, 'rb') as f:
+                self.assertEqual(f.read(), original.encode())
+
+    def test_existing_backup_symlink_is_not_followed(self):
+        path = self.write('settings.json', {'permissions': {'allow': ['Bash(sudo -n true)']}})
+        victim = self.write('unrelated.txt', 'preserve me')
+        os.makedirs(os.path.join(self.home, 'backups'))
+        link = os.path.join(self.home, 'backups', 'settings.json.1234567890.bak')
+        os.symlink(victim, link)
+        with mock.patch('time.time', return_value=1234567890):
+            backup = self.apply(path)
+        with open(victim) as f:
+            self.assertEqual(f.read(), 'preserve me')
+        self.assertTrue(os.path.islink(link))
+        self.assertNotEqual(backup, link)
+
+    def test_backup_is_private_even_when_source_is_readable_by_others(self):
+        path = self.write('settings.json', {'permissions': {'allow': ['Bash(sudo -n true)']}})
+        os.chmod(path, 0o644)
+        backup = self.apply(path)
+        self.assertEqual(os.stat(backup).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+
+    def test_backup_copy_or_sync_failure_preserves_settings_and_removes_partial_backup(self):
+        def partial_copy(src, dst):
+            dst.write(b'partial')
+            raise OSError('simulated disk full')
+
+        for stage in ('copy', 'sync'):
+            with self.subTest(stage=stage):
+                original = '{ "permissions": {"allow": ["Bash(sudo -n true)"]} }\n'
+                path = self.write('settings.json', original)
+                patch = (mock.patch.object(prune_permissions.shutil, 'copyfileobj', side_effect=partial_copy)
+                         if stage == 'copy' else mock.patch('os.fsync', side_effect=OSError('sync failed')))
+                with patch, self.assertRaises(OSError):
+                    self.apply(path)
+                with open(path) as f:
+                    self.assertEqual(f.read(), original)
+                self.assertEqual(os.listdir(os.path.join(self.home, 'backups')), [])
+
+    def test_completed_backup_survives_settings_write_failure(self):
+        original = '{ "permissions": {"allow": ["Bash(sudo -n true)"]} }\n'
+        path = self.write('settings.json', original)
+        with mock.patch.object(prune_permissions, 'atomic_write', side_effect=OSError('write failed')), \
+             self.assertRaises(OSError):
+            self.apply(path)
+        backup_dir = os.path.join(self.home, 'backups')
+        backups = os.listdir(backup_dir)
+        self.assertEqual(len(backups), 1)
+        with open(os.path.join(backup_dir, backups[0])) as f:
+            self.assertEqual(f.read(), original)
+        with open(path) as f:
+            self.assertEqual(f.read(), original)
+
+
 class PrunePermissionsCLI(FakeHome):
     def run_cli(self, *args):
         import subprocess

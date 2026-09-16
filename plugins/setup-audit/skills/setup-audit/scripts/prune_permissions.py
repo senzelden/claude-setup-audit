@@ -3,6 +3,9 @@
 
 Dry-run by default: prints a JSON plan and changes nothing. With --apply, backs up every file it
 touches into --backup-dir first, rewrites only the selected categories, and validates the JSON.
+Backups use exclusively created unique names, are readable/writable only by their owner, and
+are flushed and fsynced before settings are edited. A failed backup is removed and blocks editing;
+a completed backup is retained if the subsequent settings write fails.
 
 Writes are atomic (temp file + fsync + os.replace, so a crash or full disk mid-write can't leave
 settings.json truncated) and refuse to follow a symlink by default (pass --allow-symlinks to
@@ -169,14 +172,22 @@ def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=
         if identity_of(st) != identity:
             raise ChangedSincePlan(path)
         os.makedirs(backup_dir, exist_ok=True)
-        backup = os.path.join(backup_dir, path.replace(collect.HOME, "").strip(os.sep).replace(os.sep, "__")
-                              + f".{int(time.time())}.bak")
-        with os.fdopen(fd, "rb", closefd=False) as src, open(backup, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+        prefix = path.replace(collect.HOME, "").strip(os.sep).replace(os.sep, "__")
+        # mkstemp uses exclusive creation and mode 0600: repeated applies cannot overwrite
+        # recovery data or follow a pre-existing backup symlink, even in the same second.
+        backup_fd, backup = tempfile.mkstemp(prefix=prefix + f".{int(time.time())}.",
+                                           suffix=".bak", dir=backup_dir)
         try:
-            os.chmod(backup, st.st_mode)
-        except OSError:
-            pass
+            with os.fdopen(backup_fd, "wb") as dst, os.fdopen(fd, "rb", closefd=False) as src:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+        except BaseException:
+            try:
+                os.unlink(backup)
+            except OSError:
+                pass
+            raise
     finally:
         os.close(fd)
     raw = {r["_raw"] for r in removals}
