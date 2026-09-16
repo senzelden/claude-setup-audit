@@ -102,9 +102,13 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
             servers_from(json_object(path, 'managed', sources), path, 'managed', key='managedMcpServers')
 
     registry_path = os.path.join(claude, 'plugins', 'installed_plugins.json')
-    registry = json_object(registry_path, 'plugin_registry', sources).get('plugins', {})
-    if not isinstance(registry, dict):
+    registry_data = json_object(registry_path, 'plugin_registry', sources)
+    registry_read = sources[-1]['status'] == 'collected'
+    registry = registry_data.get('plugins')
+    registry_valid = registry_read and isinstance(registry, dict)
+    if registry_read and not isinstance(registry, dict):
         sources.append(inventory.source(registry_path, 'plugin_registry', 'unavailable', reason='unknown_registry_shape'))
+    if not isinstance(registry, dict):
         registry = {}
     if any(not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows)
            for rows in registry.values()):
@@ -121,9 +125,11 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
             sources.append(inventory.source(registry_path, 'plugin_registry', 'not_checked', reason='unknown_install_scope'))
             continue
         selected.append((name, row))
-    sources.append(inventory.source(registry_path, 'plugin_registry', 'partial' if len(selected) > MAX_PLUGINS else 'collected',
-                                    eligible=len(selected), scanned=min(len(selected), MAX_PLUGINS),
-                                    omitted=max(0, len(selected)-MAX_PLUGINS)))
+    if registry_valid:
+        sources.append(inventory.source(registry_path + '#selected-installs', 'plugin_registry',
+                                        'partial' if len(selected) > MAX_PLUGINS else 'collected',
+                                        eligible=len(selected), scanned=min(len(selected), MAX_PLUGINS),
+                                        omitted=max(0, len(selected)-MAX_PLUGINS)))
     for name, row in selected[:MAX_PLUGINS]:
         plugin = dict(name=redact(name), scope=row.get('scope'), project=row.get('projectPath'),
                       version=redact(str(row.get('version', 'unknown'))), active_state='unknown',

@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format follows
   of the resolved target or its parent directories can still race the final path-based rename.
   Two regression tests cover retargeting before apply and after verification.
 
+### Fixed
+
+- Missing or malformed plugin registries no longer also claim a successful zero-install scan.
+  MCP and skill-listing guidance now respects bounded evidence and unverified activation.
+- Finite metrics whose difference overflows produce an unavailable comparison instead of
+  failing report finalization.
+
 ### Added
 
 - Explicit `clarity=pilot` instruction review candidates, using bounded existing excerpts.

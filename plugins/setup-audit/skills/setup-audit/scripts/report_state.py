@@ -311,8 +311,10 @@ def finalize(current, previous=None, decisions=(), as_of=None):
         result = dict(comparable=False, reason='Comparable labeled values and complete source coverage required.')
         if same and isinstance(metric, dict) and isinstance(old, dict) and all(
                 metric.get(k) == old.get(k) and metric.get(k) is not None for k in ('basis', 'unit', 'source')) and metric.get('basis') != 'unknown' and finite(metric['value']) and finite(old.get('value')) and metric_coverage(current, metric) and metric_coverage(previous, old):
-            result = dict(comparable=True, previous=old['value'], current=metric['value'],
-                          delta=metric['value'] - old['value'], unit=metric['unit'], basis=metric['basis'])
+            delta = metric['value'] - old['value']
+            if finite(delta):
+                result = dict(comparable=True, previous=old['value'], current=metric['value'],
+                              delta=delta, unit=metric['unit'], basis=metric['basis'])
         trend['metrics'][key] = result
     out['trend'] = trend
     validate_report(out, strict=True)

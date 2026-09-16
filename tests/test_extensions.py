@@ -56,6 +56,17 @@ class ExtensionInventory(FakeHome):
         self.assertTrue(any(s.get('reason') == 'external_component_path' for s in result['sources']))
         self.assertEqual(result['plugins'][1]['status'], 'not_checked')
 
+    def test_missing_or_malformed_registry_does_not_claim_zero_installs_collected(self):
+        for content in (None, '{', '{}', '{"plugins": []}'):
+            if content is not None:
+                self.write('.claude/plugins/installed_plugins.json', content)
+            result = self.scan()
+            self.assertFalse(any('scanned' in src for src in result['sources']
+                                 if 'installed_plugins.json' in src['source']))
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {}})
+        result = self.scan()
+        self.assertTrue(any(src.get('scanned') == 0 for src in result['sources']))
+
     def test_malformed_servers_and_limit(self):
         self.write('.claude.json', {'mcpServers': {'broken': [], 'valid': {'command': 'node'}}})
         from unittest import mock

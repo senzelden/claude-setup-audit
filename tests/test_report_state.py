@@ -68,6 +68,14 @@ class ReportState(unittest.TestCase):
         old['metrics']['tokens'] = 100
         self.assertFalse(state.finalize(self.report(), old)['trend']['metrics']['tokens']['comparable'])
 
+    def test_overflowing_delta_is_unavailable_not_invalid_report(self):
+        old, current = self.report('2026-09-14'), self.report()
+        old['metrics']['tokens']['value'] = -1e308
+        current['metrics']['tokens']['value'] = 1e308
+        result = state.finalize(current, old)
+        self.assertFalse(result['trend']['metrics']['tokens']['comparable'])
+        state.validate_report(result, strict=True)
+
     def test_decisions_expiry_evidence_and_legacy_baseline(self):
         current, old = self.report(), self.report('2026-09-14')
         decision = dict(id='SEC-test', reason='Deliberate choice', settled='2026-09-13', review_after='2026-09-16')

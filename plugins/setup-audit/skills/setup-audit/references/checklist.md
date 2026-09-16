@@ -91,14 +91,15 @@ the collector snapshot.
   context. Apply only with the split protocol in SKILL.md.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
-- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, measured): configured servers never
-  called in the window. Propose removing or disabling them per project. A server used in only one
-  project belongs in that project's `.mcp.json`, not user scope.
-- **COST-skill-listing** (`skill_listing`): the listing budget is 1% of the context window
-  (`skillListingBudgetFraction`, default 0.01), and each entry is capped at 1,536 chars
-  (`skillListingMaxDescChars`). When many skills overflow it,
-  descriptions of rarely used skills get dropped. Fix with `skillOverrides: "name-only"`, trimmed
-  descriptions, or disabling unused plugins.
+- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these
+  legacy user/project names have no observed calls in the scanned records. Check transcript
+  coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
+  transcript scans provide no usage evidence. Propose removal only with additional evidence that
+  the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
+- **COST-skill-listing** (`skill_listing`, excerpt-size observation): verify runtime activation,
+  `skillListingBudgetFraction` and `skillListingMaxDescChars` against current settings and docs
+  before claiming listing overflow. Collected excerpts do not establish the effective budget or
+  description folding. Recommend trimming only when actual listing pressure is established.
 - **COST-startup-hooks** (`plugin_session_start_hooks`, estimated): text injected on every
   start/clear/compact.
 - **COST-subagents** (`usage.subagent_session_share`, Agent tool counts): many small agents

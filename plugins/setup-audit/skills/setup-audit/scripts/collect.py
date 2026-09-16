@@ -1335,6 +1335,9 @@ def main():
         configured |= set(entry.get("mcp_servers") or [])
     used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
     snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
+    snap["transcripts"]["mcp_configured_but_unused_note"] = (
+        "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
+        "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # default=... is a fallback for anything sanitize() left as a non-JSON-native object; redact
     # it too on the way out, since sanitize() can't see into a value it can't recurse into.
     text = json.dumps(sanitize(snap), indent=1, default=lambda o: redact(str(o)))
