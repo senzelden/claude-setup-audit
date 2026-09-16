@@ -669,7 +669,8 @@ class ConfigDirOverride(unittest.TestCase):
 
 class OutPathSafety(unittest.TestCase):
     def test_dir_is_allowed_matches_the_allowlist_only(self):
-        allowed = {"/tmp", "/home/user/.claude/audits"}
+        # Production _out_allowed_dirs() resolves roots first; /tmp is a symlink on macOS.
+        allowed = {os.path.realpath(p) for p in ("/tmp", "/home/user/.claude/audits")}
         self.assertTrue(collect._dir_is_allowed("/tmp", allowed))
         self.assertTrue(collect._dir_is_allowed("/tmp/sub/dir", allowed))
         self.assertTrue(collect._dir_is_allowed("/home/user/.claude/audits", allowed))
