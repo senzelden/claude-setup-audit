@@ -32,7 +32,6 @@ After obtaining approval, start with one case and one arm:
 ```bash
 mkdir -p plugins/setup-audit/evals/results
 quality_run_dir=$(mktemp -d "$PWD/plugins/setup-audit/evals/results/quality-XXXXXX")
-export EVAL_EVIDENCE_DIR="$quality_run_dir/manifests"
 claude plugin eval plugins/setup-audit --case readiness-envrc-pointers \
   --scaffold --keep-temp --trust-plugin --ablation none --runs 1 --concurrency 1 \
   --allow-tools "Bash(python3 *)" Write \
@@ -49,9 +48,13 @@ Run the free post-run checker for **each** retained run, even if its model score
 
 ```bash
 python3 plugins/setup-audit/evals/helpers/check_quality.py check \
-  --manifest "$quality_run_dir/manifests/<case>-<unique-id>.json" \
+  --manifest "plugins/setup-audit/evals/results/manifests/<case>-<unique-id>.json" \
   --trace /tmp/claude-eval-<run-id>/out/trace.jsonl
 ```
+
+The scaffold stores manifests in `evals/results/manifests/`, outside the model workspace.
+CLI 2.1.273 does not forward operator `EVAL_*` variables to scaffold scripts, although it
+forwards them to model children. Direct fixture tests can override `EVAL_EVIDENCE_DIR`.
 
 Use `tracePath` from that run in `aggregate-result.json` and the external manifest whose
 `workspace` matches the trace's system-init `cwd`. Do not take paths from the model's answer.

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -215,3 +216,22 @@ class EvalQuality(unittest.TestCase):
                 manifest = next(m for m in manifests if m['workspace'] == str(work.resolve()))
                 self.assertEqual(manifest['entries'], quality.inventory(work))
                 self.assertTrue((work / quality.CASES[case]['project'] / '.git').is_dir())
+
+    def test_scaffold_default_manifest_location_without_operator_environment(self):
+        # The CLI gives scaffolds a filtered environment without operator EVAL_* variables.
+        case = 'readiness-envrc-pointers'
+        suite = self.root / 'suite'
+        (suite / case).mkdir(parents=True)
+        shutil.copyfile(EVALS / case / 'fixture.sh', suite / case / 'fixture.sh')
+        (suite / 'helpers').symlink_to(EVALS / 'helpers', target_is_directory=True)
+        work = self.root / 'fresh-workspace'
+        work.mkdir()
+        home = self.root / 'fake-home'
+        home.mkdir()
+        env = {'PATH': os.environ['PATH'], 'HOME': str(home), 'GIT_CONFIG_NOSYSTEM': '1'}
+        result = subprocess.run(['bash', str(suite / case / 'fixture.sh')], cwd=work,
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifests = list((suite / 'results/manifests').glob('*.json'))
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(json.loads(manifests[0].read_text())['workspace'], str(work.resolve()))
