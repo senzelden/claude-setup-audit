@@ -127,8 +127,9 @@ copying code, and we recommend them if you need a deeper, specialised tool:
 | audit / propose / apply modes, contradiction tracing | [into-the-intraverse/claude-perfectionist](https://github.com/into-the-intraverse/claude-perfectionist) (MIT) |
 | Score trend across runs | [imadAttar/kaizen](https://github.com/imadAttar/kaizen) (idea only; no license file, nothing reused) |
 
-## License
-
 Development priorities and deferred work are tracked in [the roadmap](docs/roadmap.md).
+See [development checks](docs/development.md) for local and CI validation.
+
+## License
 
 MIT, see [LICENSE](LICENSE).

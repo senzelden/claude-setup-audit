@@ -1,4 +1,4 @@
-name: Python regression tests
+name: Validation
 
 on:
   push:
@@ -14,14 +14,49 @@ concurrency:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.13', '3.14']
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
+    env:
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python }}
       - name: Run regression suite
         run: python3 -m unittest discover -s tests -v
+      - name: Install schema check dependency (CI only)
+        run: python3 -m pip install jsonschema==4.26.0
+      - name: Check schema and fixture snapshots independently
+        run: python3 tests/check_snapshot_schema.py -v
+
+  plugin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLAUDE_VERSION: '2.1.273'
+      DISABLE_AUTOUPDATER: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Claude Code CLI
+        run: |
+          curl --fail --silent --show-error --location https://claude.ai/install.sh --output "$RUNNER_TEMP/install-claude.sh"
+          bash "$RUNNER_TEMP/install-claude.sh" "$CLAUDE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate marketplace and plugin strictly (no model calls)
+        run: |
+          mkdir -p "$RUNNER_TEMP/validation-home/.claude"
+          export HOME="$RUNNER_TEMP/validation-home"
+          export CLAUDE_CONFIG_DIR="$HOME/.claude"
+          claude --version
+          claude plugin validate . --strict
+          claude plugin validate plugins/setup-audit --strict

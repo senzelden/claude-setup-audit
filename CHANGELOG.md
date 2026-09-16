@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows
   by the query helper. Unknown versions fail closed; legacy unversioned snapshots remain
   queryable with an explicit warning. Invalid output cannot overwrite an existing snapshot.
 - A reconciled, tracked roadmap separates shipped work from active and deferred priorities.
+- CI matrix on Linux/macOS and Python 3.11/3.13/3.14, independent JSON Schema fixture checks,
+  and strict marketplace/plugin validation using a pinned Claude Code CLI without model calls.
 
 ## [0.5.0] - 2026-09-16
 

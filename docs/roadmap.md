@@ -19,9 +19,13 @@ These are release results, not claims about later changes or broader platform su
 
 ## Current priority: reliability
 
-- [ ] Version the snapshot contract; document compatibility and provenance/completeness
+- [x] Version the snapshot contract; document compatibility and provenance/completeness
   semantics; validate the core structure and add regression coverage.
-- [ ] Broaden CI across Python versions and Linux/macOS, and run strict CLI plugin validation.
+- [x] Broaden CI across Python versions and Linux/macOS, and run strict CLI plugin validation.
+
+Implemented after 0.5.0; see [development checks](development.md). Hosted execution of the new
+matrix remains to be verified after pushing. Neither these changes nor the roadmap cleanup
+have been released yet.
 
 ## Next candidates, separately scoped
 
