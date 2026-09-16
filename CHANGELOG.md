@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Permission-pruning backups use unique, exclusively created files with owner-only permissions.
+  Repeated applies in the same second no longer overwrite earlier backups or follow an existing
+  backup-file symlink. Backup copy/sync failures block settings edits and remove partial backups;
+  completed backups survive subsequent settings-write failures.
+
 ### Fixed
 
 - Required apply methods are preserved when helpers cannot run: degraded analysis no longer
@@ -18,6 +25,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Credential-free Linux namespace and macOS Seatbelt prerequisite probes, with a manually
+  triggered CI workflow and regression tests. These checks make no model calls and do not
+  establish full Claude eval-runner compatibility.
 - Snapshot v1 envelope and coverage/provenance schema, validated before collector output and
   by the query helper. Unknown versions fail closed; legacy unversioned snapshots remain
   queryable with an explicit warning. Invalid output cannot overwrite an existing snapshot.
