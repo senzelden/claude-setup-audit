@@ -23,14 +23,18 @@ These are release results, not claims about later changes or broader platform su
   semantics; validate the core structure and add regression coverage.
 - [x] Broaden CI across Python versions and Linux/macOS, and run strict CLI plugin validation.
 
-Implemented after 0.5.0; see [development checks](development.md). Hosted execution of the new
-matrix remains to be verified after pushing. Neither these changes nor the roadmap cleanup
-have been released yet.
+Implemented after 0.5.0; see [development checks](development.md). Hosted verification passed
+on 2026-09-16 at `a09a394`: [all seven jobs](https://github.com/senzelden/claude-setup-audit/actions/runs/35111349343),
+including 108 regression tests and 3 schema checks on each Linux/macOS Python 3.11/3.13/3.14
+combination, plus strict marketplace/plugin validation with Claude Code 2.1.273. The first
+push exposed an invalid job-level runner context and a macOS path assumption in a test;
+both were corrected in follow-up commits. These changes have been pushed but not released.
 
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** repeated trigger/quality runs, resolve readiness-case inconsistency,
-  and add apply, suppression and cache-health cases. Model runs consume paid usage.
+  and add apply, suppression and cache-health cases. The [evaluation plan](evaluation-plan.md)
+  defines the implementation order and acceptance evidence. Model runs require separate approval.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal

@@ -3,6 +3,10 @@
 Run with `claude plugin eval` (Claude Code v2.1.269+) from the repository root. Every run spends
 real model usage, so start small.
 
+The next improvements are scoped in [the evaluation plan](../../../docs/evaluation-plan.md):
+fixture and grader reliability first, repeated baseline runs second, then apply, suppression
+and cache-health cases. Ask for approval before paid runs; the plan itself authorizes none.
+
 | Tag | Cases | What it measures | Cost |
 |---|---|---|---|
 | `trigger` | 3 should-trigger, 3 near-miss should-not-trigger | whether the skill fires on natural phrasing, and stays out of adjacent requests | cheap: turn cap of 3–4 |
