@@ -32,7 +32,7 @@ on 2026-09-16 at `a09a394`: [all seven jobs](https://github.com/senzelden/claude
 including 108 regression tests and 3 schema checks on each Linux/macOS Python 3.11/3.13/3.14
 combination, plus strict marketplace/plugin validation with Claude Code 2.1.273. The first
 push exposed an invalid job-level runner context and a macOS path assumption in a test;
-both were corrected in follow-up commits. These changes have been pushed but not released.
+both were corrected in follow-up commits before inclusion in 0.6.0.
 
 ## Next candidates, separately scoped
 
