@@ -1,0 +1,25 @@
+name: Runner OS prerequisites (no models)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Check OS prerequisites only (not eval-runner compatibility)
+        run: python3 plugins/setup-audit/evals/helpers/runner_preflight.py --execution-context github-hosted

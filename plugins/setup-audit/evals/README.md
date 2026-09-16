@@ -15,6 +15,38 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 | `quality`, `suppression` | `decision-suppression` | report finalization with matching, changed, expired and unverified decisions | not yet piloted |
 | `quality`, `cache` | `cache-health` | known transcript totals, TTL subset, rewrite classifications and incomplete usage | not yet piloted |
 
+## Unpaid runner preflight
+
+Before proposing shell-dependent paid runs, check the candidate environment without Claude
+or account credentials:
+
+```sh
+python3 plugins/setup-audit/evals/helpers/runner_preflight.py --execution-context host-shell
+```
+
+Use an accurate operator label (for example, `codex-sandbox` when run inside an agent sandbox).
+The helper uses a temporary fake home and a minimal child environment without inherited
+credentials or shell startup hooks. Linux checks setgroups-before-mapping and a mapped-user
+namespace control; macOS checks shell execution, an allowed write and a denied write under
+a small Seatbelt policy. It does not change host policy, install software or invoke Claude.
+Exit 0 means only these prerequisite checks passed; missing tools, failed probes and unsupported
+platforms exit 1. JSON always records `eval_runner_verified: false`.
+
+The manual **Runner OS prerequisites (no models)** GitHub Actions workflow runs the same
+helper on Linux/macOS without model credentials. Its logs contain only synthetic probe data.
+It is separate from normal validation CI and has no paid eval step. A green result is partial
+evidence: neither this helper nor the existing regression/manifest jobs exercise the CLI's
+actual eval policy, embedded seccomp helper, proxy setup or Bash tool dispatch. Verify that
+execution path before proposing another shell-dependent pilot; never use a paid run to discover
+basic sandbox compatibility. Keep local probe reports in ignored `results/` or `.release-notes/`.
+
+Probe scope checked 2026-09-16 against the official
+[eval isolation documentation](https://code.claude.com/docs/en/plugin-evals#how-runs-are-isolated),
+the [upstream namespace issue](https://github.com/anthropics/claude-code/issues/43454), and
+Anthropic's [macOS sandbox implementation](https://github.com/anthropic-experimental/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts).
+The test Seatbelt policy is deliberately smaller than the runner's generated policy; passing
+it does not establish full macOS runner compatibility.
+
 ## Trigger accuracy
 
 ```bash
