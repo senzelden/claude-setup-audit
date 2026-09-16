@@ -47,7 +47,9 @@ three repetitions and both arms have 12 agent runs, plus judge calls.
 Run the free post-run checker for **each** retained run, even if its model score is perfect:
 
 ```bash
-python3 plugins/setup-audit/evals/helpers/check_quality.py check \
+# CLI 2.1.273 seals retained home/tmp trees. Allow read/traverse for inspection only.
+chmod 500 /tmp/claude-eval-<run-id>/sealed
+python3 plugins/setup-audit/evals/helpers/check_quality.py check --sealed \
   --manifest "plugins/setup-audit/evals/results/manifests/<case>-<unique-id>.json" \
   --trace /tmp/claude-eval-<run-id>/out/trace.jsonl
 ```
@@ -57,7 +59,10 @@ CLI 2.1.273 does not forward operator `EVAL_*` variables to scaffold scripts, al
 forwards them to model children. Direct fixture tests can override `EVAL_EVIDENCE_DIR`.
 
 Use `tracePath` from that run in `aggregate-result.json` and the external manifest whose
-`workspace` matches the trace's system-init `cwd`. Do not take paths from the model's answer.
+`workspace` matches the trace's system-init `cwd`. The `--sealed` option reads the
+CLI's relocated `sealed/home/cwd` tree while verifying the original workspace identity.
+Do not run Git, scripts or environment files from the retained tree; inspect it as data only.
+For a workspace that has not been relocated, omit `--sealed`. Do not take paths from the model's answer.
 `--keep-temp` is required; missing or mismatched traces/workspaces are incomplete evidence,
 not a pass. Capture refuses a manifest inside the model workspace. Keep the external manifest
 unchanged after capture. This is a regression check, not a boundary against hostile plugin code.

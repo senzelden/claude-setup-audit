@@ -161,7 +161,7 @@ def inspect_reports(workspace, case):
     return {'report_count': len(reports), 'artifact_leak': leaked}
 
 
-def check(manifest_path, trace_path):
+def check(manifest_path, trace_path, sealed=False):
     """Fail closed on missing evidence; diagnostics never echo content or untrusted paths."""
     result = {'passed': False, 'complete': False, 'errors': []}
     try:
@@ -169,6 +169,13 @@ def check(manifest_path, trace_path):
         if manifest['version'] != 1 or manifest['case'] not in CASES:
             raise ValueError('unsupported manifest')
         workspace = Path(manifest['workspace'])
+        original_workspace = workspace
+        if sealed:
+            # CLI 2.1.273 moves home/ beneath sealed/ when --keep-temp finishes.
+            if (workspace.parts[-2:] != ('home', 'cwd')
+                    or trace_path.resolve() != workspace.parent.parent / 'out/trace.jsonl'):
+                raise ValueError('unrecognized retained workspace layout')
+            workspace = workspace.parent.parent / 'sealed/home/cwd'
         before = manifest['entries']
         after = inventory(workspace, exclude_reports=True)
         result['source_changes'] = {
@@ -180,7 +187,7 @@ def check(manifest_path, trace_path):
         result['errors'].append('fixture_evidence_unavailable')
         return result
     try:
-        result.update(inspect_trace(trace_path, workspace))
+        result.update(inspect_trace(trace_path, original_workspace))
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         result['errors'].append('trace_evidence_unavailable')
     try:
@@ -204,6 +211,8 @@ def main():
     verify = commands.add_parser('check')
     verify.add_argument('--manifest', type=Path, required=True)
     verify.add_argument('--trace', type=Path, required=True)
+    verify.add_argument('--sealed', action='store_true',
+                        help='inspect the CLI 2.1.273 sealed/home/cwd retained layout')
     args = parser.parse_args()
     if args.command == 'capture':
         try:
@@ -212,7 +221,7 @@ def main():
             parser.exit(1, 'Fixture manifest capture failed.\n')
         print(f'Fixture manifest: {path}')
     else:
-        result = check(args.manifest, args.trace)
+        result = check(args.manifest, args.trace, args.sealed)
         print(json.dumps(result, sort_keys=True))
         return 0 if result['passed'] else 1
     return 0

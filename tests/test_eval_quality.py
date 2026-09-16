@@ -171,6 +171,24 @@ class EvalQuality(unittest.TestCase):
         self.write_trace()
         self.assertFalse(self.check()['complete'])
 
+    def test_sealed_retention_layout_keeps_original_trace_identity(self):
+        original = self.root / 'home/cwd'
+        retained = self.root / 'sealed/home/cwd'
+        retained.parent.mkdir(parents=True)
+        self.workspace.rename(retained)
+        manifest = json.loads(self.manifest.read_text())
+        manifest['workspace'] = str(original)
+        self.manifest.write_text(json.dumps(manifest))
+        self.events[0]['cwd'] = str(original)
+        (self.root / 'out').mkdir()
+        self.trace = self.root / 'out/trace.jsonl'
+        self.write_trace()
+        self.assertFalse(self.check()['complete'])
+        self.assertTrue(quality.check(self.manifest, self.trace, sealed=True)['passed'])
+        other = self.root / 'other-trace.jsonl'
+        shutil.copyfile(self.trace, other)
+        self.assertFalse(quality.check(self.manifest, other, sealed=True)['complete'])
+
     def test_symlinks_are_not_followed_for_source_or_report_evidence(self):
         source = self.workspace / 'app/source.py'
         source.unlink()
