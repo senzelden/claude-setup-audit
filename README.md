@@ -129,4 +129,6 @@ copying code, and we recommend them if you need a deeper, specialised tool:
 
 ## License
 
+Development priorities and deferred work are tracked in [the roadmap](docs/roadmap.md).
+
 MIT, see [LICENSE](LICENSE).
