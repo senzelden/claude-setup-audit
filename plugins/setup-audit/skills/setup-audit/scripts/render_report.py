@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import tempfile
+import report_state
 
 
 def escape(value):
@@ -35,17 +36,7 @@ def display(value):
 
 
 def validate(report):
-    if not isinstance(report, dict) or type(report.get('version')) is not int or report['version'] != 1:
-        raise ValueError('expected an audit object with version 1')
-    for key in ('findings', 'applied'):
-        if not isinstance(report.get(key, []), list) or any(
-            not isinstance(item, dict) for item in report.get(key, [])
-        ):
-            raise ValueError(f'{key} must be an array of objects')
-    for finding in report.get('findings', []):
-        score = finding.get('score', 0)
-        if type(score) not in (int, float) or not math.isfinite(score):
-            raise ValueError('finding score must be a finite number')
+    report_state.validate_report(report)
 
 
 def label(value):
@@ -150,7 +141,7 @@ def render(report):
     finding_section('findings', 'Findings, in priority order', ranked, True)
     finding_section('parked', 'Lower-value changes to consider later', [f for f in findings if f.get('type') == 'parked'
                     and f.get('status') not in ('resolved', 'suppressed')])
-    for status, title in (('resolved', 'Resolved since the last audit'), ('suppressed', 'Accepted exceptions')):
+    for status, title in (('resolved', 'Resolved findings'), ('suppressed', 'Accepted exceptions')):
         finding_section(status, title, [f for f in findings if f.get('status') == status])
 
     if report.get('applied'):
@@ -185,6 +176,18 @@ def render(report):
         else:
             parts.append(display(metrics))
         parts.append('</div></section>')
+    if report.get('trend'):
+        trend = report['trend']
+        parts.append('<section id="trend"><h2>Since the previous audit</h2>')
+        parts.append(paragraph(trend.get('reason', 'Comparison details are unavailable.')))
+        for name, metric in trend.get('metrics', {}).items():
+            if metric.get('comparable'):
+                parts.append(paragraph(f"{label(name)}: {metric['previous']} → {metric['current']} {metric['unit']} "
+                                       f"(change: {metric['delta']:+g}; {metric['basis']})."))
+        if trend.get('findings', {}).get('not_rechecked'):
+            parts.append(paragraph('Some earlier findings were not rechecked; they are not counted as resolved.'))
+        parts.append(disclosure('Comparison evidence', trend))
+        parts.append('</section>')
     parts.append('<section id="coverage"><h2>What was checked</h2>')
     coverage = report.get('coverage')
     if coverage is None:
@@ -213,7 +216,7 @@ def write_report(source):
     if source.suffix.lower() != '.json':
         raise ValueError('input must have a .json extension')
     with source.open(encoding='utf-8') as stream:
-        report = json.load(stream)
+        report = report_state.load_json(stream.read())
     output = render(report)
     target = source.with_suffix('.html')
     # A private temporary file plus replacement avoids following an existing output symlink,

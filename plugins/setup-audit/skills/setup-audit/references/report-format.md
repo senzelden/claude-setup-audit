@@ -1,13 +1,16 @@
 # Audit report format (version 1)
 
 Write one JSON object using the existing version 1 envelope. The presentation fields below
-are additive; older reports render with explicit missing-data labels. This is a minimal report
-contract, not a snapshot schema or a validator for decisions, trends, or evidence correctness.
+are additive; older reports render with explicit missing-data labels. `process_report.py`
+validates new reports and produces deterministic history and trends; see `report-state.md`.
+Structural validation cannot verify that an observation or completed-check claim is true.
 
 ```json
 {
   "version": 1,
   "generated": "2026-09-15T12:00:00Z",
+  "window_days": 30,
+  "checks": {"SEC-example": "complete"},
   "claude_code_version": "observed version or unknown",
   "profile": {"focus": "security", "depth": "quick", "scope": "project", "mode": "audit"},
   "summary": "Short summary already used in Markdown.",
@@ -64,7 +67,7 @@ A complete fictional example is in `examples/readable-audit.json` in the plugin 
 - `status` records audit history (`new`, `open`, `regressed`, `resolved`, `suppressed`).
   `action_status` independently records `proposed`, `approved`, `applied`, `partial`, `failed`,
   `skipped`, or `declined`. Never infer application from the history status.
-- For suppressed findings include the decision reason and `review_after`. For each attempted
+- For suppressed findings the processor includes `decision.reason` and `decision.review_after`. For each attempted
   action, append an object to `applied` with `id`, `status`, `files`, `backups`, `verification`,
   and `revert`. Update the finding's `action_status` and regenerate HTML after changes.
 - Text is plain text, including evidence, diffs, commands and URLs. The renderer does not execute

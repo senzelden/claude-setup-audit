@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Deterministic report/decision validation, evidence-bound suppression and expiry, and
+  conservative two-run finding/metric comparisons shown in HTML. Incomplete coverage cannot
+  imply resolution or a comparable metric delta; action status remains independent.
+
 - MCP provenance across user/local/project/managed/plugin sources and registry-selected plugin
   components, with credential values omitted and activation kept unknown. Skill-listing size
   now uses observed excerpts instead of fixed budget assumptions or newest-cache selection.

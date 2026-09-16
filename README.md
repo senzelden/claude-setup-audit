@@ -57,7 +57,8 @@ you to approve the first write. In headless runs, point `report_dir` at a folder
 report goes to a temporary folder.
 
 Deliberate choices can be recorded in `~/.claude/audits/decisions.yaml` with a `review_after`
-date, so they aren't re-flagged until then.
+date and an evidence fingerprint. Unchanged evidence stays suppressed until that date; changed
+or unverified evidence remains visible. Report comparisons label incomplete or mismatched coverage.
 
 ## Agent readiness
 
@@ -87,7 +88,7 @@ flags are out of scope, since they're product architecture with no agent-side si
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.
 - **Writes** reports to `~/.claude/audits/` (`*-audit.html`, `*-audit.md`, and a machine-readable `*-audit.json`
-  used for trends). It edits config only for approved items, after backing up to
+  used for validated, scope-aware trends). It edits config only for approved items, after backing up to
   `~/.claude/backups/`.
 - **Sends** nothing except requests for the public Claude Code docs pages (`depth=full`).
 - Reports contain paths, rule text and memory excerpts. **Review them before sharing.**

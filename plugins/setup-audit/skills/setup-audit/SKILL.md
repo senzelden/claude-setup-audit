@@ -41,7 +41,7 @@ because that section holds the options to offer (e.g. for env variables Claude's
 | `mode` | `audit` (read-only report) · `propose` (report + exact diffs, then ask) · `apply` (propose, then apply approved items) | `propose` |
 | `report_dir` | where reports and `audit.json` live (also where the previous run is looked up) | `~/.claude/audits` |
 
-Then read the decisions file `~/.claude/audits/decisions.yaml`, if it exists. It records
+Use `<report_dir>/decisions.yaml`, if it exists. It records
 deliberate divergences the user doesn't want re-flagged:
 
 ```yaml
@@ -51,9 +51,9 @@ deliberate divergences the user doesn't want re-flagged:
   review_after: 2027-03-01     # after this date, re-surface the finding once
 ```
 
-Suppress matching findings, but list them under "Suppressed by decisions" with their review
-date. Re-surface a finding once its `review_after` date has passed, or when the evidence has
-materially changed (e.g. a new risky rule of the same kind).
+The report processor validates this flat-scalar YAML format (JSON arrays also work). It applies
+exact finding/check IDs, dates and evidence fingerprints; see `references/report-state.md`.
+Do not suppress findings by interpreting unsupported YAML or guessing at changed evidence.
 
 ## Step 1: Collect the snapshot (cheap, deterministic)
 
@@ -179,10 +179,10 @@ List them but don't rank them. For repeated mistakes, only a pattern across seve
 projects counts, and the lightest mechanism that prevents recurrence wins:
 memory line < CLAUDE.md or path-scoped rule < hook (must always hold) < skill (whole workflow).
 
-**Diff against the previous run** (`<report_dir>/*-audit.json`): mark each finding `new`,
-`open` or `regressed`, and list `resolved` ones. For learning findings, compare the metric that
-motivated a previously applied fix (e.g. a friction count or a correction cluster). If it
-didn't improve, escalate the mechanism, e.g. from an instruction to a hook.
+**Compare with the previous run** using the report processor in Step 4. Supply the latest older
+report from the same report directory; never infer resolution just because a finding is absent.
+For learning findings, use comparable metric deltas as evidence for whether an applied fix helped.
+A delta alone does not establish that the fix caused the change.
 
 ## Step 4: Write Markdown, JSON and HTML reports
 
@@ -223,9 +223,14 @@ Cap the Proposals table at about 15 rows and put the rest under a short "Minor" 
 
 Write `audit.json` using `references/report-format.md`, including scope/coverage, labeled
 metrics, evidence, and separate finding-history and action statuses. Reuse the Markdown summary
-and findings; do not write a second narrative for HTML. Generate HTML for every audit:
+and findings; do not write a second narrative for HTML. Include snapshot `window_days`, and a
+`checks` map marking only checks fully evaluated under the current coverage as `complete`.
+First validate and finalize history/decisions with `process_report.py`; see
+`references/report-state.md` for optional `--previous` and `--decisions` arguments. Then align
+Markdown statuses and comparisons with the finalized JSON and generate HTML for every audit:
 
 ```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json" --finalize
 python3 ${CLAUDE_SKILL_DIR}/scripts/render_report.py "<report_dir>/<stem>.json"
 ```
 
@@ -274,7 +279,8 @@ before writing it.
    skipped or failed items plainly. Update each finding’s `action_status` and regenerate the
    HTML from the updated JSON, so the linked report reflects the final results.
 
-Offer to record declined items in `decisions.yaml` with a `review_after` date, so the next run
+Offer to record declined items in `decisions.yaml` with a `review_after` date and the finding’s
+`evidence_hash` from finalized JSON, so the next run
 doesn't nag.
 
 ## Boundaries
