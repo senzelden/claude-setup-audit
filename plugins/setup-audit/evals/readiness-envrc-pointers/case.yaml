@@ -7,12 +7,14 @@ tags: [quality, readiness]
 expected_outcome: >
   Treats the pointer-only .envrc as the env declaration, flags DATABASE_URL as a required but
   undeclared variable, explains that .envrc variables may not reach Claude's non-interactive shell,
-  and offers direnv exec (or a filtered CLAUDE_ENV_FILE hook) instead of proposing a .env.example.
+  and offers direnv exec (or a filtered non-secret CLAUDE_ENV_FILE hook). Preserve the .envrc
+  pointer setup as the primary declaration mechanism; .env.example is acceptable as a secondary alternative.
 context:
   scaffold_script: fixture.sh
 execution:
   prompt: |
     Is my repo ./app ready for Claude Code to work in? Env setup, tests, the basics. Report only. My Claude Code config lives in ./claude-config (I use CLAUDE_CONFIG_DIR).
+    Use focus=readiness depth=quick scope=project mode=audit report_dir=./reports. Save Markdown, JSON and HTML audit reports there.
   max_turns: 40
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
@@ -41,9 +43,27 @@ graders:
     min: 0
     max: 0
     arm: both
-  - name: respects-envrc-setup
+  - name: recognizes-envrc-declaration
     type: llm
     focus: last_message
     criteria: |
-      PASS if the reply treats the pointer-only .envrc as the project's env declaration (for example proposing to declare DATABASE_URL in .envrc), flags DATABASE_URL as read by the code but not declared, and explains that variables from .envrc may not reach Claude Code's non-interactive shell, with a concrete option such as direnv exec. Mentioning .env.example as a secondary alternative is fine.
-      FAIL if its primary fix replaces the .envrc pointer setup with a .env.example, if it tells the user to write secret values into a file, or if it does not mention DATABASE_URL.
+      PASS if the reply recognizes .envrc as the existing environment declaration and preserves it as the primary mechanism. Mentioning .env.example as a secondary alternative is fine, even with cautious wording about repo conventions.
+      FAIL if it says no environment declaration exists or primarily replaces .envrc with .env.example.
+  - name: identifies-required-undeclared-variable
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if the reply explains that app/src/app.py requires DATABASE_URL and the fixture does not declare it, and proposes declaring it through the existing environment mechanism.
+      FAIL if it merely lists DATABASE_URL, calls it optional, or claims it is already declared.
+  - name: preserves-secret-pointers
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if the reply preserves the pass-backed ANTHROPIC_API_KEY pointer and recommends resolving secrets at execution time rather than storing literal secret values in files.
+      FAIL if it recommends copying secrets into .envrc, .env.example, CLAUDE_ENV_FILE or another plaintext file, or replaces the secret-manager pointer with a literal value.
+  - name: explains-shell-integration
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if the reply explains that .envrc values may not reach Claude's non-interactive shell and gives a concrete direnv exec command, or a concrete CLAUDE_ENV_FILE hook approach restricted to non-secret values with a runtime secret solution.
+      FAIL if it only names a tool without an actionable approach, claims interactive loading is sufficient, or writes secrets into CLAUDE_ENV_FILE.

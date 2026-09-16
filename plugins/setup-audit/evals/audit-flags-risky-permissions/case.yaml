@@ -13,6 +13,7 @@ context:
 execution:
   prompt: |
     Audit my Claude Code setup for security problems. Report only, don't change anything. I run Claude Code with CLAUDE_CONFIG_DIR, and my config lives in ./claude-config.
+    Use focus=security depth=quick scope=all mode=audit report_dir=./reports. Save Markdown, JSON and HTML audit reports there.
   max_turns: 40
   timeout_seconds: 900
   allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]

@@ -1,7 +1,15 @@
 # Next evaluation improvements
 
-Scoped 2026-09-16; implementation and paid runs are pending. This plan follows the snapshot
+Scoped 2026-09-16; the first implementation chunk is complete and its pilot is pending. This plan follows the snapshot
 contract and hosted CI work. It does not expand collector checks or redesign apply behavior.
+
+Implemented: aligned readiness expectations, four independent judge obligations and calibration
+examples, explicit quick/read-only fixture profiles, external scaffold manifests, and a free
+post-run checker for retained workspaces/traces and report artifacts. Fifteen new regression
+tests cover the checker and both real scaffolds; all 123 local tests pass. See the
+[eval instructions](../plugins/setup-audit/evals/README.md) for commands and coverage limits.
+The user approved one readiness pilot after implementation; repeated baselines and additional
+cases remain separate paid batches.
 
 ## Evidence and gaps
 
