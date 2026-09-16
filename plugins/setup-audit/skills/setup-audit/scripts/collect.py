@@ -29,6 +29,7 @@ import time
 from collections import Counter, defaultdict
 import inventory
 import extensions
+import clarity
 from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
@@ -393,6 +394,12 @@ def snapshot_coverage(snap, roots):
                                           "partial" if counts.get("omitted") else "collected", **counts))
     sources.extend(snap.get("instructions", {}).get("sources", []))
     sources.extend(snap.get("extensions", {}).get("sources", []))
+    pilot = snap.get("instruction_clarity")
+    if pilot:
+        counts = pilot['coverage']
+        sources.append(source_coverage('instruction_clarity', scope,
+                                      'partial' if counts['omitted'] or counts['candidates_omitted'] else 'collected',
+                                      **counts))
     for source in ("runtime settings overrides", "remote connectors"):
         sources.append(source_coverage(source, scope, "not_checked", reason="effective_coverage_not_established"))
     return {"version": 1, "requested_scope": scope, "projects_collected": roots,
@@ -403,7 +410,8 @@ def snapshot_coverage(snap, roots):
                 "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
                 *snap.get("instructions", {}).get("limitations", []),
-                *snap.get("extensions", {}).get("limitations", [])]}
+                *snap.get("extensions", {}).get("limitations", []),
+                *snap.get("instruction_clarity", {}).get("limitations", [])]}
 
 
 def collect_global():
@@ -1252,6 +1260,7 @@ def main():
                     help="extra directories to scan in addition to projects discovered from Claude Code's own records")
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--out")
+    ap.add_argument("--clarity-pilot", action="store_true", help="opt-in instruction clarity review candidates")
     ap.add_argument("--claude-dir", help="Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
     ap.add_argument("--scope", choices=["global", "project", "all"], default="all",
                     help="global: settings/hooks/memory/global usage stats only, no per-project file scanning; "
@@ -1303,6 +1312,8 @@ def main():
                                                        snap['managed_settings']['sources'], settings,
                                                        redact, hook_handler_entry)
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
+    if a.clarity_pilot:
+        snap["instruction_clarity"] = clarity.review(snap["instructions"], snap["extensions"])
     snap["coverage"] = snapshot_coverage(snap, roots)
     # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
     env_hook = lambda cmds: any("direnv" in c or "CLAUDE_ENV_FILE" in c for c in cmds)  # noqa: E731

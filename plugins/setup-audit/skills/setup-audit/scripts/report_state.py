@@ -225,6 +225,8 @@ def comparable(current, previous):
     try:
         if timestamp(current['generated']) <= timestamp(previous['generated']):
             return False, 'Previous report is not older than the current report.'
+        if current['profile'].get('clarity', 'off') != previous['profile'].get('clarity', 'off'):
+            return False, 'Instruction clarity profiles differ.'
         for key in ('scope', 'focus'):
             if key not in current['profile'] or current['profile'][key] != previous['profile'].get(key):
                 return False, 'Requested scopes or focus differ or are missing.'

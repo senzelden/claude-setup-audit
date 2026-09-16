@@ -55,7 +55,8 @@ class ReportState(unittest.TestCase):
 
     def test_incomparable_metrics_never_get_a_delta(self):
         old = self.report('2026-09-14')
-        mutations = [lambda r: r['metrics']['tokens'].update(basis='estimated'),
+        mutations = [lambda r: r['profile'].update(clarity='pilot'),
+                     lambda r: r['metrics']['tokens'].update(basis='estimated'),
                      lambda r: r['metrics']['tokens'].update(unit='dollars'),
                      lambda r: r['coverage']['sources'][0].update(status='partial'),
                      lambda r: r.update(window_days=7),

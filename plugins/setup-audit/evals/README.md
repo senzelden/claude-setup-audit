@@ -34,3 +34,15 @@ without the plugin. The `used-collector` graders are `with-only`, because a no-p
 call the bundled collector. Fixture tokens are fake.
 
 `results/` is gitignored.
+
+## Free instruction-clarity development check
+
+The optional clarity pilot has a separate author-reviewed corpus, not a paid model evaluation:
+
+```bash
+python3 plugins/setup-audit/skills/setup-audit/scripts/evaluate_clarity.py \
+  plugins/setup-audit/evals/clarity-corpus.json
+```
+
+See `skills/setup-audit/references/instruction-clarity.md` for the labels, known false positives,
+misses and limits. These development results are not an independent accuracy estimate.

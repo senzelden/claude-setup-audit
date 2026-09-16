@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Explicit `clarity=pilot` instruction review candidates, using bounded existing excerpts.
+  A local reviewed corpus records useful cases, false positives and misses; no automatic
+  findings, rewrites, cost-saving estimates or STE100 compliance claims.
+
 - Deterministic report/decision validation, evidence-bound suppression and expiry, and
   conservative two-run finding/metric comparisons shown in HTML. Incomplete coverage cannot
   imply resolution or a comparable metric delta; action status remains independent.

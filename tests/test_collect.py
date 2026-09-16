@@ -584,7 +584,8 @@ class ScopeCLI(unittest.TestCase):
             out = os.path.join(tmp, "snap.json")
             result = subprocess.run(
                 [sys.executable, "-B", script, "--claude-dir", cfg, "--days", "1", "--out", out, *extra_args],
-                capture_output=True, text=True, timeout=180)
+                capture_output=True, text=True, timeout=180,
+                env={**os.environ, "HOME": tmp, "CLAUDE_CONFIG_DIR": cfg})
             snap = None
             if result.returncode == 0:
                 with open(out) as f:

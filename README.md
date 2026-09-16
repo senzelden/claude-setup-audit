@@ -42,6 +42,7 @@ directly:
 | `depth` | `quick` (local snapshot only) · `full` (plus docs diff and what's new) | `full` |
 | `scope` | `global` · `project` · `all` | `all` |
 | `mode` | `audit` (read-only) · `propose` (report + diffs, then ask) · `apply` | `propose` |
+| `clarity` | `off` or `pilot` (instruction-clarity review candidates) | `off` |
 | `report_dir` | where reports and trend data are kept | `~/.claude/audits` |
 
 **Cost:** the local snapshot is a deterministic script that takes a few seconds. The model's
@@ -81,6 +82,13 @@ Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on 
 A `.envrc` is read locally for classification, never executed. Literal secret values from it are
 not emitted into the snapshot; only variable names are reported. Structured logging and feature
 flags are out of scope, since they're product architecture with no agent-side signal.
+
+## Instruction clarity pilot
+
+Opt in with `clarity=pilot` to review ambiguous instruction referents and exact-output wording
+that may conflict with redaction. Candidates need contextual review; proposed rewrites preserve
+meaning and require approval. This is a communication/correctness pilot, with known false
+positives and misses. It does not measure cost savings or certify ASD-STE100 compliance.
 
 ## What it reads, writes and sends
 
