@@ -26,5 +26,5 @@ re-read llms.txt, because pages get renamed. Any setting you propose must appear
 | Skills / subagents / plugins | skills, sub-agents, plugins, discover-plugins | frontmatter fields (model, allowed-tools), per-agent model to save cost |
 | MCP | mcp | tool search / deferred tools, per-server scoping, token cost of servers |
 | Monitoring | monitoring-usage | OTel / usage tracking options |
-| What's new | whats-new/index + weekly pages since last audit; changelog for anything newer | new features, changed defaults, deprecations relevant to this setup. The weekly index often lags by a few weeks, so cover the gap with `changelog.md` entries newer than the latest weekly page, compared against `global.version` |
+| What's new | whats-new/index + weekly pages since last audit; changelog for anything newer | new features, changed defaults, deprecations relevant to this setup. The weekly index often lags by a few weeks, so cover the gap with `changelog.md` entries newer than the latest weekly page. Compare versions only when an already-supplied observation is available; `global.version` is otherwise unavailable because CLI probes are skipped. |
 | Debugging config | debug-your-config, troubleshooting | commands for verifying effective settings |

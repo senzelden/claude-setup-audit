@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Read-only collection no longer launches `claude --version` or `claude doctor`, whose
+  startup created configuration, backup and telemetry files in a fake-home reproduction.
+  Version and doctor coverage are explicitly not checked; existing update metadata is still
+  collected. Regression tests reject diagnostic startup writes across all three scopes.
+
 ### Added
 
 - Snapshot v1 envelope and coverage/provenance schema, validated before collector output and

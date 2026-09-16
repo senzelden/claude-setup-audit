@@ -40,6 +40,10 @@ class SnapshotContract(FakeHome):
                     snapshot = self.snapshot(scope, pilot)
                     self.assertEqual(contract.validate_snapshot(snapshot), 'v1')
                     self.assertEqual('instruction_clarity' in snapshot, pilot)
+                    sources = {s['source']: s for s in snapshot['coverage']['sources']}
+                    for field in ('global.version', 'global.doctor'):
+                        self.assertEqual(sources[field]['status'], 'not_checked')
+                        self.assertEqual(sources[field]['reason'], 'cli_diagnostics_not_run_read_only')
 
     def test_rejects_missing_fields_types_versions_and_bad_coverage(self):
         baseline = self.snapshot()

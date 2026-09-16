@@ -43,6 +43,17 @@ class FakeHome(unittest.TestCase):
         return path
 
 
+class ReadOnlyDiagnostics(FakeHome):
+    def test_global_collection_never_launches_diagnostics(self):
+        self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(git status)']}})
+        with mock.patch.object(collect.subprocess, 'run') as run:
+            result = collect.collect_global()
+        run.assert_not_called()
+        self.assertTrue(result['settings'])
+        self.assertTrue(result['version'].startswith('unavailable:'))
+        self.assertTrue(result['doctor'].startswith('unavailable:'))
+
+
 class RiskClassification(unittest.TestCase):
     def test_broad_rules_are_flagged(self):
         self.assertIn("network-wildcard", flags("Bash(curl:*)"))

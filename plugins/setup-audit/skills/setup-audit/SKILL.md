@@ -138,8 +138,12 @@ What is **measured** versus **estimated** matters for credibility; say which in 
   MCP call counts, token usage by model, and tool errors.
 - Estimated: CLAUDE.md tokens (chars/4) and plugin startup-hook injection.
 
-Not covered by the snapshot: interactive `/doctor` output (use it if the user ran it in this
-conversation) and the narrative in the /insights HTML report (`usage.latest_insights_report`).
+The collector does not launch `claude --version` or `claude doctor`: CLI startup can write
+configuration, backups and telemetry. Keep these under "Not checked" and the version unknown
+unless the user already supplied diagnostic output in this conversation; do not launch
+replacement probes as part of the audit. Also not covered: interactive `/doctor` output
+(use it if the user already ran it) and the narrative in the /insights HTML report
+(`usage.latest_insights_report`).
 Missing sources go under "Not checked"; they don't block the run.
 
 Read `coverage`, `managed_settings`, and the `instructions` inventory before drawing

@@ -21,13 +21,16 @@ The decision-suppression case now has a relative-date scaffold, an independent e
 oracle, and five free regression tests using the real processor and renderer. It isolates
 finalization of supplied findings, not their discovery. Cache health now also has a relative-time
 scaffold, hand-calculated metric expectations, missing/partial usage controls, and six free tests
-using the real collector with CLI diagnostic probes stubbed. All three new case pilots and
-repeated baseline runs remain pending. The full local suite passes 148 tests.
+using the real collector. All three new case pilots and repeated baseline runs remain pending.
+The full local suite now passes 150 tests, including diagnostic side-effect regressions.
 
 An unstubbed collector test exposed a read-only integration gap: CLI 2.1.273 diagnostic probes
 created config bookkeeping, backup and telemetry files in the fake config tree. The checker
-correctly rejects these additions. Resolve diagnostic side effects separately before paid
-collector integration pilots; no exemptions or collector behavior changes are included here.
+correctly rejects these additions. A subsequent collector fix removed both diagnostic probes
+and reports version/doctor as not checked. A mutating CLI tripwire now guards all three scopes,
+and a normal-PATH fake-home smoke check preserved source and home inventories. No checker
+exemptions were added. This closes the observed diagnostic-startup gap, not the separate
+eval-runner seccomp failure or model quality gaps.
 The trace checker also bounds reads before decoding and rejects empty or malformed assistant
 content. Local verification now passes 137 regression tests, including seven approved-apply
 tests and three additional trace checks. This is deterministic coverage, not model evidence.

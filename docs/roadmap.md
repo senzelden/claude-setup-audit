@@ -22,6 +22,8 @@ These are release results, not claims about later changes or broader platform su
 - [x] Version the snapshot contract; document compatibility and provenance/completeness
   semantics; validate the core structure and add regression coverage.
 - [x] Broaden CI across Python versions and Linux/macOS, and run strict CLI plugin validation.
+- [x] Remove mutating CLI diagnostic probes from read-only collection, with explicit
+  not-checked coverage and source-preservation regressions across all three scopes.
 
 Implemented after 0.5.0; see [development checks](development.md). Hosted verification passed
 on 2026-09-16 at `a09a394`: [all seven jobs](https://github.com/senzelden/claude-setup-audit/actions/runs/35111349343),
@@ -40,14 +42,10 @@ both were corrected in follow-up commits. These changes have been pushed but not
   The [evaluation plan](evaluation-plan.md) defines the order and acceptance evidence.
   Hosted verification passed all seven jobs for the approved-apply implementation at `3a562fb`
   ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/35143564992)).
-  Local validation now passes 148 regression tests. Check the
+  Local validation now passes 150 regression tests. Check the
   [validation workflow](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
   for hosted results of subsequent commits. Model pilots remain pending and require separate approval;
   all pilot results remain local. No version bump or release is planned for this slice.
-- **Read-only diagnostic probes:** an unstubbed fake-home collector run with CLI 2.1.273
-  created bookkeeping, backup and telemetry files through `claude --version`/`doctor` probes.
-  The evaluation checker correctly rejects those additions. Isolate or remove these mutating
-  probes before further collector integration pilots; free cache tests stub the CLI diagnostics.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal

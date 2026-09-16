@@ -175,8 +175,8 @@ causation. JSON/prose consistency, and unsupported claims outside these named me
 need trace/report review. These are fixtures for reasoning about observed data, not billing
 or model reliability measurements.
 
-Free tests run the real collector with a stub for its installed-CLI diagnostic probes; they
-never need model calls. They cover incorrect/missing metrics, duplicate inflation, an incorrect
+Free tests run the real collector with a mutating CLI tripwire that must never be launched;
+they never need model calls. They cover incorrect/missing metrics, duplicate inflation, an incorrect
 TTL denominator, invented costs, source changes and calendar-boundary freshness. The collector
 does not expose missing/partial usage counts in its aggregate cache object; the case requires
 review of the small raw transcript fixture as well.
@@ -184,9 +184,11 @@ review of the small raw transcript fixture as well.
 Observed integration gap (2026-09-16, CLI 2.1.273): running the collector without that test stub
 created `.claude.json`, a backup and telemetry files in the fake config directory via its
 `claude --version`/`doctor` probes. The retained-workspace checker rejected these source
-additions. The paid fixture does not stub or exempt them. Isolate or remove mutating diagnostic
-probes in a separate read-only collector fix before treating a model pilot as integration
-evidence; successful free tests do not close this gap.
+additions. The collector now omits both CLI probes and explicitly reports them as not checked.
+All three scopes preserve the fixture and fake home even with a mutating CLI tripwire on PATH.
+A separate normal-PATH fake-home smoke check also passes. No checker exemptions were added.
+This closes the observed startup-write gap; it does not establish model behavior or fix the
+previously observed eval-runner seccomp limitation.
 
 Free check: `python3 -m unittest discover -s tests -p test_eval_cache.py -v`.
 A future pilot requires separate approval for `--case cache-health`, retained workspaces and

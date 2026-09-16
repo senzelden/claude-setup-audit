@@ -401,6 +401,8 @@ def snapshot_coverage(snap, roots):
         sources.append(source_coverage('instruction_clarity', scope,
                                       'partial' if counts['omitted'] or counts['candidates_omitted'] else 'collected',
                                       **counts))
+    for source in ("global.version", "global.doctor"):
+        sources.append(source_coverage(source, scope, "not_checked", reason="cli_diagnostics_not_run_read_only"))
     for source in ("runtime settings overrides", "remote connectors"):
         sources.append(source_coverage(source, scope, "not_checked", reason="effective_coverage_not_established"))
     return {"version": 1, "requested_scope": scope, "projects_collected": roots,
@@ -433,12 +435,10 @@ def collect_global():
     installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
     out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
     out["last_update"] = load_json(os.path.join(CLAUDE, ".last-update-result.json"))
-    for cmd, key in ((["claude", "--version"], "version"), (["claude", "doctor"], "doctor")):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            out[key] = (r.stdout + r.stderr).strip()[-1500:]
-        except Exception as e:
-            out[key] = f"unavailable: {e}"
+    # CLI startup can write configuration, backups and telemetry even for diagnostics.
+    # Preserve the legacy string fields, but never launch Claude during collection.
+    for key in ("version", "doctor"):
+        out[key] = "unavailable: CLI diagnostics not run to preserve read-only collection"
     return out
 
 

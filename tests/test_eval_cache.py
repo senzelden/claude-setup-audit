@@ -24,12 +24,12 @@ class CacheQuality(unittest.TestCase):
         self.env = {**os.environ, 'HOME': str(home), 'XDG_CONFIG_HOME': str(home),
                     'CLAUDE_CONFIG_DIR': str(self.workspace / 'claude-config'),
                     'GIT_CONFIG_NOSYSTEM': '1', 'EVAL_EVIDENCE_DIR': str(self.root / 'evidence')}
-        # Global collection probes `claude --version` / `doctor`. Keep the free test
-        # deterministic and offline; do not start the installed CLI or its telemetry.
+        # A tripwire CLI simulates startup writes. Collection must never launch it.
         binaries = self.root / 'bin'
         binaries.mkdir()
         cli = binaries / 'claude'
-        cli.write_text('#!/bin/sh\nprintf "fixture CLI probe\\n"\n')
+        cli.write_text('#!/bin/sh\nprintf "unexpected diagnostic startup\\n" '
+                       '> "$CLAUDE_CONFIG_DIR/diagnostic-probe-ran"\n')
         cli.chmod(0o700)
         self.env['PATH'] = str(binaries) + os.pathsep + os.environ['PATH']
         self.run_command(['bash', str(EVALS / 'cache-health/fixture.sh')])
@@ -115,6 +115,22 @@ class CacheQuality(unittest.TestCase):
                         self.report['metrics'][key]['value'] = 0 if value is None else value + 1
                     self.write_report()
                     self.assertFalse(self.check()['passed'])
+
+    def test_all_scopes_preserve_fixture_and_fake_home_with_mutating_cli_on_path(self):
+        before_workspace = quality.inventory(self.workspace)
+        before_home = quality.inventory(self.root / 'home')
+        for scope in ('global', 'project', 'all'):
+            with self.subTest(scope=scope):
+                args = ['python3', str(quality.SCRIPTS / 'collect.py'), '--claude-dir',
+                        str(self.workspace / 'claude-config'), '--scope', scope,
+                        '--out', str(self.snapshot_path)]
+                if scope == 'project':
+                    args += ['--project', str(self.workspace / 'repo')]
+                if scope == 'all':
+                    args += ['--roots', str(self.workspace / 'repo')]
+                self.run_command(args)
+                self.assertEqual(quality.inventory(self.workspace), before_workspace)
+                self.assertEqual(quality.inventory(self.root / 'home'), before_home)
 
     def test_duplicate_inflation_and_all_write_ttl_denominator_fail(self):
         for key, value in [('cache_write_tokens', 421000),

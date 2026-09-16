@@ -69,6 +69,8 @@ the collector snapshot.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
+  Version/doctor probes are not run during collection. Assess version lag only with an
+  already-supplied version observation; unavailable diagnostics are not installation failures.
 - **SEC-docs-only-constraint**: sensitive-data rules stated only in CLAUDE.md or auto-mode text and
   not enforced by `deny` rules.
 
