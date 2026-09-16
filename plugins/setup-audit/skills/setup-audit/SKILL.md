@@ -75,6 +75,10 @@ local settings; it does not scan unrelated project trees:
 
 With `clarity=pilot`, add `--clarity-pilot` to this command; otherwise omit it.
 
+New snapshots carry `snapshot_version: 1` and are validated before output. The query helper
+rejects unsupported versions; legacy unversioned snapshots remain readable with a warning.
+See `references/snapshot-format.md` for the contract and coverage limits.
+
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --scope <scope> [--project <repo path>] \
   --out "$TMPDIR/setup-audit-snapshot.json"

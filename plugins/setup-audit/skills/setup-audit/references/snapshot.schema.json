@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Setup Audit snapshot v1",
+  "description": "Stable envelope and coverage/provenance contract. Family payloads allow additive fields; see snapshot-format.md.",
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": [
+        "source",
+        "scope",
+        "status"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "collected",
+            "absent",
+            "partial",
+            "unavailable",
+            "not_checked"
+          ]
+        },
+        "eligible": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_date": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": [
+            "integer",
+            "boolean"
+          ],
+          "minimum": 0
+        },
+        "bytes_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "type": "object",
+  "required": [
+    "snapshot_version",
+    "generated",
+    "window_days",
+    "collection_scope",
+    "global",
+    "managed_settings",
+    "projects",
+    "readiness",
+    "memory",
+    "usage",
+    "corrections",
+    "transcripts",
+    "previous_audits",
+    "instructions",
+    "extensions",
+    "skill_listing",
+    "coverage"
+  ],
+  "properties": {
+    "snapshot_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generated": {
+      "type": "string"
+    },
+    "window_days": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "collection_scope": {
+      "type": "object",
+      "required": [
+        "requested",
+        "project",
+        "projects_collected"
+      ],
+      "properties": {
+        "requested": {
+          "type": "string",
+          "enum": [
+            "global",
+            "project",
+            "all"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "projects_collected": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "global": {
+      "type": "object",
+      "required": [
+        "settings"
+      ],
+      "properties": {
+        "settings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "managed_settings": {
+      "type": "object",
+      "required": [
+        "settings",
+        "sources",
+        "effective_policy"
+      ],
+      "properties": {
+        "settings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "effective_policy": {
+          "type": "string",
+          "const": "unknown"
+        }
+      }
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "memory": {
+      "type": "object"
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "coverage"
+      ],
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "corrections": {
+      "type": "object"
+    },
+    "transcripts": {
+      "type": "object",
+      "required": [
+        "coverage"
+      ],
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "previous_audits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "instructions": {
+      "type": "object",
+      "required": [
+        "entries",
+        "sources",
+        "contexts",
+        "settings_candidates",
+        "limitations"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "contexts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "settings_candidates": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "required": [
+        "mcp_servers",
+        "plugins",
+        "sources",
+        "limitations"
+      ],
+      "properties": {
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "scope",
+              "status",
+              "active_state",
+              "components"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "collected",
+                  "absent",
+                  "partial",
+                  "unavailable",
+                  "not_checked"
+                ]
+              },
+              "active_state": {
+                "const": "unknown"
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "skill_listing": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "version",
+        "requested_scope",
+        "projects_collected",
+        "sources",
+        "summary",
+        "limitations"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "requested_scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "project",
+            "all"
+          ]
+        },
+        "projects_collected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "instruction_clarity": {
+      "type": "object"
+    }
+  }
+}

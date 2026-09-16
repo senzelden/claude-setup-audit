@@ -30,6 +30,7 @@ from collections import Counter, defaultdict
 import inventory
 import extensions
 import clarity
+from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
@@ -1268,6 +1269,8 @@ def main():
                          "project plus --roots (default)")
     ap.add_argument("--project", help="project root to audit; required with --scope project")
     a = ap.parse_args()
+    if a.days < 1:
+        ap.error('--days must be positive')
     if a.claude_dir:
         CLAUDE = os.path.abspath(os.path.expanduser(a.claude_dir))
     if a.scope == "project" and not a.project:
@@ -1293,6 +1296,7 @@ def main():
     # already got, including the empty set for scope=global (matches no project, so none get read).
     project_filter = None if a.scope == "all" else set(roots)
     snap = {
+        "snapshot_version": VERSION,
         "generated": time.strftime("%Y-%m-%d %H:%M"),
         "window_days": a.days,
         "collection_scope": {"requested": a.scope, "project": a.project, "projects_collected": len(roots)},
@@ -1340,7 +1344,8 @@ def main():
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # default=... is a fallback for anything sanitize() left as a non-JSON-native object; redact
     # it too on the way out, since sanitize() can't see into a value it can't recurse into.
-    text = json.dumps(sanitize(snap), indent=1, default=lambda o: redact(str(o)))
+    text = json.dumps(sanitize(snap), indent=1, default=lambda o: redact(str(o)), allow_nan=False)
+    validate_snapshot(json.loads(text))
     if a.out:
         _write_snapshot(a.out, text)
         print(f"wrote {a.out} ({len(text)//4} est. tokens)")

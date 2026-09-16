@@ -1,5 +1,6 @@
 # Collection coverage, version 1
 
+The snapshot envelope is versioned separately; see [snapshot-format.md](snapshot-format.md).
 The additive snapshot `coverage` object is directly usable as report coverage. Existing
 `collection_scope`, usage and transcript counters retain their meanings. Each source has
 `source`, `scope` and `status`; optional counts retain the originating family's semantics.
@@ -33,8 +34,8 @@ Verified 2026-09-15 against official documentation:
 
 Managed files are inspected for every requested scope because their reach includes projects.
 Requested scope still controls existing project and usage collection. Other effective-coverage
-work (instruction/worktree and MCP/plugin inventory, runtime overrides) stays explicitly
-unchecked. A negative usage observation is bounded by that family's recorded omissions and
+work beyond the instruction/worktree and MCP/plugin inventories below (including runtime
+overrides) stays explicitly unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
 
 ## Instruction and working-directory inventory

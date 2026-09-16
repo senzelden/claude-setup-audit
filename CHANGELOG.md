@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Snapshot v1 envelope and coverage/provenance schema, validated before collector output and
+  by the query helper. Unknown versions fail closed; legacy unversioned snapshots remain
+  queryable with an explicit warning. Invalid output cannot overwrite an existing snapshot.
+- A reconciled, tracked roadmap separates shipped work from active and deferred priorities.
+
 ## [0.5.0] - 2026-09-16
 
 ### Security
