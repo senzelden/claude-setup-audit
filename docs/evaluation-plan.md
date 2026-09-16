@@ -19,16 +19,23 @@ they do not provide a persistent stale precondition. See the
 [case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case-implemented-not-piloted).
 The decision-suppression case now has a relative-date scaffold, an independent external report
 oracle, and five free regression tests using the real processor and renderer. It isolates
-finalization of supplied findings, not their discovery. Its model pilot, repeated baseline
-runs and the cache-health case remain pending.
+finalization of supplied findings, not their discovery. Cache health now also has a relative-time
+scaffold, hand-calculated metric expectations, missing/partial usage controls, and six free tests
+using the real collector with CLI diagnostic probes stubbed. All three new case pilots and
+repeated baseline runs remain pending. The full local suite passes 148 tests.
+
+An unstubbed collector test exposed a read-only integration gap: CLI 2.1.273 diagnostic probes
+created config bookkeeping, backup and telemetry files in the fake config tree. The checker
+correctly rejects these additions. Resolve diagnostic side effects separately before paid
+collector integration pilots; no exemptions or collector behavior changes are included here.
 The trace checker also bounds reads before decoding and rejects empty or malformed assistant
 content. Local verification now passes 137 regression tests, including seven approved-apply
 tests and three additional trace checks. This is deterministic coverage, not model evidence.
 
 ## Evidence and gaps
 
-The suite has six trigger cases, two read-only quality cases and one unpiloted approved-apply
-quality case. Historical results in
+The suite has six trigger cases, four read-only quality cases (including unpiloted suppression
+and cache-health cases) and one unpiloted approved-apply quality case. Historical results in
 [CHANGELOG.md](../CHANGELOG.md) include one trigger pass (6/6), single-run quality comparisons,
 and three clean security redaction reruns after a fix. They are not a repeated baseline for
 the current commit. The readiness case has documented misses and judge disagreements when

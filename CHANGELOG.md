@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format follows
 - A reconciled, tracked roadmap separates shipped work from active and deferred priorities.
 - CI matrix on Linux/macOS and Python 3.11/3.13/3.14, independent JSON Schema fixture checks,
   and strict marketplace/plugin validation using a pinned Claude Code CLI without model calls.
+- Evaluation fixtures and independent retained-workspace checks for approved permission
+  removal, decision suppression and cache health, with free regression tests. New model pilots
+  and repeated baselines remain pending; deterministic checks do not establish model reliability.
 
 ## [0.5.0] - 2026-09-16
 

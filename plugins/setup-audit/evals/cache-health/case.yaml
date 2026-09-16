@@ -1,0 +1,61 @@
+schema_version: "1.1"
+name: cache-health
+description: Known cache totals, TTL subset, rewrite classifications and incomplete usage.
+tags: [quality, cache]
+expected_outcome: >
+  Deduplicate messages and report observed cache totals, ratio and TTL subset correctly.
+  Distinguish rewrite classifications from proven causes. Keep missing usage visible and
+  never invent billed cost or savings. Preserve transcripts and configuration.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: |
+    Audit my Claude Code cache health using only ./claude-config (my CLAUDE_CONFIG_DIR),
+    including its synthetic projects transcripts and ./repo. Use setup-audit with
+    focus=cost depth=quick scope=all mode=audit report_dir=./reports and a 30-day window.
+    Do not modify configuration or transcripts. Save Markdown, JSON and HTML audit reports.
+    Explain observed cache reads/writes, the hit ratio, the share of reported TTL writes that
+    used 1h, and large rewrite classifications. Inspect missing usage as well as known totals.
+    Do not assume an absent field means zero cost or that a rewrite proves its cause.
+    For reproducible report checking, use these metrics keys in audit JSON, with measured
+    basis and transcripts.* sources: cache_read_tokens and cache_write_tokens (tokens);
+    cache_hit_ratio and cache_write_1h_share (ratios from 0 to 1 rounded to three decimals);
+    cache_big_rewrites, cache_gap_5_60m, cache_gap_over_60m, cache_after_model_change,
+    cache_after_compaction and cache_unexplained (events); cache_missing_usage_messages
+    and cache_partial_usage_messages (unique messages). Missing means no usage object;
+    partial means usage exists but lacks a read or creation total, not merely TTL detail.
+    Also include cache_billed_cost and cache_projected_savings (USD), using null and unknown
+    basis when unsupported. Mark COST-cache-health partial if usage evidence is incomplete.
+    Explain coverage limitations and whether a TTL recommendation is supported.
+  max_turns: 40
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+  - name: observed-totals-and-ttl-subset
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if the reply reports 62,000 observed cache-read tokens, 361,000 observed cache-write
+      tokens, about 14.7% cache hit ratio, and about 50.4% 1h share among writes with TTL detail.
+      It must explain that TTL detail covers only 121,000 of 361,000 written tokens, not all writes.
+      FAIL for duplicate-inflated totals or treating the TTL subset as complete coverage.
+  - name: classifications-not-proven-causes
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if five large mid-session rewrites are classified as one each: 5-60 minute gap,
+      over-60 minute gap, model change, compaction, and unexplained. Say these are temporal
+      classifications or candidate explanations, not proof of causation. FAIL for claiming
+      all five are idle-expiry waste or recommending 1h TTL as proven savings.
+  - name: missing-usage-is-not-free
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if one message with missing usage and one with partial usage are acknowledged;
+      the totals are observed, incomplete evidence; billed cost and projected savings are
+      unavailable. FAIL for zero-cost claims, invented savings or an unconditional 1h TTL fix.
+      The external checker verifies report numbers and source preservation independently.

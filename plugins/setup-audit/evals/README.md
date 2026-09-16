@@ -13,6 +13,7 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 | `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits | expensive: full audits |
 | `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | not yet piloted |
 | `quality`, `suppression` | `decision-suppression` | report finalization with matching, changed, expired and unverified decisions | not yet piloted |
+| `quality`, `cache` | `cache-health` | known transcript totals, TTL subset, rewrite classifications and incomplete usage | not yet piloted |
 
 ## Trigger accuracy
 
@@ -155,6 +156,42 @@ Free check: `python3 -m unittest discover -s tests -p test_eval_suppression.py -
 A future paid pilot must select only `--case decision-suppression`, with separate approval
 and the same retained-workspace/no-publication controls above. No pilot has run.
 Case fields checked 2026-09-16 against CLI 2.1.273 and the official
+[eval reference](https://code.claude.com/docs/en/plugin-evals).
+
+## Cache-health case (implemented, not piloted)
+
+`cache-health` seeds three transcript files, with timestamps six hours before scaffold time
+and event offsets under two hours. Fixtures stay inside the requested 30-day window. Unique
+messages yield 62,000 observed read tokens and 361,000 write tokens (14.7% hit ratio). Only
+121,000 written tokens have TTL detail: 61,000 at 1h and 60,000 at 5m, giving 50.4% 1h share
+of that subset. A duplicate first write must not inflate totals. Five large rewrites cover
+each classification once. One message lacks usage; another has only a read total.
+
+The prompt names metric keys/units for reproducible artifact checks without supplying values.
+The external checker uses hand-calculated expectations, requires measured/unknown labels and
+partial check coverage, and rejects zero or invented billed cost/savings. Graders separately
+assess TTL coverage and cautious interpretation: a temporal classification is not proven
+causation. JSON/prose consistency, and unsupported claims outside these named metrics, still
+need trace/report review. These are fixtures for reasoning about observed data, not billing
+or model reliability measurements.
+
+Free tests run the real collector with a stub for its installed-CLI diagnostic probes; they
+never need model calls. They cover incorrect/missing metrics, duplicate inflation, an incorrect
+TTL denominator, invented costs, source changes and calendar-boundary freshness. The collector
+does not expose missing/partial usage counts in its aggregate cache object; the case requires
+review of the small raw transcript fixture as well.
+
+Observed integration gap (2026-09-16, CLI 2.1.273): running the collector without that test stub
+created `.claude.json`, a backup and telemetry files in the fake config directory via its
+`claude --version`/`doctor` probes. The retained-workspace checker rejected these source
+additions. The paid fixture does not stub or exempt them. Isolate or remove mutating diagnostic
+probes in a separate read-only collector fix before treating a model pilot as integration
+evidence; successful free tests do not close this gap.
+
+Free check: `python3 -m unittest discover -s tests -p test_eval_cache.py -v`.
+A future pilot requires separate approval for `--case cache-health`, retained workspaces and
+local-only results. Do not broaden earlier quality-run approvals to include these new cases.
+Case fields checked 2026-09-16 against CLI 2.1.273 help and the official
 [eval reference](https://code.claude.com/docs/en/plugin-evals).
 
 ## Free instruction-clarity development check

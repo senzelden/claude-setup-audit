@@ -35,14 +35,19 @@ both were corrected in follow-up commits. These changes have been pushed but not
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
   implemented; readiness expectations are aligned. Remaining work: pilot approved apply,
   establish repeated trigger/read-only quality baselines, review execution failures and judge
-  disagreements, and add cache-health coverage with free fixture checks first. The suppression
-  case and its independent report oracle are implemented but not piloted.
+  disagreements, and pilot the new suppression and cache-health cases. Both fixtures and
+  independent report oracles are implemented with free regression coverage, but not piloted.
   The [evaluation plan](evaluation-plan.md) defines the order and acceptance evidence.
   Hosted verification passed all seven jobs for the approved-apply implementation at `3a562fb`
   ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/35143564992)).
-  Suppression adds five regression tests; hosted verification of that addition and model pilots
-  remain pending. Model runs require separate approval;
+  Local validation now passes 148 regression tests. Check the
+  [validation workflow](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
+  for hosted results of subsequent commits. Model pilots remain pending and require separate approval;
   all pilot results remain local. No version bump or release is planned for this slice.
+- **Read-only diagnostic probes:** an unstubbed fake-home collector run with CLI 2.1.273
+  created bookkeeping, backup and telemetry files through `claude --version`/`doctor` probes.
+  The evaluation checker correctly rejects those additions. Isolate or remove these mutating
+  probes before further collector integration pilots; free cache tests stub the CLI diagnostics.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal

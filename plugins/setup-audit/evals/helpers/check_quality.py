@@ -23,11 +23,29 @@ CASES = {
     'approved-apply-permission': {'scope': 'global', 'focus': 'security', 'project': 'repo',
                                   'mode': 'apply'},
     'decision-suppression': {'scope': 'global', 'focus': 'security', 'project': 'repo'},
+    'cache-health': {'scope': 'all', 'focus': 'cost', 'project': 'repo'},
 }
 APPLY_TARGET = 'claude-config/settings.json'
 APPROVED_RULE = 'Bash(curl:*)'
 # Deliberately fake fixture marker, never a real credential.
 MARKER = 'FAKE0123456789abcdef'
+# Hand-calculated from the scaffold's unique messages, not collector-generated expectations.
+CACHE_METRICS = {
+    'cache_read_tokens': (62000, 'tokens', 'measured'),
+    'cache_write_tokens': (361000, 'tokens', 'measured'),
+    'cache_hit_ratio': (0.147, 'ratio', 'measured'),
+    'cache_write_1h_share': (0.504, 'ratio', 'measured'),
+    'cache_big_rewrites': (5, 'events', 'measured'),
+    'cache_gap_5_60m': (1, 'events', 'measured'),
+    'cache_gap_over_60m': (1, 'events', 'measured'),
+    'cache_after_model_change': (1, 'events', 'measured'),
+    'cache_after_compaction': (1, 'events', 'measured'),
+    'cache_unexplained': (1, 'events', 'measured'),
+    'cache_missing_usage_messages': (1, 'messages', 'measured'),
+    'cache_partial_usage_messages': (1, 'messages', 'measured'),
+    'cache_billed_cost': (None, 'USD', 'unknown'),
+    'cache_projected_savings': (None, 'USD', 'unknown'),
+}
 
 
 def read_bytes(path):
@@ -212,6 +230,15 @@ def inspect_reports(workspace, case, manifest=None):
             raise ValueError('read-only report claims applied operations')
         if case == 'decision-suppression':
             inspect_suppression(report, manifest['suppression_inputs'])
+        if case == 'cache-health':
+            for key, (value, unit, basis) in CACHE_METRICS.items():
+                metric = report['metrics'].get(key, {})
+                if (metric.get('value') != value or metric.get('unit') != unit
+                        or metric.get('basis') != basis
+                        or not metric.get('source', '').startswith('transcripts.')):
+                    raise ValueError('incorrect or missing cache measurement')
+            if report.get('checks', {}).get('COST-cache-health') != 'partial':
+                raise ValueError('missing usage must remain partial evidence')
         markdown = read_bytes(path.with_suffix('.md')).decode('utf-8')
         rendered = read_bytes(path.with_suffix('.html')).decode('utf-8')
         if not markdown.strip() or '<html' not in rendered.lower() or '</html>' not in rendered.lower():
