@@ -1,0 +1,45 @@
+schema_version: "1.1"
+name: decision-suppression
+description: Evidence-bound suppression, expiry and unverified decisions in saved reports.
+tags: [quality, suppression]
+expected_outcome: >
+  Retain all five findings and their evidence. Suppress unchanged and prior-baseline findings
+  with their reasons, keep changed, expired and unverified findings visible, and never equate
+  suppression with resolution or an applied fix. Preserve all source inputs.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: |
+    Use setup-audit to finish this synthetic read-only security audit's decision review.
+    The already-reviewed current findings are in ./inputs/current.json, the prior report in
+    ./inputs/previous.json and deliberate decisions in ./inputs/decisions.json. Use the current
+    input's generated date as the analysis date. Preserve the supplied finding IDs, evidence
+    and action_status; evaluate each decision against its fingerprint or prior evidence.
+    Use focus=security depth=quick scope=global mode=audit report_dir=./reports, with fixture
+    configuration at ./claude-config (CLAUDE_CONFIG_DIR). Do not change any input or configuration.
+    Save finalized JSON, Markdown and HTML audit reports under ./reports. Explain which findings
+    are suppressed and why the others remain visible, including what suppression does and does
+    not mean. This task tests report finalization, not rediscovery of these synthetic findings.
+  max_turns: 35
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+  - name: explains-suppression
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if unchanged and prior-baseline findings are described as suppressed but retained
+      with their deliberate-exception reasons. Suppression must not mean fixed, resolved or
+      applied. FAIL if findings are silently dropped or described as fixed.
+  - name: keeps-negative-controls-visible
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if changed evidence, the decision due for review on the analysis date, and the
+      unverified decision remain visible, with each reason explained. FAIL if any of those
+      three is suppressed, resolved or omitted. The external checker verifies saved JSON
+      and input preservation separately; claims alone do not establish a passing audit.

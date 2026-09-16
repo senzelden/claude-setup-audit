@@ -35,10 +35,13 @@ both were corrected in follow-up commits. These changes have been pushed but not
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
   implemented; readiness expectations are aligned. Remaining work: pilot approved apply,
   establish repeated trigger/read-only quality baselines, review execution failures and judge
-  disagreements, and add suppression and cache-health cases with free fixture checks first.
+  disagreements, and add cache-health coverage with free fixture checks first. The suppression
+  case and its independent report oracle are implemented but not piloted.
   The [evaluation plan](evaluation-plan.md) defines the order and acceptance evidence.
-  Local validation for the latest implementation: 137 regression tests; hosted verification
-  and a model pilot of the new case remain pending. Model runs require separate approval;
+  Hosted verification passed all seven jobs for the approved-apply implementation at `3a562fb`
+  ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/35143564992)).
+  Suppression adds five regression tests; hosted verification of that addition and model pilots
+  remain pending. Model runs require separate approval;
   all pilot results remain local. No version bump or release is planned for this slice.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.

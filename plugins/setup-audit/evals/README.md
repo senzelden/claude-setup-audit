@@ -12,6 +12,7 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 | `trigger` | 3 should-trigger, 3 near-miss should-not-trigger | whether the skill fires on natural phrasing, and stays out of adjacent requests | cheap: turn cap of 3–4 |
 | `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits | expensive: full audits |
 | `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | not yet piloted |
+| `quality`, `suppression` | `decision-suppression` | report finalization with matching, changed, expired and unverified decisions | not yet piloted |
 
 ## Trigger accuracy
 
@@ -132,6 +133,28 @@ and `Write` beyond the listed read tools. Keep output under ignored `evals/resul
 Do not run the broader `quality` tag under an approval for the older read-only cases.
 No model run is authorized by these instructions. The case fields and grants were checked
 2026-09-16 against CLI 2.1.273 help and the official
+[eval reference](https://code.claude.com/docs/en/plugin-evals).
+
+## Decision-suppression case (implemented, not piloted)
+
+`decision-suppression` isolates report finalization using already-reviewed synthetic findings;
+it does not measure whether an audit discovers them. Inputs live under `inputs/`, outside the
+writable reports directory. Dates are generated relative to scaffold time, and the current
+input's `generated` date fixes the analysis date even if inspection happens later.
+
+Two findings must remain suppressed: one with an explicit matching fingerprint and one with
+an unchanged, comparable prior report at or after settlement. Changed evidence, expiry exactly
+on the review date, and a decision without a fingerprint or prior finding must remain visible.
+The external checker retains the original inputs and independently checks all five statuses,
+decision reasons, evidence and unchanged action status. It rejects dropped or resolved findings
+and source edits. Tests execute the real processor and renderer in fake homes and deliberately
+corrupt otherwise-valid reports. Graders assess the explanation; prose/JSON agreement still
+needs review. Collector execution is informational because this case tests finalization.
+
+Free check: `python3 -m unittest discover -s tests -p test_eval_suppression.py -v`.
+A future paid pilot must select only `--case decision-suppression`, with separate approval
+and the same retained-workspace/no-publication controls above. No pilot has run.
+Case fields checked 2026-09-16 against CLI 2.1.273 and the official
 [eval reference](https://code.claude.com/docs/en/plugin-evals).
 
 ## Free instruction-clarity development check

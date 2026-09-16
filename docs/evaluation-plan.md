@@ -17,7 +17,10 @@ piloted. Its negative controls cover unapproved mutations, bad backups, missing 
 and the helper's in-process stale-file guard. Separate CLI dry-run/apply invocations re-plan;
 they do not provide a persistent stale precondition. See the
 [case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case-implemented-not-piloted).
-Repeated baseline runs, suppression and cache-health cases remain pending.
+The decision-suppression case now has a relative-date scaffold, an independent external report
+oracle, and five free regression tests using the real processor and renderer. It isolates
+finalization of supplied findings, not their discovery. Its model pilot, repeated baseline
+runs and the cache-health case remain pending.
 The trace checker also bounds reads before decoding and rejects empty or malformed assistant
 content. Local verification now passes 137 regression tests, including seven approved-apply
 tests and three additional trace checks. This is deterministic coverage, not model evidence.
