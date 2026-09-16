@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 EVALS = Path(__file__).resolve().parents[1] / 'plugins/setup-audit/evals'
 spec = importlib.util.spec_from_file_location('check_quality', EVALS / 'helpers/check_quality.py')
@@ -169,6 +170,27 @@ class EvalQuality(unittest.TestCase):
                     self.trace.write_text(content)
                 self.assertFalse(self.check()['complete'])
                 self.assertFalse(self.check()['passed'])
+
+    def test_malformed_assistant_blocks_are_incomplete(self):
+        for content in [[], [None], ['not a content block']]:
+            with self.subTest(content=content):
+                self.events[-1]['message']['content'] = content
+                self.write_trace()
+                result = self.check()
+                self.assertFalse(result['complete'])
+                self.assertFalse(result['passed'])
+
+    def test_trace_line_is_bounded_before_decoding_or_parsing(self):
+        # Invalid UTF-8 beyond the limit must never reach the decoder.
+        self.trace.write_bytes(b'x' * 65 + b'\xff\n')
+        with mock.patch.object(quality, 'LIMIT', 64):
+            with self.assertRaisesRegex(ValueError, 'trace exceeds bounds'):
+                quality.inspect_trace(self.trace, self.workspace)
+
+    def test_trace_event_limit_is_incomplete(self):
+        with mock.patch.object(quality, 'MAX_ENTRIES', len(self.events) - 1):
+            with self.assertRaisesRegex(ValueError, 'trace exceeds bounds'):
+                quality.inspect_trace(self.trace, self.workspace)
 
     def test_collector_claims_and_failed_calls_are_not_success(self):
         for change in ['claim', 'error', 'other-tool']:

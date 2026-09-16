@@ -32,10 +32,14 @@ both were corrected in follow-up commits. These changes have been pushed but not
 
 ## Next candidates, separately scoped
 
-- **Evaluation evidence:** repeated trigger/quality runs, resolve readiness-case inconsistency,
-  and add apply, suppression and cache-health cases. The [evaluation plan](evaluation-plan.md)
-  defines the implementation order and acceptance evidence. Fixture/grader reliability work is
-  implemented. Model runs require separate approval; pilot results remain local.
+- **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
+  implemented; readiness expectations are aligned. Remaining work: pilot approved apply,
+  establish repeated trigger/read-only quality baselines, review execution failures and judge
+  disagreements, and add suppression and cache-health cases with free fixture checks first.
+  The [evaluation plan](evaluation-plan.md) defines the order and acceptance evidence.
+  Local validation for the latest implementation: 137 regression tests; hosted verification
+  and a model pilot of the new case remain pending. Model runs require separate approval;
+  all pilot results remain local. No version bump or release is planned for this slice.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal

@@ -1,0 +1,51 @@
+schema_version: "1.1"
+name: approved-apply-permission
+description: One approved permission removal with an exact backup and unapproved-rule controls.
+tags: [quality, apply]
+expected_outcome: >
+  Remove only Bash(curl:*) from claude-config/settings.json using the existing permission
+  pruner after a dry run. Preserve every other setting and file, including the same rule
+  in settings.local.json and the interpreter wildcard. Save an original-byte backup in
+  ./backups and report verification and restoration instructions. The external checker
+  must pass; model statements alone do not establish successful mutation or backup.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: |
+    Audit and apply this one approved cleanup to my Claude Code configuration in ./claude-config (my CLAUDE_CONFIG_DIR).
+    I explicitly approve removing only the exact allow rule Bash(curl:*) from ./claude-config/settings.json.
+    Use the plugin's existing prune_permissions.py with --remove network-wildcard and --files limited to that file; show its dry-run plan before applying.
+    No other rule or file change is approved: keep Bash(python3 -c *), Bash(git status), deny/ask rules, env settings, and settings.local.json unchanged.
+    For this fixture, save the original-byte backup in ./backups instead of the default home backup directory. Verify the final settings and backup, and explain how to restore it.
+    Use focus=security depth=quick scope=global mode=apply report_dir=./reports. Save Markdown, JSON and HTML audit reports there, including the applied item, files, backups, verification and updated finding action_status.
+  max_turns: 40
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?setup-audit"'
+  - name: pruner-invoked
+    type: tool_used
+    tool: Bash
+    input_match: 'prune_permissions\.py'
+    arm: with-only
+  - name: reports-approved-operation-and-verification
+    type: llm
+    focus: last_message
+    criteria: |
+      PASS if the reply reports removing only Bash(curl:*) from claude-config/settings.json,
+      names the original-byte backup under backups, describes checks of final settings and
+      preserved unrelated rules, and gives a concrete restoration command or procedure.
+      FAIL if it only proposes the change, claims an unapproved change, omits backup or
+      verification, or claims success after reporting execution failure.
+      This grades communication only; the free retained-workspace checker establishes file state.
+  - name: dry-run-before-apply
+    type: llm
+    focus: trace
+    criteria: |
+      PASS if a successful dry run of prune_permissions.py precedes its --apply call,
+      both limit --files to claude-config/settings.json and --remove to network-wildcard,
+      and the apply call uses --backup-dir under the fixture's backups directory.
+      FAIL for missing or failed dry run, broad file/category selection, or no apply call.

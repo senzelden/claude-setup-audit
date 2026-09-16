@@ -11,6 +11,7 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 |---|---|---|---|
 | `trigger` | 3 should-trigger, 3 near-miss should-not-trigger | whether the skill fires on natural phrasing, and stays out of adjacent requests | cheap: turn cap of 3–4 |
 | `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits | expensive: full audits |
+| `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | not yet piloted |
 
 ## Trigger accuracy
 
@@ -26,7 +27,8 @@ baseline tells you nothing here.
 
 Quality cases build fake configuration with a setup script (`--scaffold`) and capture an
 external manifest before the model starts. They request quick, read-only audits with reports
-under the fixture's `./reports`. Bash runs the bundled scripts and Write creates the reports.
+under the fixture's `./reports`, except for the explicitly approved apply case below.
+Bash runs the bundled scripts and Write creates the reports.
 After obtaining approval, start with one case and one arm:
 
 ```bash
@@ -98,6 +100,39 @@ against CLI 2.1.273 and the official [eval reference](https://code.claude.com/do
 
 `results/` is gitignored. Keep pilot summaries and observed-answer examples there too; do not
 commit or publish pilot results.
+
+## Approved-apply case (implemented, not piloted)
+
+`approved-apply-permission` approves only removal of `Bash(curl:*)` from
+`claude-config/settings.json` through the existing pruner's `network-wildcard` category.
+The same rule in `settings.local.json`, an interpreter wildcard in the target, deny/ask rules
+and unrelated settings must survive. The prompt explicitly overrides the default backup
+location with fixture-local `./backups`; reports stay in `./reports`.
+
+Use the same capture/check commands above. For this case the external manifest records the
+expected settings after the single removal. The checker requires that exact JSON value and
+one regular `.bak` file directly under `backups/` with the original target's byte hash.
+Only a verified target change and backup are exempted from the source-preservation check.
+It also requires one successful applied record, files/backups/verification and matching
+finding action status. Graders assess dry-run-before-apply behavior and the final explanation;
+claims and tool invocation alone cannot pass the workspace check. The checker cannot prove
+backup-before-write ordering or the truth of prose verification; trace review remains necessary.
+
+Free tests run the real helper in temporary fake homes. They cover dry-run preservation,
+unapproved second removals/other-file edits, missing/altered/extra/symlink backups, report
+failures and stale in-process preconditions. The helper re-plans on a separate CLI invocation:
+its stale guard does **not** bind a later `--apply` invocation to a previous CLI dry run.
+The existing read-only cases cover audit-mode preservation. A dedicated propose-mode model
+case remains outside this slice; no general apply engine is introduced here.
+
+Before a pilot, request approval with the exact commit, command, models, tools and spend
+threshold. Select only `--case approved-apply-permission --runs 1 --ablation none --concurrency 1`,
+retain `--scaffold --keep-temp --trust-plugin --no-publish`, and grant only `"Bash(python3 *)"`
+and `Write` beyond the listed read tools. Keep output under ignored `evals/results/`.
+Do not run the broader `quality` tag under an approval for the older read-only cases.
+No model run is authorized by these instructions. The case fields and grants were checked
+2026-09-16 against CLI 2.1.273 help and the official
+[eval reference](https://code.claude.com/docs/en/plugin-evals).
 
 ## Free instruction-clarity development check
 

@@ -11,16 +11,29 @@ tests cover the checker, runner compatibility and both real scaffolds; all 127 l
 Paid batches require explicit approval. Keep pilot summaries, observed-answer examples, raw
 traces and reports in ignored local results; do not commit or publish them.
 
+The approved-apply quality case is now implemented, with an external expected-settings and
+original-byte backup oracle plus free tests using the real permission pruner. It has not been
+piloted. Its negative controls cover unapproved mutations, bad backups, missing apply records
+and the helper's in-process stale-file guard. Separate CLI dry-run/apply invocations re-plan;
+they do not provide a persistent stale precondition. See the
+[case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case-implemented-not-piloted).
+Repeated baseline runs, suppression and cache-health cases remain pending.
+The trace checker also bounds reads before decoding and rejects empty or malformed assistant
+content. Local verification now passes 137 regression tests, including seven approved-apply
+tests and three additional trace checks. This is deterministic coverage, not model evidence.
+
 ## Evidence and gaps
 
-The suite has six trigger cases and two quality cases. Historical results in
+The suite has six trigger cases, two read-only quality cases and one unpiloted approved-apply
+quality case. Historical results in
 [CHANGELOG.md](../CHANGELOG.md) include one trigger pass (6/6), single-run quality comparisons,
 and three clean security redaction reruns after a fix. They are not a repeated baseline for
 the current commit. The readiness case has documented misses and judge disagreements when
 the collector could not run. That environment failure must remain visible separately from
 the quality of fallback advice.
 
-Current case inspection also found:
+The initial case inspection found the following gaps, addressed by the first implementation
+chunk above (retained here as rationale):
 
 - Readiness's expected outcome rejects `.env.example` more broadly than its judge rubric,
   which allows it as a secondary alternative. Align both around preserving pointer-based
