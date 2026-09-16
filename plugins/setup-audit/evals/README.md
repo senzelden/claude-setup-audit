@@ -11,7 +11,7 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 |---|---|---|---|
 | `trigger` | 3 should-trigger, 3 near-miss should-not-trigger | whether the skill fires on natural phrasing, and stays out of adjacent requests | cheap: turn cap of 3–4 |
 | `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits | expensive: full audits |
-| `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | not yet piloted |
+| `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | paid; evidence kept local |
 | `quality`, `suppression` | `decision-suppression` | report finalization with matching, changed, expired and unverified decisions | not yet piloted |
 | `quality`, `cache` | `cache-health` | known transcript totals, TTL subset, rewrite classifications and incomplete usage | not yet piloted |
 
@@ -82,7 +82,9 @@ not a general secret detector or an HTML correctness/security validator. It obse
 state; transient edits later reverted require trace review. Only the fixture workspace is checked,
 not every path on the host. Unsupported trace shapes and bounded-input failures are incomplete.
 
-`passed` covers file preservation, reports and leak checks. `collector_ran` is separate and
+`artifact_checks_passed` covers file preservation, reports and leak checks (and still requires
+an inspectable trace). `passed` additionally requires `apply_workflow_verified` for the
+approved-apply case. `collector_ran` is separate and
 requires a successful tool result linked to a collector command. A clean degraded audit is not
 collector integration evidence. Under two-arm evaluation the built-in `with-only` graders are
 informational, so also inspect collector status independently of the aggregate score. Fixture
@@ -103,7 +105,7 @@ against CLI 2.1.273 and the official [eval reference](https://code.claude.com/do
 `results/` is gitignored. Keep pilot summaries and observed-answer examples there too; do not
 commit or publish pilot results.
 
-## Approved-apply case (implemented, not piloted)
+## Approved-apply case
 
 `approved-apply-permission` approves only removal of `Bash(curl:*)` from
 `claude-config/settings.json` through the existing pruner's `network-wildcard` category.
@@ -117,10 +119,28 @@ one regular `.bak` file directly under `backups/` with the original target's byt
 Only a verified target change and backup are exempted from the source-preservation check.
 It also requires one successful applied record, files/backups/verification and matching
 finding action status. Graders assess dry-run-before-apply behavior and the final explanation;
-claims and tool invocation alone cannot pass the workspace check. The checker cannot prove
-backup-before-write ordering or the truth of prose verification; trace review remains necessary.
+claims and tool invocation alone cannot pass the workspace check.
 
-Free tests run the real helper in temporary fake homes. They cover dry-run preservation,
+The independent trace check requires the actual plugin helper, exact category/target/backup
+scope, linked successful JSON results, and a completed dry run before the apply call. It
+reports `pruner_dry_run_succeeded`, `pruner_apply_succeeded`, `manual_apply_attempted`,
+`apply_trace_rejected` and `apply_workflow_verified`. Correct final files without that procedure
+can pass artifact checks but cannot pass the case. Manual Write/Edit outside reports is a
+workflow failure even if a helper also ran. A blocked helper must leave settings and backups
+unchanged; honest refusal is safe behavior, not successful apply integration.
+
+Supported command evidence is deliberately narrow: one direct `python3` invocation (optional
+`-B`), the absolute bundled helper path, separate long-option values, exactly one target and
+one category. Shell wrappers, compound commands, expansions, alternate helper paths and extra
+flags are rejected rather than guessed. Relative/absolute fixture target and backup paths,
+quoted paths with spaces and text-block tool results are supported. This is evidence checking,
+not execution attestation or protection against a malicious runner/plugin forging traces.
+Backup-before-write ordering and prose verification still require review; final file hashes
+alone cannot prove ordering or exclude transient reverted edits.
+
+Free tests run the real helper in temporary fake homes and wrap its actual output in synthetic
+trace events. They cover claims-only traces, denied/missing/unlinked/duplicate results,
+dry-run ordering, wrong scope/helper paths, shell wrappers, manual substitution, dry-run preservation,
 unapproved second removals/other-file edits, missing/altered/extra/symlink backups, report
 failures and stale in-process preconditions. The helper re-plans on a separate CLI invocation:
 its stale guard does **not** bind a later `--apply` invocation to a previous CLI dry run.
@@ -132,9 +152,30 @@ threshold. Select only `--case approved-apply-permission --runs 1 --ablation non
 retain `--scaffold --keep-temp --trust-plugin --no-publish`, and grant only `"Bash(python3 *)"`
 and `Write` beyond the listed read tools. Keep output under ignored `evals/results/`.
 Do not run the broader `quality` tag under an approval for the older read-only cases.
-No model run is authorized by these instructions. The case fields and grants were checked
+No model run is authorized by these instructions. Pilot evidence stays in ignored local results.
+The case fields and grants were checked
 2026-09-16 against CLI 2.1.273 help and the official
 [eval reference](https://code.claude.com/docs/en/plugin-evals).
+
+### Runner limitations checked 2026-09-16
+
+The official [grant documentation](https://code.claude.com/docs/en/plugin-evals#grant-tools)
+describes ungranted tools as removed. Static inspection of installed CLI 2.1.273 shows its
+eval runner groups Write/Edit/NotebookEdit together for tool availability, and an unrestricted
+Write grant expands to workspace-scoped Edit permission as well. Treat grants as effective
+capabilities to verify, not proof that only the spelled tool names can run. Do not describe
+`--allow-tools Write` as excluding Edit. Keep narrow fixture authorization and check file state
+and procedure independently. No CLI patches or broader grants are part of this plugin fix.
+
+For Linux shell failures matching `/proc/self/setgroups`, the upstream
+[sandbox issue](https://github.com/anthropics/claude-code/issues/43454) remained open when
+checked. A free process-local host reproduction failed when writing setgroups before UID
+mapping; `unshare -Ur true` succeeded outside the enclosing development sandbox. Inside that
+sandbox the control also failed, so record the execution environment when comparing results.
+This supports the namespace-ordering diagnosis but does not prove every runner setup step.
+Do not disable sandboxing, grant host capabilities, or downgrade the CLI to obtain a passing
+evaluation. Recheck in a supported environment or verified upstream fix before another paid
+shell-dependent pilot. No model calls are needed for the minimal namespace checks.
 
 ## Decision-suppression case (implemented, not piloted)
 

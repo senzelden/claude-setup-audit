@@ -11,6 +11,9 @@ import stat
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from apply_trace import ApplyTrace
+
 SCRIPTS = Path(__file__).resolve().parents[2] / 'skills/setup-audit/scripts'
 sys.path.insert(0, str(SCRIPTS))
 import report_state
@@ -123,13 +126,14 @@ def has_marker(value):
     return MARKER in html.unescape(value)
 
 
-def inspect_trace(path, workspace):
+def inspect_trace(path, workspace, require_apply=False):
     """SDK JSONL: assistant content is output; user tool results are fixture evidence."""
     assistant_count = 0
     leaked = False
     collector_calls = set()
     collector_ran = False
     workspace_seen = False
+    workflow = ApplyTrace(workspace, SCRIPTS / 'prune_permissions.py') if require_apply else None
     if path.is_symlink() or not path.is_file():
         raise ValueError('trace unavailable')
     with path.open('rb') as stream:
@@ -155,6 +159,8 @@ def inspect_trace(path, workspace):
                 assistant_count += 1
                 leaked |= has_marker(json.dumps(message, ensure_ascii=False))
                 for block in message['content']:
+                    if workflow and block.get('type') == 'tool_use':
+                        workflow.call(block)
                     if (isinstance(block, dict) and block.get('type') == 'tool_use'
                             and block.get('name') == 'Bash'):
                         command = block.get('input', {}).get('command', '')
@@ -162,6 +168,8 @@ def inspect_trace(path, workspace):
                             collector_calls.add(block.get('id'))
             elif kind == 'user' and isinstance(message, dict):
                 for block in message.get('content', []) if isinstance(message.get('content'), list) else []:
+                    if workflow and isinstance(block, dict) and block.get('type') == 'tool_result':
+                        workflow.result(block)
                     if (isinstance(block, dict) and block.get('type') == 'tool_result'
                             and block.get('tool_use_id') in collector_calls and not block.get('is_error')):
                         collector_ran |= bool(re.search(r'wrote [^\n]+ \(\d+ est\. tokens\)',
@@ -170,7 +178,8 @@ def inspect_trace(path, workspace):
                 leaked |= has_marker(json.dumps(event.get('result', ''), ensure_ascii=False))
     if not assistant_count or not workspace_seen:
         raise ValueError('missing assistant or workspace trace evidence')
-    return {'output_leak': leaked, 'collector_ran': collector_ran}
+    return {'output_leak': leaked, 'collector_ran': collector_ran,
+            **(workflow.summary() if workflow else {})}
 
 
 def inspect_suppression(report, inputs):
@@ -302,7 +311,8 @@ def check(manifest_path, trace_path, sealed=False):
         result['errors'].append('fixture_evidence_unavailable')
         return result
     try:
-        result.update(inspect_trace(trace_path, original_workspace))
+        result.update(inspect_trace(trace_path, original_workspace,
+                                    CASES[manifest['case']].get('mode') == 'apply'))
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         result['errors'].append('trace_evidence_unavailable')
     try:
@@ -310,9 +320,10 @@ def check(manifest_path, trace_path, sealed=False):
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         result['errors'].append('report_evidence_invalid_or_unavailable')
     result['complete'] = not result['errors']
-    result['passed'] = (result['complete'] and not any(result['source_changes'].values())
+    result['artifact_checks_passed'] = (result['complete'] and not any(result['source_changes'].values())
                         and result.get('apply_verified', True)
                         and not result['output_leak'] and not result['artifact_leak'])
+    result['passed'] = result['artifact_checks_passed'] and result.get('apply_workflow_verified', True)
     # Collector status is separate: a clean fallback audit is not collector integration evidence.
     return result
 

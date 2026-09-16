@@ -6,23 +6,30 @@ contract and hosted CI work. It does not expand collector checks or redesign app
 Implemented: aligned readiness expectations, four independent judge obligations and calibration
 examples, explicit quick/read-only fixture profiles, external scaffold manifests, and a free
 post-run checker for retained workspaces/traces and report artifacts. Nineteen new regression
-tests cover the checker, runner compatibility and both real scaffolds; all 127 local tests pass. See the
+tests covered the checker, runner compatibility and both real scaffolds; that chunk passed 127 tests. See the
 [eval instructions](../plugins/setup-audit/evals/README.md) for commands and coverage limits.
 Paid batches require explicit approval. Keep pilot summaries, observed-answer examples, raw
 traces and reports in ignored local results; do not commit or publish them.
 
 The approved-apply quality case is now implemented, with an external expected-settings and
-original-byte backup oracle plus free tests using the real permission pruner. It has not been
-piloted. Its negative controls cover unapproved mutations, bad backups, missing apply records
+original-byte backup oracle plus free tests using the real permission pruner. Model-run evidence
+is retained only in ignored local results. Negative controls cover unapproved mutations, bad backups, missing apply records
 and the helper's in-process stale-file guard. Separate CLI dry-run/apply invocations re-plan;
 they do not provide a persistent stale precondition. See the
-[case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case-implemented-not-piloted).
+[case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case).
 The decision-suppression case now has a relative-date scaffold, an independent external report
 oracle, and five free regression tests using the real processor and renderer. It isolates
 finalization of supplied findings, not their discovery. Cache health now also has a relative-time
 scaffold, hand-calculated metric expectations, missing/partial usage controls, and six free tests
-using the real collector. All three new case pilots and repeated baseline runs remain pending.
-The full local suite now passes 150 tests, including diagnostic side-effect regressions.
+using the real collector. Repeated baseline runs remain pending; consult local evidence before
+proposing any new paid batch. The full local suite now passes 156 tests.
+
+Approved apply now separates `artifact_checks_passed` from `apply_workflow_verified`. The
+overall checker requires both: exact final files cannot substitute for successful, narrowly
+scoped pruner calls and a completed dry run before apply. Six additional synthetic trace tests
+cover claims-only evidence, failed/missing/unlinked results, ordering, wrong commands and
+manual substitution. The skill leaves required-method actions blocked if their helper cannot
+run. See the eval README for supported command forms and runner grant/sandbox limitations.
 
 An unstubbed collector test exposed a read-only integration gap: CLI 2.1.273 diagnostic probes
 created config bookkeeping, backup and telemetry files in the fake config tree. The checker
@@ -32,13 +39,12 @@ and a normal-PATH fake-home smoke check preserved source and home inventories. N
 exemptions were added. This closes the observed diagnostic-startup gap, not the separate
 eval-runner seccomp failure or model quality gaps.
 The trace checker also bounds reads before decoding and rejects empty or malformed assistant
-content. Local verification now passes 137 regression tests, including seven approved-apply
-tests and three additional trace checks. This is deterministic coverage, not model evidence.
+content. These are deterministic checks, not model evidence.
 
 ## Evidence and gaps
 
 The suite has six trigger cases, four read-only quality cases (including unpiloted suppression
-and cache-health cases) and one unpiloted approved-apply quality case. Historical results in
+and cache-health cases) and one approved-apply quality case. Historical results in
 [CHANGELOG.md](../CHANGELOG.md) include one trigger pass (6/6), single-run quality comparisons,
 and three clean security redaction reruns after a fix. They are not a repeated baseline for
 the current commit. The readiness case has documented misses and judge disagreements when

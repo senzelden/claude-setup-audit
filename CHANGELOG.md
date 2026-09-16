@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Required apply methods are preserved when helpers cannot run: degraded analysis no longer
+  implies permission to substitute manual edits. Approved-apply evaluation checks now require
+  linked successful dry-run/apply results as well as correct final settings and backup bytes.
 - Read-only collection no longer launches `claude --version` or `claude doctor`, whose
   startup created configuration, backup and telemetry files in a fake-home reproduction.
   Version and doctor coverage are explicitly not checked; existing update metadata is still

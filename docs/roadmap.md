@@ -42,9 +42,12 @@ both were corrected in follow-up commits. These changes have been pushed but not
   The [evaluation plan](evaluation-plan.md) defines the order and acceptance evidence.
   Hosted verification passed all seven jobs for the approved-apply implementation at `3a562fb`
   ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/35143564992)).
-  Local validation now passes 150 regression tests. Check the
+  Approved apply independently checks final artifacts and successful helper execution; the
+  skill blocks manual substitution when a required method cannot run. Runner write-tool
+  grouping and namespace limitations are documented in the eval instructions. Local
+  validation now passes 156 regression tests. Check the
   [validation workflow](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
-  for hosted results of subsequent commits. Model pilots remain pending and require separate approval;
+  for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. No version bump or release is planned for this slice.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.

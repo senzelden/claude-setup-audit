@@ -92,6 +92,12 @@ failing command in a loop. Then keep going with Read/Glob against the same files
 would have read (settings files, CLAUDE.md, memory, permission rules) — a degraded audit is much
 more useful than none, and the checklist findings still apply.
 
+This fallback is read-only analysis, not permission to replace an apply procedure. If an
+approved change requires a named helper, successful dry run, or other execution prerequisite
+that cannot run, leave its target and backups unchanged and report that action as blocked
+(`action_status: failed` with the reason). Do not simulate a dry run, copy the helper's logic
+into ad-hoc code, or substitute Write/Edit unless the user explicitly authorizes that alternative.
+
 The one thing that changes without the collector is that **you**, not `query_snapshot.py`, are now
 the only redaction pass. Its heuristics (`references/checklist.md`'s secret-pattern list: bearer
 tokens, API keys, JWTs, PEM keys, `user:pass@host`) are exactly what to apply by eye before writing
@@ -264,6 +270,9 @@ Otherwise ask which numbers to apply (e.g. `1,3,5`, `all high`, or `none`).
 
 Change only what was approved, one item at a time, and show the before/after for each one
 before writing it.
+Preserve any required execution method as part of the approval. For permission pruning,
+require a successful `prune_permissions.py` dry run before its apply call; if either cannot
+execute, follow the blocked-action guidance in Step 1 rather than manually editing permissions.
 
 1. **Back up first**: copy every file to `~/.claude/backups/setup-audit-<timestamp>/`, keeping
    its path recognisable, before any edit or before handing work to a sub-agent.

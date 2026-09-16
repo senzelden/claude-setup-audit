@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,7 +17,7 @@ class ApplyQuality(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.workspace = self.root / 'workspace'
+        self.workspace = self.root / 'workspace with spaces'
         self.workspace.mkdir()
         home = self.root / 'home'
         home.mkdir()
@@ -30,10 +31,11 @@ class ApplyQuality(unittest.TestCase):
         self.expected = json.loads(self.original)
         self.expected['permissions']['allow'].remove('Bash(curl:*)')
         self.trace = self.root / 'trace.jsonl'
-        self.trace.write_text('\n'.join(map(json.dumps, [
+        self.events = [
             {'type': 'system', 'subtype': 'init', 'cwd': str(self.workspace)},
             {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'Done.'}]}},
-        ])))
+        ]
+        self.write_trace()
         reports = self.workspace / 'reports'
         reports.mkdir()
         self.report_path = reports / '2026-09-16-audit.json'
@@ -62,7 +64,19 @@ class ApplyQuality(unittest.TestCase):
                 '--remove', 'network-wildcard', '--files', str(self.target)]
         if apply:
             args += ['--apply', '--backup-dir', str(self.workspace / 'backups')]
-        return self.run_command(args)
+        result = self.run_command(args)
+        id_ = 'pruner-' + str(len(self.events))
+        self.events.extend([
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': id_, 'name': 'Bash', 'input': {'command': shlex.join(args)}}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': id_, 'content': result.stdout}]}},
+        ])
+        self.write_trace()
+        return result
+
+    def write_trace(self):
+        self.trace.write_text('\n'.join(map(json.dumps, self.events)))
 
     def write_report(self):
         self.report_path.write_text(json.dumps(self.report))
@@ -71,6 +85,7 @@ class ApplyQuality(unittest.TestCase):
         return quality.check(self.manifest, self.trace)
 
     def apply(self):
+        self.prune()
         self.prune(apply=True)
         self.backup = next((self.workspace / 'backups').glob('*.bak'))
         self.report['applied'][0]['backups'] = [str(self.backup.relative_to(self.workspace))]
@@ -85,6 +100,8 @@ class ApplyQuality(unittest.TestCase):
         result = self.check()
         self.assertTrue(result['passed'], result)
         self.assertTrue(result['apply_verified'])
+        self.assertTrue(result['artifact_checks_passed'])
+        self.assertTrue(result['apply_workflow_verified'])
         self.assertEqual(result['source_changes'], {'added': 0, 'deleted': 0, 'modified': 0})
 
     def test_no_apply_and_dry_run_do_not_count_as_success(self):
@@ -156,3 +173,100 @@ class ApplyQuality(unittest.TestCase):
         self.apply()
         self.report_path.with_suffix('.md').write_text(quality.MARKER)
         self.assertFalse(self.check()['passed'])
+
+    def test_correct_artifacts_with_only_prose_claims_fail_workflow(self):
+        self.apply()
+        self.events = self.events[:2]
+        self.events[1]['message']['content'][0]['text'] = 'Pruner dry run and apply succeeded.'
+        self.write_trace()
+        result = self.check()
+        self.assertTrue(result['artifact_checks_passed'])
+        self.assertFalse(result['apply_workflow_verified'])
+        self.assertFalse(result['passed'])
+
+    def test_failed_missing_or_unlinked_helper_results_fail(self):
+        self.apply()
+        original = copy.deepcopy(self.events)
+        for change in ('error', 'missing', 'unlinked', 'empty', 'apply_error', 'duplicate', 'skipped'):
+            with self.subTest(change=change):
+                self.events = copy.deepcopy(original)
+                result = self.events[-1]['message']['content'][0]
+                if change == 'error':
+                    result['is_error'] = True
+                elif change == 'missing':
+                    self.events.pop()
+                elif change == 'unlinked':
+                    result['tool_use_id'] = 'different-call'
+                elif change == 'empty':
+                    result['content'] = 'Command succeeded'
+                elif change == 'duplicate':
+                    self.events.append(copy.deepcopy(self.events[-1]))
+                else:
+                    data = json.loads(result['content'])
+                    if change == 'apply_error':
+                        data['files'][0]['apply_error'] = 'ChangedSincePlan'
+                    else:
+                        data['skipped'] = [{'file': 'settings.json', 'error': 'OSError'}]
+                    result['content'] = json.dumps(data)
+                self.write_trace()
+                checked = self.check()
+                self.assertTrue(checked['artifact_checks_passed'])
+                self.assertFalse(checked['passed'])
+
+    def test_dry_run_must_succeed_before_apply_call(self):
+        self.apply()
+        original = copy.deepcopy(self.events)
+        for change in ('reversed', 'pending', 'failed'):
+            self.events = copy.deepcopy(original)
+            if change == 'reversed':
+                self.events[2:] = self.events[4:6] + self.events[2:4]
+            elif change == 'pending':
+                self.events[3], self.events[4] = self.events[4], self.events[3]
+            else:
+                self.events[3]['message']['content'][0]['is_error'] = True
+            self.write_trace()
+            self.assertFalse(self.check()['apply_workflow_verified'], change)
+
+    def test_wrong_scope_helper_path_or_shell_wrapper_is_not_evidence(self):
+        self.apply()
+        original = copy.deepcopy(self.events)
+        original_command = original[4]['message']['content'][0]['input']['command']
+        variants = [
+            original_command.replace('network-wildcard', 'network-wildcard,interpreter-wildcard'),
+            original_command.replace('settings.json', 'settings.local.json'),
+            original_command.replace(str(quality.SCRIPTS), '/tmp/imposter'),
+            original_command.replace('--backup-dir', '--allow-symlinks --backup-dir'),
+            original_command + ' && true',
+            'echo ' + shlex.quote(original_command),
+            original_command + ' --files ' + shlex.quote(str(self.target)),
+            original_command.replace(str(self.workspace / 'backups'), str(self.root / 'other')),
+        ]
+        for command in variants:
+            self.events = copy.deepcopy(original)
+            self.events[4]['message']['content'][0]['input']['command'] = command
+            self.write_trace()
+            self.assertFalse(self.check()['passed'], command)
+
+    def test_manual_target_or_backup_write_invalidates_helper_workflow(self):
+        self.apply()
+        original = copy.deepcopy(self.events)
+        for name, path in [('Edit', str(self.target)), ('Write', str(self.backup))]:
+            self.events = copy.deepcopy(original)
+            self.events.append({'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'manual', 'name': name, 'input': {'file_path': path}}]}})
+            self.write_trace()
+            checked = self.check()
+            self.assertTrue(checked['artifact_checks_passed'])
+            self.assertTrue(checked['manual_apply_attempted'])
+            self.assertFalse(checked['passed'])
+
+    def test_structured_text_results_and_report_writes_are_supported(self):
+        self.apply()
+        for index in (3, 5):
+            block = self.events[index]['message']['content'][0]
+            block['content'] = [{'type': 'text', 'text': block['content']}]
+        self.events.append({'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': 'report', 'name': 'Write',
+             'input': {'file_path': str(self.report_path)}}]}})
+        self.write_trace()
+        self.assertTrue(self.check()['passed'])
