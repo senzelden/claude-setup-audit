@@ -21,8 +21,6 @@ jobs:
         python: ['3.11', '3.13', '3.14']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
-    env:
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,10 +29,14 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Run regression suite
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: python3 -m unittest discover -s tests -v
       - name: Install schema check dependency (CI only)
         run: python3 -m pip install jsonschema==4.26.0
       - name: Check schema and fixture snapshots independently
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: python3 tests/check_snapshot_schema.py -v
 
   plugin:
