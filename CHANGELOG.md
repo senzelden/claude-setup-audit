@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-17
+
 ### Security
 
 - Permission-pruning backups use unique, exclusively created files with owner-only permissions.
@@ -37,6 +39,14 @@ All notable changes to this project are documented here. The format follows
 - Evaluation fixtures and independent retained-workspace checks for approved permission
   removal, decision suppression and cache health, with free regression tests. New model pilots
   and repeated baselines remain pending; deterministic checks do not establish model reliability.
+
+### Validation and limits
+
+- 167 local regression tests pass. Pre-release hosted validation passed all seven jobs across
+  Linux/macOS and Python 3.11/3.13/3.14, including independent schema checks and strict plugin
+  validation. No paid model evaluations were run for this release.
+- Full eval-runner compatibility remains unverified. OS prerequisite probes and deterministic
+  tests do not establish successful shell execution inside `claude plugin eval` or model quality.
 
 ## [0.5.0] - 2026-09-16
 
@@ -350,7 +360,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.0...v0.3.1

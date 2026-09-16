@@ -1,7 +1,7 @@
 {
   "name": "setup-audit",
   "displayName": "Setup Audit",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Audit Claude Code configuration, usage, and common setup risks against current docs. Get evidence-backed security, cost, learning, and optional readiness findings, readable reports, and approved fixes with backups and verification.",
   "author": {
     "name": "senzelden",
