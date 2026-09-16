@@ -71,7 +71,9 @@ The checker hashes every scaffold workspace entry outside `reports/` (including 
 deletions, symlink changes and Git metadata), validates `*-audit.json` with the strict report
 contract and expected profile, and requires nonempty Markdown and HTML companions. It checks
 all report files, assistant content/tool inputs and final result text for the security fixture's
-fake-token marker; fixture reads in user tool results are allowed. This is a sentinel leak test,
+fake-token marker; fixture reads in user tool results are allowed. The CLI's newly created empty
+`.claude/.cc-writes` directory and its otherwise-empty new parent are counted separately as
+`runtime_empty_directories`; files beneath either directory and symlinks are never exempt. This is a sentinel leak test,
 not a general secret detector or an HTML correctness/security validator. It observes final file
 state; transient edits later reverted require trace review. Only the fixture workspace is checked,
 not every path on the host. Unsupported trace shapes and bounded-input failures are incomplete.
@@ -94,7 +96,8 @@ python3 -m unittest discover -s tests -p test_eval_quality.py -v
 Runner flags, file grading limitations and estimated-cost semantics were checked on 2026-09-16
 against CLI 2.1.273 and the official [eval reference](https://code.claude.com/docs/en/plugin-evals).
 
-`results/` is gitignored.
+`results/` is gitignored. Keep pilot summaries and observed-answer examples there too; do not
+commit or publish pilot results.
 
 ## Free instruction-clarity development check
 

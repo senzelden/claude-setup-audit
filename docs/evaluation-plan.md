@@ -1,15 +1,15 @@
 # Next evaluation improvements
 
-Scoped 2026-09-16; the first implementation chunk is complete and its pilot is pending. This plan follows the snapshot
+Scoped 2026-09-16; the first implementation chunk is complete. Pilot results are kept local. This plan follows the snapshot
 contract and hosted CI work. It does not expand collector checks or redesign apply behavior.
 
 Implemented: aligned readiness expectations, four independent judge obligations and calibration
 examples, explicit quick/read-only fixture profiles, external scaffold manifests, and a free
-post-run checker for retained workspaces/traces and report artifacts. Fifteen new regression
-tests cover the checker and both real scaffolds; all 123 local tests pass. See the
+post-run checker for retained workspaces/traces and report artifacts. Nineteen new regression
+tests cover the checker, runner compatibility and both real scaffolds; all 127 local tests pass. See the
 [eval instructions](../plugins/setup-audit/evals/README.md) for commands and coverage limits.
-The user approved one readiness pilot after implementation; repeated baselines and additional
-cases remain separate paid batches.
+Paid batches require explicit approval. Keep pilot summaries, observed-answer examples, raw
+traces and reports in ignored local results; do not commit or publish them.
 
 ## Evidence and gaps
 
@@ -85,8 +85,8 @@ with that limitation stated. Do not run `plugin eval init` as a supposedly free 
 
 Record CLI version, OS, date, exact command, plugin commit, fixture/grader changes, execution
 errors, collector status, per-grader results, judge disagreement and elapsed time. Label the
-CLI cost figure as a list-price estimate, not a measured invoice. Keep raw traces and reports
-in ignored local results; commit only reviewed, redacted summaries. Paid evals remain outside
+CLI cost figure as a list-price estimate, not a measured invoice. Keep raw traces, reports and reviewed pilot summaries
+in ignored local results; do not commit or publish them. Paid evals remain outside
 ordinary CI. A failed execution or missing artifact must be reported as incomplete evidence.
 
 ## Validation sources

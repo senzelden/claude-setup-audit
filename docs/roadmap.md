@@ -34,7 +34,8 @@ both were corrected in follow-up commits. These changes have been pushed but not
 
 - **Evaluation evidence:** repeated trigger/quality runs, resolve readiness-case inconsistency,
   and add apply, suppression and cache-health cases. The [evaluation plan](evaluation-plan.md)
-  defines the implementation order and acceptance evidence. Model runs require separate approval.
+  defines the implementation order and acceptance evidence. Fixture/grader reliability work is
+  implemented. Model runs require separate approval; pilot results remain local.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal

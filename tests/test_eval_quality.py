@@ -85,6 +85,26 @@ class EvalQuality(unittest.TestCase):
                 self.assertFalse(result['passed'])
                 self.assertEqual(result['source_changes'][operation], 1)
 
+    def test_cli_empty_write_bookkeeping_is_separate_but_content_is_not_exempt(self):
+        bookkeeping = self.workspace / '.claude/.cc-writes'
+        bookkeeping.mkdir(parents=True)
+        result = self.check()
+        self.assertTrue(result['passed'])
+        self.assertEqual(result['runtime_empty_directories'], 2)
+        (bookkeeping / 'hidden.txt').write_text('unexpected')
+        self.assertFalse(self.check()['passed'])
+        (bookkeeping / 'hidden.txt').unlink()
+        (self.workspace / '.claude/settings.json').write_text('{}')
+        self.assertFalse(self.check()['passed'])
+        (self.workspace / '.claude/settings.json').unlink()
+        bookkeeping.rmdir()
+        self.assertFalse(self.check()['passed'])  # unrelated empty .claude is not exempt
+
+    def test_write_bookkeeping_symlink_is_not_exempt(self):
+        (self.workspace / '.claude').mkdir()
+        (self.workspace / '.claude/.cc-writes').symlink_to(self.evidence, target_is_directory=True)
+        self.assertFalse(self.check()['passed'])
+
     def test_raw_reads_are_allowed_but_assistant_text_and_tool_inputs_are_not(self):
         self.events.append({'type': 'user', 'message': {'content': [
             {'type': 'tool_result', 'tool_use_id': 'read', 'content': quality.MARKER}]}})

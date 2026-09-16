@@ -178,6 +178,17 @@ def check(manifest_path, trace_path, sealed=False):
             workspace = workspace.parent.parent / 'sealed/home/cwd'
         before = manifest['entries']
         after = inventory(workspace, exclude_reports=True)
+        # Observed CLI 2.1.273 Write bookkeeping. Only ignore newly created empty
+        # directories; any content, symlink or change to a baseline entry still fails.
+        result['runtime_empty_directories'] = 0
+        for name in ('.claude/.cc-writes', '.claude'):
+            if (name not in before and after.get(name) == ['dir']
+                    and not any(key.startswith(name + '/') for key in after)):
+                # Do not exempt an arbitrary empty .claude created on its own.
+                if name == '.claude' and not result['runtime_empty_directories']:
+                    continue
+                after.pop(name)
+                result['runtime_empty_directories'] += 1
         result['source_changes'] = {
             'added': len(after.keys() - before.keys()),
             'deleted': len(before.keys() - after.keys()),
