@@ -1011,6 +1011,11 @@ def git_age(root):
 TEST_PATH_RE = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)(/|$)|(\.test|\.spec|_test)\.\w+$|(^|/)test_[^/]*\.py$")
 SDK_IMPORT_RE = re.compile(r"^\s*(?:from anthropic\b|import anthropic\b)|['\"]@anthropic-ai/sdk['\"]", re.M)
 SDK_CALL_RE = re.compile(r"messages\.(?:create|stream|parse|count_tokens)|messages\.batches")
+# A bare substring match on "cache_control" also hits prose that mentions the setting without using
+# it (e.g. a docstring explaining why caching does NOT apply here, in backtick-quoted code style).
+# Require dict-key/kwarg/annotation syntax (a following ':' or '=') and exclude backtick-preceded
+# mentions, which is how this codebase's docstrings quote identifiers in running prose.
+CACHE_CONTROL_RE = re.compile(r"(?<!`)cache_control[\"']?\s*[:=]")
 CACHE_BREAKER_RES = {
     "timestamp": re.compile(r"datetime\.now\(|datetime\.utcnow\(|time\.time\(\)|Date\.now\(\)|new Date\(\)"),
     "random-id": re.compile(r"uuid4\(|randomUUID\("),
@@ -1045,7 +1050,7 @@ def app_caching(root, max_files=4000):
             if not SDK_IMPORT_RE.search(text):
                 continue
             sdk_files.append(rel)
-            if "cache_control" in text:
+            if CACHE_CONTROL_RE.search(text):
                 cached.append(rel)
             if SDK_CALL_RE.search(text):
                 for kind, rx in CACHE_BREAKER_RES.items():

@@ -602,6 +602,21 @@ class AppCaching(FakeHome):
         self.write("repo/app.py", "print('hi')\n")
         self.assertIsNone(collect.app_caching(os.path.join(self.home, "repo")))
 
+    def test_prose_mention_is_not_counted_as_cached(self):
+        # A docstring can narrate a decision NOT to cache using the same backtick-quoted
+        # identifier style as real code (`cache_control: ephemeral`). A bare substring match
+        # would misread that prose as an implementation; it must still show up as uncached.
+        self.write("repo/src/batching.py",
+                    '"""Why this rather than prompt caching: the prefix is short of the model\'s\n'
+                    "minimum, so `cache_control: ephemeral` would be a silent no-op. Batches instead.\n"
+                    '"""\n'
+                    "from anthropic import Anthropic\n"
+                    "c = Anthropic()\n"
+                    "c.messages.batches.create(requests=[])\n")
+        r = collect.app_caching(os.path.join(self.home, "repo"))
+        self.assertEqual((r["sdk_files"], r["files_with_cache_control"]), (1, 0))
+        self.assertEqual(r["uncached_files"], ["src/batching.py"])
+
 
 class ScopedCollection(FakeHome):
     """project_filter (threaded from --scope/--project in main()) must genuinely skip unrelated
