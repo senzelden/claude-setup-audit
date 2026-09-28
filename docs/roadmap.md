@@ -34,6 +34,17 @@ combination, plus strict marketplace/plugin validation with Claude Code 2.1.273.
 push exposed an invalid job-level runner context and a macOS path assumption in a test;
 both were corrected in follow-up commits before inclusion in 0.6.0.
 
+## Shipped in 0.7.0: earlier reports and AGENTS.md
+
+- [x] Read the plugin's own earlier reports leniently (only version and finding ids required),
+  record what was ignored, and name the failing input in validation errors.
+- [x] Inventory `AGENTS.md` with observed per-context presence flags and any observed
+  `instructionFiles` setting, without inferring what Claude Code loads.
+- [x] Coverage floor in CI, README badges, requirements, update/uninstall and a sample report.
+
+Hosted validation passed all eight jobs at `b93e179`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/36478432072).
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are

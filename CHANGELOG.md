@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-28
+
 ### Added
 
 - A CI coverage job with an 88% floor over the bundled scripts (including scripts that tests run
@@ -37,6 +39,15 @@ All notable changes to this project are documented here. The format follows
   the line where known, still without quoting input values. A YAML block scalar (`reason: >`) in
   `decisions.yaml` is still rejected, now with a "quote the value" hint; SKILL.md and
   `references/report-state.md` tell the auditing model to always write quoted scalars.
+
+### Validation and limits
+
+- 201 local regression tests pass, with 89.59% coverage of the bundled scripts. Hosted validation
+  passed all eight jobs, including Linux/macOS on Python 3.11/3.13/3.14, the new coverage floor
+  and strict plugin validation. No paid model evaluations were run for this release.
+- AGENTS.md loading is not inferred: Claude Code version, feature flags and the effective
+  `instructionFiles` setting are not observable locally. Full eval-runner compatibility remains
+  unverified.
 
 ## [0.6.0] - 2026-09-17
 
@@ -392,7 +403,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.3.1...v0.4.0
