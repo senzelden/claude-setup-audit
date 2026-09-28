@@ -28,6 +28,7 @@ SOURCES = ('corrections', 'friction_details')
 KINDS = ('markdown_block', 'hook_script', 'json_array_append', 'json_set')
 SCOPES = ('global', 'project', 'all')
 ID_RE = re.compile(r'L-\d{8}-\d{1,4}\Z')
+INDEX_RE = re.compile(r'(0|[1-9][0-9]*)\Z')
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 MIN_SESSIONS, MIN_BASELINE, QUIET_DAYS = 5, 3, 30
 ENTRY_FIELDS = {'id', 'applied_at', 'run', 'finding_id', 'pattern', 'mechanism', 'state',
@@ -311,7 +312,7 @@ def resolve(doc, parts):
     node = doc
     for part in parts:
         if isinstance(node, list):
-            require(part.isdigit() and int(part) < len(node), 'JSON pointer not found', input='edited file')
+            require(INDEX_RE.match(part) and int(part) < len(node), 'JSON pointer not found', input='edited file')
             node = node[int(part)]
         else:
             require(isinstance(node, dict) and part in node, 'JSON pointer not found', input='edited file')
@@ -357,16 +358,16 @@ def fingerprint_edit(entry_id, edit, home):
         out['sha256'] = block_hash(read_text(path).decode('utf-8', 'replace'), entry_id)
     elif edit['kind'] == 'hook_script':
         data = read_text(path)
-        head = data.decode('utf-8', 'replace').splitlines()[:5]
-        require(any(line.strip() == hook_marker(entry_id) for line in head), 'hook marker not found',
-                input='edited file')
+        marks = [line.strip() == hook_marker(entry_id) for line in data.decode('utf-8', 'replace').splitlines()]
+        require(sum(marks) == 1 and any(marks[:5]), 'hook marker not found or ambiguous', input='edited file')
         out['sha256'] = hashlib.sha256(data).hexdigest()
     else:
         parts = pointer_parts(edit['pointer'])
         doc = read_json(path)
+        if edit['kind'] == 'json_array_append':
+            require(INDEX_RE.match(parts[-1]), 'pointer must name the appended element', input='spec')
         value = resolve(doc, parts)
         if edit['kind'] == 'json_array_append':
-            require(parts[-1].isdigit(), 'pointer must name the appended element', input='spec')
             require(isinstance(resolve(doc, parts[:-1]), list), 'pointer parent must be an array',
                     input='edited file')
             parts = parts[:-1]
@@ -414,6 +415,10 @@ def record(book, spec, snapshot, report, run, now):
     book = copy.deepcopy(validate(book))
     require(isinstance(spec, dict) and SPEC_FIELDS <= set(spec) <= SPEC_FIELDS | {'supersedes'},
             'invalid spec fields', input='spec')
+    try:
+        report_state.validate_report(report)
+    except report_state.ReportError as exc:
+        raise LedgerError(exc.message, input='report', line=exc.line) from None
     require(isinstance(report, dict) and isinstance(report.get('findings', []), list)
             and all(isinstance(f, dict) for f in report.get('findings', [])), 'invalid findings', input='report')
     require(isinstance(spec['id'], str) and ID_RE.match(spec['id']), 'invalid entry id', input='spec')

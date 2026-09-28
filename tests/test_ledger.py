@@ -302,7 +302,17 @@ class Record(LedgerFiles):
             ("report", dict(self.report, metrics={"m": dict(value=1, basis="measured", unit="prompts",
                                                             source="corrections.count")},
                             coverage=dict(sources=[3])), self.snapshot, self.spec(selector=sel)),
+            ("report", dict(self.report, metrics={"m": dict(value=1, basis="measured", unit="prompts",
+                                                            source="corrections.count")},
+                            coverage=dict(sources=[dict(source="corrections")])), self.snapshot,
+             self.spec(selector=sel)),
             ("snapshot", self.report, dict(self.snapshot, collection_scope="x"), self.spec()),
+            ("spec", self.report, self.snapshot, self.spec(mechanism="setting", edits=[dict(
+                file=self.settings, kind="json_array_append", pointer="/permissions/deny/\u00b2", backup=None)])),
+            ("spec", self.report, self.snapshot, self.spec(mechanism="setting", edits=[dict(
+                file=self.settings, kind="json_array_append", pointer="/permissions/deny/x", backup=None)])),
+            ("edited file", self.report, self.snapshot, self.spec(mechanism="setting", edits=[dict(
+                file=self.settings, kind="json_array_append", pointer="/permissions/deny/5", backup=None)])),
             ("snapshot", self.report, dict(self.snapshot, collection_scope=[]), self.spec()),
             ("snapshot", self.report, dict(self.snapshot, collection_scope=dict(requested="project", project=None)),
              self.spec()),
@@ -319,6 +329,15 @@ class Record(LedgerFiles):
                 with self.assertRaises(ledger.LedgerError) as caught:
                     ledger.record(ledger.empty(), spec, snapshot, report, "r", 1_790_000_000)
                 self.assertEqual(caught.exception.input, label)
+
+    def test_hook_marker_must_appear_exactly_once_near_the_top(self):
+        m = "# setup-audit: L-20260928-2\n"
+        for text in ("#!/bin/sh\n" + m + m + "exit 0\n", "#!/bin/sh\n" * 6 + m, "#!/bin/sh\nexit 0\n"):
+            hook = self.put(".claude/hooks/h.sh", text)
+            spec = self.spec(id="L-20260928-2", mechanism="hook", edits=[dict(file=hook, kind="hook_script", backup=None)])
+            with self.subTest(text=text[:40]), self.assertRaises(ledger.LedgerError) as caught:
+                self.record(spec=spec)
+            self.assertEqual(caught.exception.input, "edited file")
 
     def cli(self, *args):
         return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True,
