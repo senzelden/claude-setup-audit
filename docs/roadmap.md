@@ -89,7 +89,7 @@ The 2026-09-16 handoff records community review approval but no entry in Anthrop
 mirror. Recheck the live listing before adding community install instructions. Direct marketplace
 installation remains documented in the README. This is external follow-up, not a release blocker.
 
-- README update/uninstall instructions and a sample report are part of this branch (Task 2).
+- The README now has update and uninstall instructions and a sample report.
 
 ## Explicit limits
 

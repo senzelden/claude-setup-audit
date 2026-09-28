@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A CI coverage job with an 88% floor over the bundled scripts (including scripts that tests run
+  as subprocesses), and local reproduction steps in `docs/development.md`.
+- README badges, requirements, update and uninstall instructions, and a sample report rendered
+  from the fictional example.
+
 ### Fixed
 
 - `app_caching`'s collector no longer counts a prose mention of `cache_control` (e.g. a docstring

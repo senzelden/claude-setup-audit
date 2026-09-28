@@ -1,5 +1,11 @@
 # Setup Audit for Claude Code
 
+[![Validation](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
+[![coverage ≥ 88%](https://img.shields.io/badge/coverage-%E2%89%A5%2088%25-brightgreen)](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
+[![python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![license MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
+[![Latest release](https://img.shields.io/github/v/release/senzelden/claude-setup-audit)](https://github.com/senzelden/claude-setup-audit/releases)
+
 An evidence-backed auditor for Claude Code configuration, usage patterns, and common setup risks.
 It reads your user and per-project settings, permissions, hooks, MCP servers, skills, plugins,
 CLAUDE.md files, memory,
@@ -27,6 +33,45 @@ Proposals are applied only when you approve them, with backups and verification.
 /plugin install setup-audit@claude-setup-audit
 ```
 
+### Requirements
+
+- Linux or macOS. CI runs on `ubuntu-latest` and `macos-latest`. Windows is not supported yet;
+  see the [roadmap](docs/roadmap.md).
+- Python 3.11 or newer. The bundled scripts use only the standard library. CI tests 3.11, 3.13
+  and 3.14.
+- Claude Code with plugin support. CI validates the plugin with Claude Code 2.1.273.
+
+## Update
+
+Third-party marketplaces do not auto-update by default. Refresh the listing, then update the
+plugin from a shell:
+
+```
+/plugin marketplace update claude-setup-audit
+claude plugin update setup-audit@claude-setup-audit
+```
+
+The listing refresh also works from a shell (`claude plugin marketplace update
+claude-setup-audit`). In a session you can instead open the plugin on the **Installed** tab of
+`/plugin` and choose **Update now**. Run `/reload-plugins`, or restart, to load the new version.
+To update automatically, turn on auto-update for this marketplace under `/plugin` >
+**Marketplaces**.
+
+This plugin sets `version` in its `plugin.json`, so you only receive a new version when that
+number is bumped in a release. New commits alone do not change what you get.
+
+## Uninstall
+
+```
+/plugin uninstall setup-audit@claude-setup-audit
+/plugin marketplace remove claude-setup-audit
+```
+
+Removing the marketplace also uninstalls every plugin installed from it. The plugin leaves its
+output behind: reports in `~/.claude/audits/` and backups of any config it edited in
+`~/.claude/backups/` (see [What it reads, writes and sends](#what-it-reads-writes-and-sends)).
+Delete those yourself if you no longer want them. Nothing removes them for you.
+
 ## Use
 
 Ask naturally ("audit my Claude Code setup", "why is Claude Code so expensive?") or invoke it
@@ -49,6 +94,11 @@ directly:
 analysis is the main cost. For reference, a `depth=quick scope=project mode=audit` run on
 Sonnet took about 4.5 minutes and ~$0.73 on one real machine. A `full` audit of all projects
 reads more and costs more.
+
+![Top of a sample audit report: summary and two ranked findings](docs/assets/sample-report.png)
+
+The top of a report, rendered from the fictional
+[example audit](plugins/setup-audit/examples/readable-audit.json).
 
 Each audit also produces a self-contained HTML report with scope and coverage, ranked findings,
 evidence, labeled metrics, and action results. It uses no external resources and stays private.
