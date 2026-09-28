@@ -21,12 +21,14 @@ All notable changes to this project are documented here. The format follows
   explaining why caching does NOT apply) as an implementation. Found by auditing sibling repos
   against real code: it inflated the cached-file count via a file that only narrates a caching
   decision and never passes `cache_control` to the API.
-- `process_report.py` reads its own earlier output. A previous report with finding statuses
-  outside the history enum (`fixed`, `no_change_needed`, `partial`) or nested metrics without a
-  `value` no longer fails: those statuses count as not-resolved, unusable metrics get no delta,
-  and `trend.ignored` lists the finding ids and metric names that were skipped. The current
-  report stays strict.
-- Validation errors name the failing input (current report, previous report, decisions file) and
+- `process_report.py` reads its own earlier output. A previous report needs only `version` 1 and
+  string finding ids. Finding statuses outside the history enum (`fixed`, `no_change_needed`,
+  `partial`) count as not-resolved, and any other unusable field (nested metrics without a
+  `value`, off-enum severity or action status, bad `checks`, coverage or `applied` entries, an
+  older `trend`, a malformed `generated`) is dropped from the comparison. `trend.ignored` lists
+  the finding ids, metric names and field paths that were dropped, never values. The current
+  report and decisions stay strict.
+- Validation errors name the failing input (current report, previous report, decisions file, `--as-of`) and
   the line where known, still without quoting input values. A YAML block scalar (`reason: >`) in
   `decisions.yaml` is still rejected, now with a "quote the value" hint; SKILL.md and
   `references/report-state.md` tell the auditing model to always write quoted scalars.

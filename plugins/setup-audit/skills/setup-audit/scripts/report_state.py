@@ -35,7 +35,10 @@ def finite(value):
 
 def iso_date(value):
     require(isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value), 'expected ISO date')
-    return date.fromisoformat(value)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ReportError('expected ISO date') from None
 
 
 def timestamp(value):
@@ -282,30 +285,124 @@ def metric_coverage(report, metric):
     return bool(sources) and all(s['status'] == 'collected' and not s.get('omitted') for s in sources)
 
 
-def lenient_previous(previous):
-    """Return (usable copy, ignored) for an earlier report; only ids and version are required.
+def _fits(**fragment):
+    try:
+        validate_report(dict(version=1, **fragment))
+        return True
+    except ValueError:
+        return False
 
-    Findings whose history status is unknown to this version keep their id but lose the status,
-    so they are never treated as resolved. Metrics that are nested or otherwise unusable are
-    dropped. `ignored` holds finding ids and metric names only, never values.
+
+def _keep_entries(name, mapping, kept, fits, note):
+    """Copy the mapping entries one by one, dropping (and noting) those that fail `fits`."""
+    for key, value in mapping.items():
+        if fits(key, value):
+            kept[key] = value
+        else:
+            note(name + '.' + key)
+
+
+def lenient_previous(previous):
+    """Return (usable copy, ignored) for an earlier report; only version 1 and finding ids matter.
+
+    Every other field that fails validation is dropped from the copy. A finding status outside
+    the history enum keeps the id but loses the status, so it is never treated as resolved.
+    `ignored` holds finding ids, metric names and field paths only, never values.
     """
-    ignored = dict(finding_statuses=[], metrics=[])
-    if not isinstance(previous, dict) or not isinstance(previous.get('metrics', {}), dict):
-        return previous, ignored
-    previous = copy.deepcopy(previous)
-    findings = previous.get('findings')
-    for item in findings if isinstance(findings, list) else []:
-        if isinstance(item, dict) and isinstance(item.get('id'), str) and item['id'] \
-                and 'status' in item and item['status'] not in HISTORY:
-            ignored['finding_statuses'].append(item['id'])
-            del item['status']
-    for name in list(previous.get('metrics', {})):
-        try:
-            validate_report(dict(version=1, metrics={name: previous['metrics'][name]}))
-        except ValueError:
-            ignored['metrics'].append(name)
-            del previous['metrics'][name]
-    return previous, ignored
+    require(isinstance(previous, dict) and type(previous.get('version')) is int and previous['version'] == 1,
+            'expected version 1 report')
+    ignored = dict(finding_statuses=[], metrics=[], fields=[])
+    note = ignored['fields'].append
+    out = {'version': 1}
+    special = ('version', 'profile', 'coverage', 'checks', 'metrics', 'findings', 'applied')
+    for key, value in previous.items():
+        if key not in special:
+            if _fits(**{key: value}):
+                out[key] = value
+            else:
+                note(key)
+    if 'generated' not in out and 'generated' not in ignored['fields']:
+        note('generated')
+    if 'profile' in previous:
+        if isinstance(previous['profile'], dict):
+            out['profile'] = {}
+            _keep_entries('profile', previous['profile'], out['profile'],
+                          lambda k, v: _fits(profile=dict(out['profile'], **{k: v})), note)
+        else:
+            note('profile')
+    if 'coverage' in previous:
+        coverage = previous['coverage']
+        if isinstance(coverage, dict):
+            out['coverage'] = {}
+            context = dict(profile=out['profile']) if 'profile' in out else {}
+            for key, value in coverage.items():
+                if key == 'sources' and isinstance(value, list):
+                    out['coverage'][key] = []
+                    for index, source in enumerate(value):
+                        if _fits(coverage=dict(sources=[source])):
+                            out['coverage'][key].append(source)
+                        else:
+                            note('coverage.sources[%d]' % index)
+                elif _fits(coverage=dict(out['coverage'], **{key: value}), **context):
+                    out['coverage'][key] = value
+                else:
+                    note('coverage.' + key)
+        else:
+            note('coverage')
+    if 'checks' in previous:
+        if isinstance(previous['checks'], dict):
+            out['checks'] = {}
+            _keep_entries('checks', previous['checks'], out['checks'],
+                          lambda k, v: _fits(checks={k: v}), note)
+        else:
+            note('checks')
+    if 'metrics' in previous:
+        if isinstance(previous['metrics'], dict):
+            out['metrics'] = {}
+            for name, metric in previous['metrics'].items():
+                if _fits(metrics={name: metric}):
+                    out['metrics'][name] = metric
+                else:
+                    ignored['metrics'].append(name)
+        else:
+            note('metrics')
+    if 'findings' in previous:
+        if isinstance(previous['findings'], list):
+            out['findings'], seen = [], set()
+            for index, item in enumerate(previous['findings']):
+                ident = item.get('id') if isinstance(item, dict) else None
+                if not (isinstance(ident, str) and ident) or ident in seen:
+                    note('findings[%d]' % index)
+                    continue
+                seen.add(ident)
+                kept = {'id': ident}
+                for key, value in item.items():
+                    if key == 'id' or _fits(findings=[{'id': ident, key: value}]):
+                        kept[key] = value
+                    elif key == 'status':
+                        ignored['finding_statuses'].append(ident)
+                    else:
+                        note('findings[%s].%s' % (ident, key))
+                out['findings'].append(kept)
+        else:
+            note('findings')
+    if 'applied' in previous:
+        if isinstance(previous['applied'], list):
+            out['applied'] = []
+            for index, item in enumerate(previous['applied']):
+                if not isinstance(item, dict):
+                    note('applied[%d]' % index)
+                    continue
+                kept = {}
+                for key, value in item.items():
+                    if _fits(applied=[{key: value}]):
+                        kept[key] = value
+                    else:
+                        note('applied[%d].%s' % (index, key))
+                out['applied'].append(kept)
+        else:
+            note('applied')
+    return out, ignored
 
 
 def finalize(current, previous=None, decisions=(), as_of=None):
@@ -314,10 +411,10 @@ def finalize(current, previous=None, decisions=(), as_of=None):
     except ReportError as exc:
         exc.input = 'report'
         raise
-    ignored = dict(finding_statuses=[], metrics=[])
+    ignored = dict(finding_statuses=[], metrics=[], fields=[])
     if previous is not None:
-        previous, ignored = lenient_previous(previous)
         try:
+            previous, ignored = lenient_previous(previous)
             validate_report(previous)
         except ReportError as exc:
             exc.input = 'previous'
@@ -328,7 +425,11 @@ def finalize(current, previous=None, decisions=(), as_of=None):
     except ReportError as exc:
         exc.input, exc.line = 'decisions', None
         raise
-    day = iso_date(as_of) if as_of else timestamp(current['generated']).date()
+    try:
+        day = iso_date(as_of) if as_of else timestamp(current['generated']).date()
+    except ReportError as exc:
+        exc.input = 'as_of'
+        raise
     out = copy.deepcopy(current)
     out['findings'] = [f for f in out['findings'] if not f.get('comparison_generated')]
     same, reason = comparable(current, previous)

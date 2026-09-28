@@ -48,8 +48,8 @@ deliberate divergences the user doesn't want re-flagged:
 ```yaml
 - id: SEC-deny-baseline        # finding id (see audit.json) or check id
   reason: "Team CI image has no secrets; deny rules break the build"
-  settled: 2026-09-14
-  review_after: 2027-03-01     # review is due on this date; renew to suppress again
+  settled: "2026-09-14"
+  review_after: "2027-03-01"     # review is due on this date; renew to suppress again
 ```
 
 Always write every value as a quoted string (`reason: "one line"`, dates too), never as a YAML
@@ -208,7 +208,8 @@ memory line < CLAUDE.md or path-scoped rule < hook (must always hold) < skill (w
 **Compare with the previous run** using the report processor in Step 4. Supply the latest older
 report from the same report directory; never infer resolution just because a finding is absent.
 For learning findings, use comparable metric deltas as evidence for whether an applied fix helped.
-A delta alone does not establish that the fix caused the change.
+A delta alone does not establish that the fix caused the change. The processor reads the previous
+report leniently (only `version` 1 and finding ids are required) and lists what it ignored in `trend.ignored`.
 
 ## Step 4: Write Markdown, JSON and HTML reports
 

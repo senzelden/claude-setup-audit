@@ -24,14 +24,23 @@ labels include unit, basis and source. Previous/legacy reports allow missing pre
 and bare numeric metrics, but missing metadata prevents comparisons. The renderer keeps legacy
 support while sharing the structural validator. Unknown extra fields remain allowed.
 
-The previous report is read leniently, because earlier runs wrote statuses and metric shapes
-this version does not define. It needs version 1 and, per finding, an `id`. A finding status
-outside the history enum (for example `fixed`, `no_change_needed`, `partial`) counts as
-not-resolved: the finding still matches by id, is never claimed resolved, and if it is absent
-from the current report it lands in `trend.findings.not_rechecked`. Statuses are not mapped to
-other values. A metric that is nested, has no usable `value`, or fails the label checks is
-skipped with no delta. `trend.ignored` records what was skipped as `finding_statuses` (finding
-ids) and `metrics` (metric names); it never holds values. The current report stays strict.
+The previous report is read leniently, because earlier runs wrote statuses and shapes this
+version does not define. It needs `version` 1 and, for each finding to count, a non-empty string
+`id`. Every other field that fails validation is dropped from the comparison copy: finding
+fields (`severity`, `action_status`, `score`, `evidence`), `applied` entries, `checks` values,
+coverage sources, profile fields, an older `trend` shape, metrics, and a malformed or missing
+`generated`. Comparisons that need a dropped field become not comparable or unavailable, and
+data that was dropped never proves resolution. A finding without a usable id, or with a
+duplicate id, is dropped.
+
+A finding status outside the history enum (for example `fixed`, `no_change_needed`, `partial`)
+counts as not-resolved: the finding still matches by id, is never claimed resolved, and if it is
+absent from the current report it lands in `trend.findings.not_rechecked`. Statuses are not
+mapped to other values. A metric that is nested, has no usable `value`, or fails the label
+checks is skipped with no delta. `trend.ignored` records what was dropped: `finding_statuses`
+(finding ids), `metrics` (metric names) and `fields` (paths such as `findings[ID].severity`,
+`applied[0].status`, `checks.NAME`, `generated`; `findings[N]` marks a finding dropped for its
+id). It never holds values. The current report and decisions stay strict.
 
 Failures name the input (current report, previous report, decisions file) and, when the parser
 knows it, the line. Messages are constant text: they never quote input values.

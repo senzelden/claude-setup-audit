@@ -202,9 +202,7 @@ class PreviousAndInputErrors(unittest.TestCase):
             self.assertIn('previous report', result.stderr)
             self.assertIn('line 2', result.stderr)
             self.assertNotIn('PRIVATE', result.stderr)
-            bad_date = self.report('2026-09-10')
-            bad_date['generated'] = 'PRIVATE-DATE'
-            result, _ = self.run_cli(tmp, previous=bad_date)
+            result, _ = self.run_cli(tmp, previous=dict(self.report('2026-09-10'), version=2, PRIVATE='x'))
             self.assertIn('previous report', result.stderr)
             self.assertNotIn('PRIVATE', result.stderr)
             bad_current = self.report()
@@ -213,7 +211,7 @@ class PreviousAndInputErrors(unittest.TestCase):
             self.assertIn('current report', result.stderr)
             self.assertNotIn('PRIVATE', result.stderr)
             result, _ = self.run_cli(tmp, decisions_text='- id: PRIVATE\n  reason: "x"\n  bogus line\n')
-            self.assertIn('decisions', result.stderr)
+            self.assertIn('decisions file', result.stderr)
             self.assertIn('line 3', result.stderr)
             self.assertNotIn('PRIVATE', result.stderr)
 
@@ -224,7 +222,7 @@ class PreviousAndInputErrors(unittest.TestCase):
             result, path = self.run_cli(tmp, decisions_text=text)
             before = path.read_text()
         self.assertEqual(result.returncode, 1)
-        self.assertIn('decisions', result.stderr)
+        self.assertIn('decisions file', result.stderr)
         self.assertIn('line 2', result.stderr)
         self.assertIn('block scalar', result.stderr)
         self.assertIn('quote', result.stderr)
@@ -279,7 +277,7 @@ class PreviousAndInputErrors(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(ignored))
         state.validate_report(out, strict=True)  # the output shape stays valid
         clean = state.finalize(self.report('2026-09-20'), self.report('2026-09-10'))
-        self.assertEqual(clean['trend']['ignored'], dict(finding_statuses=[], metrics=[]))
+        self.assertEqual(clean['trend']['ignored'], dict(finding_statuses=[], metrics=[], fields=[]))
 
     def test_current_report_stays_strict(self):
         for mutate in (lambda r: r['findings'][0].update(status='fixed'),
@@ -293,8 +291,71 @@ class PreviousAndInputErrors(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn('current report', result.stderr)
 
-    def test_previous_still_needs_an_id_per_finding_and_a_version(self):
-        for bad in ({'version': 1, 'findings': [{'status': 'fixed'}, {'id': 3}]},
-                    {'version': 2}, {'version': 1, 'findings': [{'id': 'A'}, {'id': 'A'}]}):
+    def test_previous_still_needs_version_1(self):
+        for bad in ({'version': 2}, {}, [], {'version': True}):
             with self.assertRaises(ValueError):
                 state.finalize(self.report('2026-09-20'), bad)
+
+    def test_previous_findings_without_usable_ids_are_dropped_and_counted(self):
+        previous = self.report('2026-09-10', findings=[
+            {'status': 'fixed'}, {'id': 3}, {'id': ''}, 'PRIVATE', {'id': 'A'}, {'id': 'A'}])
+        out = state.finalize(self.report('2026-09-20'), previous)
+        self.assertEqual(out['trend']['ignored']['fields'],
+                         ['findings[0]', 'findings[1]', 'findings[2]', 'findings[3]', 'findings[5]'])
+        self.assertEqual(out['trend']['findings']['not_rechecked'], ['A'])
+
+    def test_every_unusable_previous_field_is_ignored_and_never_leaks(self):
+        previous = self.report('2026-09-10', findings=[
+            dict(id='F1', check='C', title='Old', score=1, evidence=5, status='resolved',
+                 severity='PRIVATE', action_status='PRIVATE', why=7),
+            dict(id='F2', check='C2', title='Old', score='PRIVATE', evidence=['x'], status='open')])
+        previous['applied'] = [dict(id='Y', status='PRIVATE'), 'PRIVATE']
+        previous['checks'] = {'C': 'PRIVATE', 'C2': 'complete'}
+        previous['trend'] = {'old': 'PRIVATE'}
+        previous['coverage']['sources'].append(dict(source='s', status='PRIVATE'))
+        previous['profile']['depth'] = 'PRIVATE'
+        current = self.report('2026-09-20', findings=[])
+        current['checks'] = {'C': 'complete', 'C2': 'complete'}
+        out = state.finalize(current, previous)
+        trend = out['trend']
+        self.assertTrue(trend['comparable'])
+        self.assertEqual(trend['findings']['resolved'], ['F2'])  # only from intact data
+        self.assertEqual(trend['findings']['not_rechecked'], ['F1'])
+        self.assertEqual(sorted(trend['ignored']['fields']), sorted([
+            'findings[F1].evidence', 'findings[F1].severity', 'findings[F1].action_status',
+            'findings[F1].why', 'findings[F2].score', 'applied[0].status', 'applied[1]',
+            'checks.C', 'trend', 'coverage.sources[1]', 'profile.depth']))
+        self.assertNotIn('PRIVATE', json.dumps(trend))
+        state.validate_report(out, strict=True)
+
+    def test_malformed_or_missing_previous_generated_and_bad_metrics_container(self):
+        for mutate in (lambda r: r.update(generated='PRIVATE'), lambda r: r.pop('generated'),
+                       lambda r: r.update(generated=5)):
+            previous = self.report('2026-09-10')
+            mutate(previous)
+            out = state.finalize(self.report('2026-09-20'), previous)
+            self.assertFalse(out['trend']['comparable'])
+            self.assertEqual(out['trend']['ignored']['fields'], ['generated'])
+            self.assertNotIn('PRIVATE', json.dumps(out['trend']))
+        previous = self.report('2026-09-10')
+        previous['metrics'] = 'PRIVATE'
+        out = state.finalize(self.report('2026-09-20'), previous)
+        self.assertEqual(out['trend']['ignored']['fields'], ['metrics'])
+        self.assertFalse(out['trend']['metrics']['tokens']['comparable'])
+
+    def test_bad_as_of_and_output_failures_are_labelled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'current.json'
+            path.write_text(json.dumps(self.report('2026-09-20')))
+            for bad in ('2026-13-45', 'PRIVATE'):
+                result = subprocess.run([sys.executable, str(Path(SCRIPTS) / 'process_report.py'), str(path),
+                                         '--as-of', bad], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('--as-of', result.stderr)
+                self.assertNotIn('PRIVATE', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+        message = process_report.failure_message(OSError('PRIVATE'), 'output')
+        self.assertIn('current report', message)
+        self.assertIn('cannot be written', message)
+        self.assertNotIn('PRIVATE', message)
+        self.assertNotIn('Input:', process_report.failure_message(ValueError('PRIVATE'), None))

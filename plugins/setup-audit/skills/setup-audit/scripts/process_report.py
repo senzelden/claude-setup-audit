@@ -35,7 +35,7 @@ def write(path, report):
             os.unlink(temporary)
 
 
-LABELS = {'report': 'current report', 'previous': 'previous report', 'decisions': 'decisions file'}
+LABELS = {'report': 'current report', 'output': 'current report', 'as_of': '--as-of value', 'previous': 'previous report', 'decisions': 'decisions file'}
 
 
 def failure_message(exc, stage):
@@ -46,10 +46,10 @@ def failure_message(exc, stage):
         where = ' (line %d)' % exc.line if exc.line else ''
         detail = exc.message
     elif isinstance(exc, OSError):
-        where, detail = '', 'cannot be read' if stage else 'cannot be written'
+        where, detail = '', 'cannot be written' if stage == 'output' else 'cannot be read'
     else:
         where, detail = '', 'check version, required fields, unique IDs, finite metrics, dates and flat-scalar decisions syntax'
-    subject = 'The ' + what + where if what else 'Input'
+    subject = 'The ' + what + where if what else 'Report processing'
     return 'Report validation failed. %s: %s. No report was finalized.\n' % (subject, detail)
 
 
@@ -73,6 +73,7 @@ def main():
         if args.finalize:
             if args.previous and os.path.realpath(args.previous) == os.path.realpath(args.report):
                 raise report_state.ReportError('current and previous reports must differ')
+            stage = 'output'
             write(args.report, result)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
         parser.exit(1, failure_message(exc, stage))
