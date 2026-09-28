@@ -459,6 +459,241 @@ def record(book, spec, snapshot, report, run, now):
     return validate(book)
 
 
+ORDER = {'json_array_append': 0, 'json_set': 0, 'markdown_block': 1, 'hook_script': 2}
+_MISSING = object()
+_MAX_READ = 8 * 1024 * 1024
+
+
+def _row(entry, index, status, reason='', identity=None):
+    # `edit` is the index into the entry's edits; _identity is the file identity at plan time and is
+    # internal: apply_removal and the CLI strip it before rows leave this module.
+    edit = entry['edits'][index]
+    return dict(entry=entry['id'], edit=index, file=edit['file'], kind=edit['kind'], status=status,
+                reason=reason, _identity=identity)
+
+
+def _previous_value(edit):
+    """Value at the pointer before the edit, or _MISSING. Raises LedgerError when unreadable."""
+    if edit['backup'] is None:
+        return _MISSING
+    backup = os.path.expanduser(edit['backup'])
+    require(os.path.isfile(backup), 'backup not found', input='backup')
+    try:
+        return resolve(read_json(backup, 'backup'), pointer_parts(edit['pointer']))
+    except LedgerError as exc:
+        if exc.message == 'JSON pointer not found':
+            return _MISSING
+        raise
+
+
+def plan_edit(entry, index):
+    edit = entry['edits'][index]
+    path = os.path.expanduser(edit['file'])
+    if os.path.islink(path):
+        return _row(entry, index, 'blocked', 'symlink')
+    if not os.path.exists(path):
+        return _row(entry, index, 'absent', 'file_missing')
+    try:
+        identity = safe_write.identity_of(os.stat(path))
+    except OSError:
+        return _row(entry, index, 'blocked', 'unreadable')
+    kind = edit['kind']
+
+    def row(status, reason=''):
+        return _row(entry, index, status, reason, identity)
+
+    try:
+        if kind == 'hook_script':
+            if not any(e['kind'] == 'json_array_append' for e in entry['edits']):
+                return row('blocked', 'registration_unrecorded')
+            same = hashlib.sha256(read_text(path)).hexdigest() == edit['sha256']
+            return row('removable' if same else 'modified', '' if same else 'hash_mismatch')
+        if kind == 'markdown_block':
+            text = read_text(path).decode('utf-8', 'replace')
+            try:
+                span = find_block(text, entry['id'])
+            except LedgerError:
+                return row('modified', 'markers_ambiguous')
+            if span is None:
+                return row('absent', 'markers_missing')
+            same = block_hash(text, entry['id']) == edit['sha256']
+            return row('removable' if same else 'modified', '' if same else 'hash_mismatch')
+        doc = read_json(path)
+        try:
+            node = resolve(doc, pointer_parts(edit['pointer']))
+        except LedgerError:
+            return row('absent', 'pointer_missing')
+        if kind == 'json_array_append':
+            if not isinstance(node, list):
+                return row('modified', 'not_an_array')
+            found = any(fingerprint(x) == edit['sha256'] for x in node)
+            return row('removable' if found else 'absent', '' if found else 'value_missing')
+        if fingerprint(node) != edit['sha256']:
+            return row('modified', 'hash_mismatch')
+        try:
+            _previous_value(edit)
+        except LedgerError:
+            return row('blocked', 'backup_missing')
+        return row('removable')
+    except LedgerError:
+        return row('blocked', 'unreadable')
+
+
+def plan_removal(book, entry_ids):
+    index = {e['id']: e for e in book['entries']}
+    rows = []
+    for entry_id in entry_ids:
+        require(entry_id in index, 'entry not found')
+        entry = index[entry_id]
+        order = sorted(range(len(entry['edits'])), key=lambda i: ORDER[entry['edits'][i]['kind']])
+        rows.extend(plan_edit(entry, i) for i in order)
+    return rows
+
+
+def _strip_block(text, entry_id):
+    span = find_block(text, entry_id)
+    if span is None:  # a second edit of the same entry in this file: already stripped
+        return text
+    lines = text.splitlines(keepends=True)
+    return ''.join(lines[:span[0]] + lines[span[1] + 1:])
+
+
+def _remove_json(doc, edit):
+    parts = pointer_parts(edit['pointer'])
+    if edit['kind'] == 'json_array_append':
+        array = resolve(doc, parts)
+        for i, item in enumerate(array):
+            if fingerprint(item) == edit['sha256']:
+                del array[i]
+                return
+        return
+    parent = resolve(doc, parts[:-1])
+    key = int(parts[-1]) if isinstance(parent, list) else parts[-1]
+    previous = _previous_value(edit)
+    if previous is _MISSING:
+        del parent[key]
+    else:
+        parent[key] = previous
+
+
+def _edit_for(book, row):
+    """The (entry, edit index) a plan row names, looked up by entry id and edit index."""
+    entry = next((e for e in book['entries'] if e['id'] == row.get('entry')), None)
+    index = row.get('edit')
+    require(entry is not None and type(index) is int and 0 <= index < len(entry['edits']), 'unknown plan row')
+    return entry, index
+
+
+def _restored(entry, index, doc_after):
+    """True when a json_set edit was undone in the re-read document."""
+    edit = entry['edits'][index]
+    previous = _previous_value(edit)
+    try:
+        node = resolve(doc_after, pointer_parts(edit['pointer']))
+    except LedgerError:
+        return previous is _MISSING
+    return previous is not _MISSING and fingerprint(node) == fingerprint(previous)
+
+
+def _verified(entry, index):
+    edit = entry['edits'][index]
+    try:
+        if edit['kind'] == 'json_set':
+            return _restored(entry, index, read_json(os.path.expanduser(edit['file'])))
+        return plan_edit(entry, index)['status'] == 'absent'
+    except LedgerError:
+        return False
+
+
+def _block(group, reason):
+    for r in group:
+        r.update(status='blocked', reason=reason)
+
+
+def _apply_file(book, group, path, backup_dir, home):
+    """Back up and rewrite one file for its removable rows; mark each row removed or blocked."""
+    planned = [_edit_for(book, r) for r in group]
+    if any(plan_edit(e, i)['status'] != 'removable' for e, i in planned):
+        return _block(group, 'changed_since_plan')
+    kinds = {r['kind'] for r in group}
+    json_kinds = kinds <= {'json_array_append', 'json_set'}
+    if not json_kinds and len(kinds) != 1:
+        return _block(group, 'mixed_edits')
+    try:
+        fd, st = safe_write.open_no_symlink(path)
+    except safe_write.SymlinkRefused:
+        return _block(group, 'symlink')
+    except OSError:
+        return _block(group, 'unreadable')
+    try:
+        if any(safe_write.identity_of(st) != r.get('_identity') for r in group):
+            return _block(group, 'changed_since_plan')
+        with os.fdopen(os.dup(fd), 'rb') as stream:
+            before = stream.read(_MAX_READ + 1)
+        if len(before) > _MAX_READ:
+            return _block(group, 'unreadable')
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            backup = safe_write.backup_from_fd(fd, path, backup_dir, home)
+        except OSError:
+            return _block(group, 'backup_failed')
+    finally:
+        os.close(fd)
+    try:
+        if kinds == {'hook_script'}:
+            new_text = None
+        elif kinds == {'markdown_block'}:
+            new_text = before.decode('utf-8')
+            for r in group:
+                new_text = _strip_block(new_text, r['entry'])
+        else:
+            doc = report_state.load_json(before.decode('utf-8'))
+            for entry, index in planned:
+                _remove_json(doc, entry['edits'][index])
+            new_text = json.dumps(doc, indent=2) + '\n'
+            json.loads(new_text)
+    except (LedgerError, report_state.ReportError, UnicodeDecodeError, ValueError, RecursionError,
+            KeyError, TypeError, IndexError):
+        return _block(group, 'changed_since_plan')
+    try:
+        if new_text is None:
+            os.unlink(path)
+        else:
+            safe_write.atomic_write(path, new_text, prefix='.ledger.')
+    except OSError:
+        return _block(group, 'write_failed')
+    for r, (entry, index) in zip(group, planned):
+        done = _verified(entry, index)
+        r.update(backup=backup, status='removed' if done else 'blocked', reason='' if done else 'verify_failed')
+
+
+def apply_removal(book, rows, backup_dir, home):
+    book = copy.deepcopy(book)
+    rows = [dict(r) for r in rows]
+    for r in rows:
+        _edit_for(book, r)
+    by_file = {}
+    for row in rows:
+        if row['status'] == 'removable':
+            by_file.setdefault(os.path.abspath(os.path.expanduser(row['file'])), []).append(row)
+    for path, group in by_file.items():
+        if {r['kind'] for r in group} == {'hook_script'}:
+            # Deleting a hook script whose registration is still in place would break every tool call.
+            registrations = [r for r in rows if r['kind'] == 'json_array_append'
+                             and r['entry'] in {g['entry'] for g in group}]
+            if any(r['status'] not in ('removed', 'absent') for r in registrations):
+                _block(group, 'registration_remains')
+                continue
+        _apply_file(book, group, path, backup_dir, home)
+    for row in rows:
+        row.pop('_identity', None)
+    for entry in book['entries']:
+        mine = [r for r in rows if r['entry'] == entry['id']]
+        if mine and all(r['status'] in ('removed', 'absent') for r in mine):
+            entry['state'] = 'removed'
+    return validate(book), rows
+
+
 def fail(parser, exc):
     what = LABELS.get(getattr(exc, 'input', None), 'input')
     where = ' (line %d)' % exc.line if getattr(exc, 'line', None) else ''
@@ -486,9 +721,32 @@ def main(argv=None):
     for flag in ('--ledger', '--snapshot', '--report', '--spec'):
         p.add_argument(flag, required=True)
     p.add_argument('--claude-dir', help='Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)')
+    p = sub.add_parser('remove', help='remove recorded edits (dry run unless --apply)')
+    p.add_argument('--ledger', required=True)
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument('--entry', action='append')
+    which.add_argument('--all', action='store_true')
+    p.add_argument('--apply', action='store_true')
+    p.add_argument('--backup-dir')
     args = parser.parse_args(argv)
+    if args.command == 'remove' and args.apply and not args.backup_dir:
+        parser.error('--apply requires --backup-dir')
     try:
         book = load(args.ledger)
+        if args.command == 'remove':
+            ids = list(dict.fromkeys(args.entry)) if args.entry else [
+                e['id'] for e in book['entries'] if e['state'] != 'removed']
+            rows = plan_removal(book, ids)
+            if args.apply:
+                book, rows = apply_removal(book, rows, os.path.abspath(os.path.expanduser(args.backup_dir)),
+                                           os.path.expanduser('~'))
+                dump(book, args.ledger)
+            for row in rows:
+                row.pop('_identity', None)
+            print(json.dumps(rows, indent=2))
+            if any(r['status'] == 'blocked' for r in rows):
+                sys.exit(2)
+            return
         if args.command == 'next-id':
             print(next_id(book, datetime.now(timezone.utc).date()))
             return
