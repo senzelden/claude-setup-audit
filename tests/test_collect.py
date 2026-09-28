@@ -938,6 +938,15 @@ class LedgerCounting(FakeHome):
         self.assertFalse(c["complete"])
         self.assertEqual(c["matches"], 1)
 
+    def test_malformed_facet_fields_are_coverage_gaps_not_crashes(self):
+        self.facet("a", -10, friction_counts=["buggy_code"])
+        sel = {"type": "friction_category", "name": "buggy_code"}
+        c = collect.count_selector(sel, self.NOW - 100, self.NOW, None)
+        self.assertEqual(c, {"matches": 0, "sessions_matched": 0, "sessions_scanned": 1, "complete": False})
+        self.write(".claude/usage-data/facets/list.json", [1, 2])  # non-dict facet file
+        c = collect.count_selector(sel, self.NOW - 100, self.NOW, None)
+        self.assertFalse(c["complete"])
+
     def ledger_file(self, applied_at, state="active"):
         import ledger
         sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}

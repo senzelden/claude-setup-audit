@@ -1318,6 +1318,17 @@ def _positive(value):
     return value if type(value) is int and value > 0 else 0
 
 
+def _category_count(facet, name, counts):
+    """Positive friction count for one facet; a malformed friction_counts is a coverage gap."""
+    table = facet.get("friction_counts")
+    if table is None:
+        return 0
+    if not isinstance(table, dict):
+        counts["complete"] = False
+        return 0
+    return _positive(table.get(name))
+
+
 def count_selector(selector, since, until, project_filter=None):
     """Count one ledger selector between epoch-second bounds (inclusive). Counts only, never text."""
     counts = dict(matches=0, sessions_matched=0, sessions_scanned=0, complete=True)
@@ -1330,7 +1341,7 @@ def count_selector(selector, since, until, project_filter=None):
         rows = ((sid, int(any(w in str(d.get("friction_detail") or "").lower() for w in words)))
                 for sid, d in _facet_rows(since, until, project_filter, counts))
     elif kind == "friction_category":
-        rows = ((sid, _positive((d.get("friction_counts") or {}).get(selector["name"])))
+        rows = ((sid, _category_count(d, selector["name"], counts))
                 for sid, d in _facet_rows(since, until, project_filter, counts))
     else:
         raise ValueError("metric selectors are not counted from raw sources")
