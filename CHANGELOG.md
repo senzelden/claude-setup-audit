@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The HTML report no longer runs field labels into their text ("What we foundThe project...").
+  Labels for evidence, verification, projects included and limits now render as their own line.
 - `app_caching`'s collector no longer counts a prose mention of `cache_control` (e.g. a docstring
   explaining why caching does NOT apply) as an implementation. Found by auditing sibling repos
   against real code: it inflated the cached-file count via a file that only narrates a caching

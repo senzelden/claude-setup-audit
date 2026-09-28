@@ -67,6 +67,9 @@ number is bumped in a release. New commits alone do not change what you get.
 /plugin marketplace remove claude-setup-audit
 ```
 
+From a shell, use `claude plugin uninstall setup-audit@claude-setup-audit` and
+`claude plugin marketplace remove claude-setup-audit`.
+
 Removing the marketplace also uninstalls every plugin installed from it. The plugin leaves its
 output behind: reports in `~/.claude/audits/` and backups of any config it edited in
 `~/.claude/backups/` (see [What it reads, writes and sends](#what-it-reads-writes-and-sends)).

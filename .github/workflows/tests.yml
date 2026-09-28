@@ -40,8 +40,8 @@ jobs:
         run: python3 tests/check_snapshot_schema.py -v
 
   # Coverage floor, not a target. The README badge states the same number: raise the floor and
-  # the badge in the same commit. Measured 2026-09-28 with coverage 7.16.2: 88.49% (2,059
-  # statements, 237 missed), counting scripts that tests run as subprocesses (patch = subprocess
+  # the badge in the same commit. Measured 2026-09-28 with coverage 7.16.2: 88.65% (2,061
+  # statements, 234 missed), counting scripts that tests run as subprocesses (patch = subprocess
   # in .coveragerc, needs coverage 7.10+).
   coverage:
     runs-on: ubuntu-latest

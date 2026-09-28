@@ -43,6 +43,11 @@ def label(value):
     return str(value).replace('_', ' ').capitalize()
 
 
+def field_label(text):
+    """A block-level label, so it never runs into the value that follows it."""
+    return f'<p class="field-label"><strong>{escape(text)}</strong></p>'
+
+
 def disclosure(title, value):
     return f'<details><summary>{escape(title)}</summary>{display(value)}</details>'
 
@@ -132,7 +137,7 @@ def render(report):
             if finding.get('effort'):
                 parts.append('<p class="muted">Estimated effort: ' + escape(finding['effort']) + '</p>')
             if finding.get('evidence'):
-                parts.append('<strong>What we found</strong>' + display(finding['evidence']))
+                parts.append(field_label('What we found') + display(finding['evidence']))
             technical = {k: v for k, v in finding.items() if k not in ('title', 'why', 'effort', 'evidence')}
             parts.append(disclosure('Supporting details and exact change', technical))
             parts.append('</article>')
@@ -152,7 +157,7 @@ def render(report):
             state = action.get('status', 'unknown')
             parts.append(paragraph(ACTION_LABELS.get(state, label(state))))
             if action.get('verification'):
-                parts.append('<strong>Verification</strong>' + display(action['verification']))
+                parts.append(field_label('Verification') + display(action['verification']))
             parts.append(disclosure('Files, backups and recovery details', action) + '</article>')
         parts.append('</section>')
     metrics = report.get('metrics')
@@ -197,9 +202,9 @@ def render(report):
             if coverage.get('summary'):
                 parts.append(paragraph(coverage['summary']))
             if coverage.get('projects_collected'):
-                parts.append('<strong>Projects included</strong>' + display(coverage['projects_collected']))
+                parts.append(field_label('Projects included') + display(coverage['projects_collected']))
             if coverage.get('limitations'):
-                parts.append('<strong>Limits to this review</strong>' + display(coverage['limitations']))
+                parts.append(field_label('Limits to this review') + display(coverage['limitations']))
         parts.append(disclosure('Collection details', coverage))
     if report.get('caveats'):
         parts.append('<h3>Not checked or uncertain</h3>' + display(report['caveats']))

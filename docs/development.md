@@ -47,7 +47,7 @@ Version-sensitive commands checked 2026-09-16 against the installed CLI help and
 
 CI enforces a coverage floor of 88% over the bundled scripts (`.coveragerc`). The floor is not
 a target; the README badge states the same number, so raise both in one commit. Measured
-2026-09-28 with coverage 7.16.2: 88.49% (2,059 statements, 237 missed). `patch = subprocess`
+2026-09-28 with coverage 7.16.2: 88.65% (2,061 statements, 234 missed). `patch = subprocess`
 needs coverage 7.10 or newer; it counts scripts that tests run as subprocesses. Without it the
 figure is about 83%. To reproduce locally:
 

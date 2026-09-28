@@ -25,7 +25,49 @@ class Elements(HTMLParser):
         self.elements.append((tag, dict(attrs)))
 
 
+class InlineAfterLabel(HTMLParser):
+    """Collect <strong> labels that are directly followed by inline content."""
+    INLINE = {'span', 'strong', 'em', 'a', 'code', 'b', 'i'}
+
+    def __init__(self, text):
+        super().__init__()
+        self.after_strong = False
+        self.text = ''
+        self.bad = []
+        self.feed(text)
+
+    def handle_starttag(self, tag, attrs):
+        if self.after_strong and tag in self.INLINE:
+            self.bad.append(self.text)
+        self.after_strong = False
+        if tag == 'strong':
+            self.text = ''
+
+    def handle_endtag(self, tag):
+        self.after_strong = tag == 'strong'
+
+    def handle_data(self, data):
+        if self.after_strong and data.strip():
+            self.bad.append(self.text)
+        if not self.after_strong:
+            self.text += data
+        if data.strip():
+            self.after_strong = False
+
+
 class ReportTests(unittest.TestCase):
+    def test_field_labels_are_not_followed_by_inline_text(self):
+        report = self.report()
+        report['findings'][1].update(evidence='The rule allows everything.',
+                                    why='Why.', fix='Fix it.', effort='5 minutes')
+        report['coverage'].update(projects_collected=['one', 'two'],
+                                  limitations=['No transcripts'])
+        output = render_report.render(report)
+        for text in ('What we found', 'Verification', 'Projects included',
+                     'Limits to this review'):
+            self.assertIn(text, output)
+        self.assertEqual(InlineAfterLabel(output).bad, [])
+
     def report(self):
         return {'version': 1, 'generated': '2026-09-15',
                 'profile': {'scope': 'project'},
