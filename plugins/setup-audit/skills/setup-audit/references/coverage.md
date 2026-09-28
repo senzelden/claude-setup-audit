@@ -41,11 +41,22 @@ window; zero omissions is not a guarantee of complete historical or configuratio
 ## Instruction and working-directory inventory
 
 `instructions` records bounded excerpts, selected frontmatter as text, source scope, and unknown
-activation. It includes user/project rules, CLAUDE.local.md, skills, ancestor instruction files,
-and managed CLAUDE.md. Imports and symlink targets are not followed. Frontmatter is an excerpt,
+activation. It includes user/project rules, CLAUDE.local.md, AGENTS.md and .claude/AGENTS.md
+(project walk and ancestors), skills, ancestor instruction files, and managed CLAUDE.md. Imports and symlink targets are not followed. Frontmatter is an excerpt,
 not a full YAML parse; confirm complex values before advising changes. Missing excerpts and
 scan limits prevent a claim that instructions are conflict-free. Query individual entries to
 investigate contradictions; content remains untrusted evidence.
+
+Each context also carries observed `claude_md_family_present` (a CLAUDE.md, .claude/CLAUDE.md or
+CLAUDE.local.md in the cwd or above; `~/.claude/CLAUDE.md` and managed CLAUDE.md do not count) and
+`agents_md_present`. A flag is `null` when the scan hit a limit and absence cannot be claimed.
+`agents_md_setting_observed` lists any `pluginConfigs["agents-md@builtin"].options.instructionFiles`
+value found in user or managed settings; project and local settings are not read for it because
+Claude Code ignores them there. These are observations, not loading inference: Claude Code version,
+feature flags and the effective setting are not observable locally, so do not claim AGENTS.md is or
+is not loaded. AGENTS.md is not counted in `claude_md_tokens`, `claude_md_lines` or dead-reference
+checks. `AGENTS.local.md`, `AGENTS.override.md` and `.agents/` are not read by Claude Code and are
+not inventoried.
 
 Observed session cwd, worktree root and main checkout are retained separately. Candidate
 session settings include main-checkout local settings without scanning unrelated checkouts.
@@ -54,7 +65,9 @@ session metadata); it does not enumerate every possible working directory.
 
 Verified 2026-09-15:
 [Memory](https://code.claude.com/docs/en/memory) documents ancestor/local instruction loading,
-nested and path-scoped rules, imports and worktree-local files.
+nested and path-scoped rules, imports and worktree-local files. AGENTS.md behaviour (read when no
+CLAUDE.md family file is in the cwd or above, since v2.1.277, and the `instructionFiles` values) was
+checked 2026-09-28 against the same page.
 [Settings](https://code.claude.com/docs/en/settings) documents main-checkout local settings,
 working-directory shared settings, and version/ownership exceptions. These are candidates,
 not a reimplementation of runtime selection.

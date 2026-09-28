@@ -152,7 +152,11 @@ metric that motivated it, so the next run can check whether it moved.
 - **LRN-contradiction**: two active instruction surfaces that disagree (global vs project CLAUDE.md,
   CLAUDE.md vs a rule, prose vs `package.json`/CI). Executable manifests outrank prose. Propose one
   canonical statement. If conventions really differ per repo (e.g. commit trailers), make the
-  global rule defer, or give enforcement hooks a per-repo opt-out.
+  global rule defer, or give enforcement hooks a per-repo opt-out. An `AGENTS.md` in the inventory
+  is an observation, not proof it is loaded (`contexts[].agents_md_present`,
+  `agents_md_setting_observed`): with a CLAUDE.md family file in scope, Claude Code reads it only when
+  `instructionFiles` allows or the CLAUDE.md imports it. Do not call an AGENTS.md/CLAUDE.md conflict
+  active without saying this.
 - **LRN-enforce**: a rule that exists in CLAUDE.md but keeps being violated (it recurs in corrections
   or friction) should become a hook.
 - **LRN-effectiveness** (previous `audit.json` `applied` + `metrics`): did the motivating metric

@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format follows
   as subprocesses), and local reproduction steps in `docs/development.md`.
 - README badges, requirements, update and uninstall instructions, and a sample report rendered
   from the fictional example.
+- The instruction inventory lists `AGENTS.md` and `.claude/AGENTS.md` (project walk and ancestors,
+  activation unknown). Each context gets observed `claude_md_family_present` and
+  `agents_md_present` flags, and `agents_md_setting_observed` records any `instructionFiles` value in
+  user or managed settings. No loading is inferred, and AGENTS.md is not counted as CLAUDE.md
+  size or dead references.
 
 ### Fixed
 
