@@ -160,3 +160,141 @@ class ReportState(unittest.TestCase):
             with mock.patch.object(process_report.os, 'replace', side_effect=OSError), self.assertRaises(OSError):
                 process_report.write(path, self.report())
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ['report.json'])
+
+
+class PreviousAndInputErrors(unittest.TestCase):
+    """The processor must read its own earlier output and say which input failed."""
+    report = ReportState.report
+
+    def run_cli(self, tmp, current=None, previous=None, decisions=None, previous_text=None,
+                decisions_text=None, current_text=None):
+        tmp = Path(tmp)
+        (tmp / 'current.json').write_text(current_text if current_text is not None
+                                          else json.dumps(current or self.report('2026-09-20')))
+        args = [sys.executable, str(Path(SCRIPTS) / 'process_report.py'), str(tmp / 'current.json')]
+        if previous is not None or previous_text is not None:
+            (tmp / 'previous.json').write_text(previous_text if previous_text is not None
+                                               else json.dumps(previous))
+            args += ['--previous', str(tmp / 'previous.json')]
+        if decisions_text is not None:
+            (tmp / 'decisions.yaml').write_text(decisions_text)
+            args += ['--decisions', str(tmp / 'decisions.yaml')]
+        return subprocess.run(args + ['--finalize'], capture_output=True, text=True), tmp / 'current.json'
+
+    def real_world_previous(self):
+        previous = self.report('2026-09-10', findings=[
+            dict(id='F-fixed', check='C-fixed', title='Old', score=1, evidence=['x'], status='fixed'),
+            dict(id='F-nochange', check='C-nc', title='Old', score=1, evidence=['x'], status='no_change_needed'),
+            dict(id='F-partial', check='C-partial', title='Old', score=1, evidence=['x'], status='partial'),
+            dict(id='F-idonly')])
+        previous['metrics']['friction'] = {'buggy_code': 7, 'wrong_approach': 2}
+        previous['parked'] = [dict(id='P-1', note='later')]
+        return previous
+
+    def test_each_failing_input_is_named_without_private_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, _ = self.run_cli(tmp, current_text='{"PRIVATE": ')
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('current report', result.stderr)
+            self.assertIn('line 1', result.stderr)
+            self.assertNotIn('PRIVATE', result.stderr)
+            result, _ = self.run_cli(tmp, previous_text='{\n"PRIVATE": ')
+            self.assertIn('previous report', result.stderr)
+            self.assertIn('line 2', result.stderr)
+            self.assertNotIn('PRIVATE', result.stderr)
+            bad_date = self.report('2026-09-10')
+            bad_date['generated'] = 'PRIVATE-DATE'
+            result, _ = self.run_cli(tmp, previous=bad_date)
+            self.assertIn('previous report', result.stderr)
+            self.assertNotIn('PRIVATE', result.stderr)
+            bad_current = self.report()
+            bad_current['generated'] = 'PRIVATE-DATE'
+            result, _ = self.run_cli(tmp, current=bad_current)
+            self.assertIn('current report', result.stderr)
+            self.assertNotIn('PRIVATE', result.stderr)
+            result, _ = self.run_cli(tmp, decisions_text='- id: PRIVATE\n  reason: "x"\n  bogus line\n')
+            self.assertIn('decisions', result.stderr)
+            self.assertIn('line 3', result.stderr)
+            self.assertNotIn('PRIVATE', result.stderr)
+
+    def test_block_scalar_decisions_get_line_and_quote_hint(self):
+        text = ('- id: SEC-x\n  reason: >\n    folded PRIVATE text\n  settled: "2026-09-14"\n'
+                '  review_after: "2027-03-01"\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            result, path = self.run_cli(tmp, decisions_text=text)
+            before = path.read_text()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('decisions', result.stderr)
+        self.assertIn('line 2', result.stderr)
+        self.assertIn('block scalar', result.stderr)
+        self.assertIn('quote', result.stderr)
+        self.assertNotIn('PRIVATE', result.stderr)
+        self.assertNotIn('trend', before)  # not finalized
+        with self.assertRaises(ValueError):  # the parser still rejects block scalars
+            state.parse_decisions(text)
+
+    def test_previous_with_unknown_statuses_and_nested_metrics_is_read_leniently(self):
+        current = self.report('2026-09-20', findings=[
+            dict(id='F-fixed', check='C-fixed', title='Back', score=2, evidence=['y'], status='new')])
+        previous = self.real_world_previous()
+        with tempfile.TemporaryDirectory() as tmp:
+            result, path = self.run_cli(tmp, current=current, previous=previous)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = json.loads(path.read_text())
+        trend = out['trend']
+        self.assertTrue(trend['comparable'])
+        self.assertEqual(trend['findings']['open'], ['F-fixed'])  # known to the previous run, not resolved
+        self.assertEqual(trend['findings']['resolved'], [])
+        self.assertEqual(sorted(trend['findings']['not_rechecked']), ['F-idonly', 'F-nochange', 'F-partial'])
+        self.assertFalse(any(f['status'] == 'resolved' for f in out['findings']))
+        self.assertTrue(trend['metrics']['tokens']['comparable'])
+
+    def test_unknown_status_is_never_claimed_resolved_even_with_complete_check(self):
+        current = self.report('2026-09-20', findings=[])
+        current['checks'] = {'C-fixed': 'complete', 'C-nc': 'complete', 'C-partial': 'complete'}
+        out = state.finalize(current, self.real_world_previous())
+        self.assertEqual(out['trend']['findings']['resolved'], [])
+        self.assertFalse(any(f['status'] == 'resolved' for f in out['findings']))
+
+    def test_unusable_previous_metrics_are_skipped_without_delta(self):
+        current = self.report('2026-09-20')
+        current['metrics']['friction'] = dict(value=3, unit='count', basis='measured', source='transcripts.friction')
+        previous = self.real_world_previous()
+        previous['metrics']['broken'] = dict(value='seven', unit='n', basis='measured', source='x')
+        previous['metrics']['odd'] = 'text'
+        out = state.finalize(current, previous)
+        friction = out['trend']['metrics']['friction']
+        self.assertFalse(friction['comparable'])
+        self.assertNotIn('delta', friction)
+        self.assertTrue(out['trend']['metrics']['tokens']['comparable'])
+
+    def test_trend_records_ignored_ids_and_names_only(self):
+        previous = self.real_world_previous()
+        previous['findings'][0]['status'] = 'PRIVATE-STATUS'
+        previous['metrics']['friction'] = {'buggy_code': 'PRIVATE-VALUE'}
+        out = state.finalize(self.report('2026-09-20'), previous)
+        ignored = out['trend']['ignored']
+        self.assertEqual(ignored['finding_statuses'], ['F-fixed', 'F-nochange', 'F-partial'])
+        self.assertEqual(ignored['metrics'], ['friction'])
+        self.assertNotIn('PRIVATE', json.dumps(ignored))
+        state.validate_report(out, strict=True)  # the output shape stays valid
+        clean = state.finalize(self.report('2026-09-20'), self.report('2026-09-10'))
+        self.assertEqual(clean['trend']['ignored'], dict(finding_statuses=[], metrics=[]))
+
+    def test_current_report_stays_strict(self):
+        for mutate in (lambda r: r['findings'][0].update(status='fixed'),
+                       lambda r: r['metrics'].update(friction={'buggy_code': 7})):
+            current = self.report('2026-09-20')
+            mutate(current)
+            with self.assertRaises(ValueError):
+                state.finalize(current, self.report('2026-09-10'))
+            with tempfile.TemporaryDirectory() as tmp:
+                result, _ = self.run_cli(tmp, current=current, previous=self.report('2026-09-10'))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('current report', result.stderr)
+
+    def test_previous_still_needs_an_id_per_finding_and_a_version(self):
+        for bad in ({'version': 1, 'findings': [{'status': 'fixed'}, {'id': 3}]},
+                    {'version': 2}, {'version': 1, 'findings': [{'id': 'A'}, {'id': 'A'}]}):
+            with self.assertRaises(ValueError):
+                state.finalize(self.report('2026-09-20'), bad)

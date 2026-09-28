@@ -52,7 +52,9 @@ deliberate divergences the user doesn't want re-flagged:
   review_after: 2027-03-01     # review is due on this date; renew to suppress again
 ```
 
-The report processor validates this flat-scalar YAML format (JSON arrays also work). It applies
+Always write every value as a quoted string (`reason: "one line"`, dates too), never as a YAML
+block scalar (`>` or `|`); the processor rejects those and names the line. Keep each reason on
+one line. The report processor validates this flat-scalar YAML format (JSON arrays also work). It applies
 exact finding/check IDs, dates and evidence fingerprints; see `references/report-state.md`.
 Do not suppress findings by interpreting unsupported YAML or guessing at changed evidence.
 

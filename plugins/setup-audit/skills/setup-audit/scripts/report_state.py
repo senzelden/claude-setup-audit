@@ -12,9 +12,21 @@ COVERAGE = {'collected', 'absent', 'partial', 'unavailable', 'not_checked'}
 BASIS = {'measured', 'estimated', 'unknown'}
 
 
+class ReportError(ValueError):
+    """Validation failure with a constant message; never built from input values.
+
+    `input` names the failing input ('report', 'previous', 'decisions') and `line` is set only
+    when the parser already knows it.
+    """
+
+    def __init__(self, message, input=None, line=None):
+        super().__init__(message)
+        self.message, self.input, self.line = message, input, line
+
+
 def require(condition, message):
     if not condition:
-        raise ValueError(message)
+        raise ReportError(message)
 
 
 def finite(value):
@@ -42,16 +54,24 @@ def unique_pairs(pairs):
 
 
 def load_json(text):
-    return json.loads(text, object_pairs_hook=unique_pairs,
-                      parse_constant=lambda _: require(False, 'non-finite JSON number'))
+    try:
+        return json.loads(text, object_pairs_hook=unique_pairs,
+                          parse_constant=lambda _: require(False, 'non-finite JSON number'))
+    except json.JSONDecodeError as exc:
+        # lineno/colno are positions; exc.msg can quote the document, so it is not used.
+        raise ReportError('invalid JSON at column %d' % exc.colno, line=exc.lineno) from None
 
 
 def validate_report(report, strict=False):
     try:
         json.dumps(report, allow_nan=False)
         return _validate_report(report, strict)
+    except ReportError:
+        raise
     except (TypeError, KeyError, AttributeError) as exc:
-        raise ValueError('invalid report field shape') from exc
+        raise ReportError('invalid report field shape') from exc
+    except ValueError as exc:  # e.g. a malformed date; its text can quote the value
+        raise ReportError('invalid report field value') from exc
 
 
 def _validate_report(report, strict=False):
@@ -151,6 +171,11 @@ def _validate_report(report, strict=False):
         require(isinstance(trend.get('findings'), dict), 'invalid trend findings')
         for ids in trend['findings'].values():
             require(isinstance(ids, list) and all(isinstance(x, str) for x in ids), 'invalid trend IDs')
+        if 'ignored' in trend:
+            ignored = trend['ignored']
+            require(isinstance(ignored, dict) and all(
+                isinstance(v, list) and all(isinstance(x, str) for x in v) for v in ignored.values()),
+                'invalid trend ignored')
         for metric in trend['metrics'].values():
             require(isinstance(metric, dict) and type(metric.get('comparable')) is bool, 'invalid trend metric')
             if metric['comparable']:
@@ -176,6 +201,8 @@ def yaml_scalar(text):
         require(match is not None, 'invalid quoted decision scalar')
         return match[1].replace("''", "'")
     text = re.split(r'\s+#', text, maxsplit=1)[0].rstrip()
+    require(not text or text[0] not in '>|',
+            'block scalars (> or |) are not supported; quote the value as a single string')
     require(bool(text) and text[0] not in '!&*[{>|' and ': ' not in text and text not in ('null', '~'),
             'unsupported decision YAML; use quoted scalars')
     return text
@@ -188,16 +215,22 @@ def parse_decisions(text):
         rows = load_json(text)
     else:
         rows, row = [], None
-        for line in text.splitlines():
+        for number, line in enumerate(text.splitlines(), 1):
             if not line.strip() or line.lstrip().startswith('#'):
                 continue
-            match = re.fullmatch(r'(- |  )([a-z_]+):\s*(.*)', line)
-            require(match is not None, 'unsupported decisions YAML; use flat scalar entries')
-            if match[1] == '- ':
-                row = {}
-                rows.append(row)
-            require(row is not None and match[2] not in row, 'duplicate or misplaced decision field')
-            row[match[2]] = yaml_scalar(match[3])
+            try:
+                match = re.fullmatch(r'(- |  )([a-z_]+):\s*(.*)', line)
+                require(match is not None, 'unsupported decisions YAML; use flat scalar entries')
+                if match[1] == '- ':
+                    row = {}
+                    rows.append(row)
+                require(row is not None and match[2] not in row, 'duplicate or misplaced decision field')
+                row[match[2]] = yaml_scalar(match[3])
+            except ReportError as exc:
+                exc.line = number
+                raise
+            except ValueError:  # e.g. a malformed quoted scalar; keep the message constant
+                raise ReportError('invalid quoted decision scalar', line=number) from None
     require(isinstance(rows, list), 'decisions must be an array')
     seen = set()
     for row in rows:
@@ -249,19 +282,60 @@ def metric_coverage(report, metric):
     return bool(sources) and all(s['status'] == 'collected' and not s.get('omitted') for s in sources)
 
 
+def lenient_previous(previous):
+    """Return (usable copy, ignored) for an earlier report; only ids and version are required.
+
+    Findings whose history status is unknown to this version keep their id but lose the status,
+    so they are never treated as resolved. Metrics that are nested or otherwise unusable are
+    dropped. `ignored` holds finding ids and metric names only, never values.
+    """
+    ignored = dict(finding_statuses=[], metrics=[])
+    if not isinstance(previous, dict) or not isinstance(previous.get('metrics', {}), dict):
+        return previous, ignored
+    previous = copy.deepcopy(previous)
+    findings = previous.get('findings')
+    for item in findings if isinstance(findings, list) else []:
+        if isinstance(item, dict) and isinstance(item.get('id'), str) and item['id'] \
+                and 'status' in item and item['status'] not in HISTORY:
+            ignored['finding_statuses'].append(item['id'])
+            del item['status']
+    for name in list(previous.get('metrics', {})):
+        try:
+            validate_report(dict(version=1, metrics={name: previous['metrics'][name]}))
+        except ValueError:
+            ignored['metrics'].append(name)
+            del previous['metrics'][name]
+    return previous, ignored
+
+
 def finalize(current, previous=None, decisions=(), as_of=None):
-    validate_report(current, strict=True)
+    try:
+        validate_report(current, strict=True)
+    except ReportError as exc:
+        exc.input = 'report'
+        raise
+    ignored = dict(finding_statuses=[], metrics=[])
     if previous is not None:
-        validate_report(previous)
+        previous, ignored = lenient_previous(previous)
+        try:
+            validate_report(previous)
+        except ReportError as exc:
+            exc.input = 'previous'
+            raise
     # Also validate caller-supplied decisions, not just the CLI parser path.
-    decisions = parse_decisions(json.dumps(list(decisions)))
+    try:
+        decisions = parse_decisions(json.dumps(list(decisions)))
+    except ReportError as exc:
+        exc.input, exc.line = 'decisions', None
+        raise
     day = iso_date(as_of) if as_of else timestamp(current['generated']).date()
     out = copy.deepcopy(current)
     out['findings'] = [f for f in out['findings'] if not f.get('comparison_generated')]
     same, reason = comparable(current, previous)
     prior = {f['id']: f for f in (previous or {}).get('findings', []) if 'id' in f}
     trend = dict(comparable=same, reason=reason, previous_generated=(previous or {}).get('generated'),
-                 findings={'new': [], 'open': [], 'regressed': [], 'resolved': [], 'not_rechecked': []}, metrics={})
+                 findings={'new': [], 'open': [], 'regressed': [], 'resolved': [], 'not_rechecked': []}, metrics={},
+                 ignored=ignored)
     decision_index = {d['id']: d for d in decisions}
     for finding in out['findings']:
         old = prior.get(finding['id']) if same else None
@@ -295,8 +369,8 @@ def finalize(current, previous=None, decisions=(), as_of=None):
             continue
         check = old.get('check')
         enough = isinstance(old.get('title'), str) and 'evidence' in old
-        if same and enough and (old.get('status') == 'resolved' or
-                                check and current.get('checks', {}).get(check) == 'complete'):
+        if same and enough and id_ not in ignored['finding_statuses'] and (
+                old.get('status') == 'resolved' or check and current.get('checks', {}).get(check) == 'complete'):
             resolved = copy.deepcopy(old)
             resolved.update(status='resolved', comparison_generated=True)
             resolved.pop('action_status', None)

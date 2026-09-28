@@ -24,6 +24,18 @@ labels include unit, basis and source. Previous/legacy reports allow missing pre
 and bare numeric metrics, but missing metadata prevents comparisons. The renderer keeps legacy
 support while sharing the structural validator. Unknown extra fields remain allowed.
 
+The previous report is read leniently, because earlier runs wrote statuses and metric shapes
+this version does not define. It needs version 1 and, per finding, an `id`. A finding status
+outside the history enum (for example `fixed`, `no_change_needed`, `partial`) counts as
+not-resolved: the finding still matches by id, is never claimed resolved, and if it is absent
+from the current report it lands in `trend.findings.not_rechecked`. Statuses are not mapped to
+other values. A metric that is nested, has no usable `value`, or fails the label checks is
+skipped with no delta. `trend.ignored` records what was skipped as `finding_statuses` (finding
+ids) and `metrics` (metric names); it never holds values. The current report stays strict.
+
+Failures name the input (current report, previous report, decisions file) and, when the parser
+knows it, the line. Messages are constant text: they never quote input values.
+
 ## History and measurements
 
 The processor compares explicitly supplied reports using dates, requested scope/focus, collected
@@ -48,8 +60,10 @@ comparisons and their limitations.
 
 Accepted formats: a JSON array or a YAML list of flat scalar maps using `id`, `reason`, `settled`,
 `review_after`, and optional `evidence_hash`. Quote strings with JSON double quotes or YAML single
-quotes. Comments and empty files work. Nested YAML, aliases, tags and block scalars are rejected;
-convert them explicitly instead of silently ignoring entries. Dates use YYYY-MM-DD.
+quotes. Always write quoted scalars, and keep each reason on one line. Comments and empty files
+work. Nested YAML, aliases, tags and block scalars (`>`, `|`) are rejected on purpose; the error
+names the line and says to quote the value as a single string. Convert them explicitly instead
+of silently ignoring entries. Dates use YYYY-MM-DD.
 
 Exact finding ID wins over check ID. A decision suppresses only after its settled date, before
 its review date, and with unchanged evidence. Expiry is inclusive on review_after. The default
