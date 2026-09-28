@@ -161,6 +161,87 @@ class ReportState(unittest.TestCase):
                 process_report.write(path, self.report())
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ['report.json'])
 
+    def test_ledger_trend_rows_are_validated(self):
+        result = state.finalize(self.report())
+        result['trend']['ledger'] = [dict(entry='L-20260901-1', verdict='dropped', reason='rate_at_or_below_half',
+                                          proposal=None, next_mechanism=None, matches=1, sessions_matched=1,
+                                          sessions_scanned=20, value=None)]
+        state.validate_report(result, strict=True)
+        result['trend']['ledger'][0]['verdict'] = 'great'
+        with self.assertRaises(state.ReportError):
+            state.validate_report(result, strict=True)
+
+    def test_applied_ledger_entry_must_be_text(self):
+        report = self.report()
+        report['applied'] = [dict(id='SEC-test:repo', status='applied', ledger_entry='L-20260901-1')]
+        state.validate_report(report, strict=True)
+        report['applied'][0]['ledger_entry'] = 5
+        with self.assertRaises(state.ReportError):
+            state.validate_report(report, strict=True)
+
+    def test_processor_writes_trend_ledger_and_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            import ledger
+            from test_ledger import entry, current
+            report = Path(tmp, '2026-10-05-audit.json')
+            report.write_text(json.dumps(self.report('2026-10-05')))
+            book = Path(tmp, 'ledger.json')
+            ledger.dump(dict(version=1, entries=[entry()]), str(book))
+            snap = Path(tmp, 'snap.json')
+            snap.write_text(json.dumps(dict(window_days=30, collection_scope=dict(requested='all', project=None),
+                                            ledger_signals=dict(status='collected',
+                                                                entries={'L-20260901-1': current(2, 20)}))))
+            script = os.path.join(SCRIPTS, 'process_report.py')
+            run = subprocess.run([sys.executable, script, str(report), '--ledger', str(book), '--snapshot', str(snap),
+                                  '--finalize'], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(json.loads(report.read_text())['trend']['ledger'][0]['verdict'], 'dropped')
+            self.assertEqual(len(ledger.load(str(book))['entries'][0]['observations']), 1)
+            # without --finalize nothing is written
+            before = book.read_text()
+            other = Path(tmp, '2026-10-06-audit.json')  # a different run id would add an observation
+            other.write_text(json.dumps(self.report('2026-10-06')))
+            subprocess.run([sys.executable, script, str(other), '--ledger', str(book), '--snapshot', str(snap)],
+                           check=True, capture_output=True)
+            self.assertEqual(book.read_text(), before)
+
+    def test_processor_ledger_errors_name_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp, 'r.json')
+            report.write_text(json.dumps(self.report()))
+            bad = Path(tmp, 'ledger.json')
+            bad.write_text('{"version": 1, "entries": [], "x": "sk-SECRET"}')
+            snap = Path(tmp, 's.json')
+            snap.write_text('{}')
+            script = os.path.join(SCRIPTS, 'process_report.py')
+            run = subprocess.run([sys.executable, script, str(report),
+                                  '--ledger', str(bad), '--snapshot', str(snap), '--finalize'],
+                                 capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn('The ledger', run.stderr)
+            self.assertNotIn('SECRET', run.stderr)
+            run = subprocess.run([sys.executable, script, str(report), '--ledger', str(bad)],
+                                 capture_output=True, text=True)
+            self.assertIn('snapshot', run.stderr)
+
+    def test_processor_malformed_snapshot_gives_unknown_rows_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            import ledger
+            from test_ledger import entry
+            report = Path(tmp, 'r.json')
+            report.write_text(json.dumps(self.report()))
+            book = Path(tmp, 'ledger.json')
+            ledger.dump(dict(version=1, entries=[entry()]), str(book))
+            script = os.path.join(SCRIPTS, 'process_report.py')
+            for text in ('[]', '{"ledger_signals": 5}', '"x"'):
+                snap = Path(tmp, 's.json')
+                snap.write_text(text)
+                run = subprocess.run([sys.executable, script, str(report), '--ledger', str(book),
+                                      '--snapshot', str(snap), '--finalize'], capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(json.loads(report.read_text())['trend']['ledger'][0]['verdict'], 'unknown')
+            self.assertEqual(ledger.load(str(book))['entries'][0]['observations'], [])
+
 
 class PreviousAndInputErrors(unittest.TestCase):
     """The processor must read its own earlier output and say which input failed."""

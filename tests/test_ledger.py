@@ -726,5 +726,78 @@ class Remove(LedgerFiles):
         self.assertEqual([r["status"] for r in ledger.plan_removal(book, ["L-20260928-1"])], ["absent", "removable"])
 
 
+class Evaluate(unittest.TestCase):
+    def snapshot(self, sig=None, status="collected"):
+        return dict(window_days=30, collection_scope=dict(requested="all", project=None),
+                    ledger_signals=dict(status=status, entries={} if sig is None else {"L-20260901-1": sig}))
+
+    def report(self):
+        return dict(version=1, generated="2026-10-05T00:00:00Z", window_days=30, metrics={}, findings=[], applied=[])
+
+    def test_rows_and_observation(self):
+        book = dict(version=1, entries=[entry()])
+        rows, new = ledger.evaluate(book, self.snapshot(current(2, 20)), self.report(), "2026-10-05-audit")
+        self.assertEqual(rows[0]["verdict"], "dropped")
+        self.assertEqual(rows[0]["sessions_scanned"], 20)
+        obs = new["entries"][0]["observations"]
+        self.assertEqual((len(obs), obs[0]["run"], obs[0]["verdict"]), (1, "2026-10-05-audit", "dropped"))
+        self.assertNotIn("selector_sha", obs[0])
+        self.assertEqual(book["entries"][0]["observations"], [])  # input not mutated
+
+    def test_rerun_replaces_same_run_observation(self):
+        book = dict(version=1, entries=[entry()])
+        _, once = ledger.evaluate(book, self.snapshot(current(5, 20)), self.report(), "run-a")
+        rows, twice = ledger.evaluate(once, self.snapshot(current(5, 20)), self.report(), "run-a")
+        self.assertEqual(len(twice["entries"][0]["observations"]), 1)
+        self.assertIsNone(rows[0]["proposal"])  # one not_dropped run, not two
+
+    def test_escalation_after_two_runs(self):
+        book = dict(version=1, entries=[entry()])
+        _, book = ledger.evaluate(book, self.snapshot(current(5, 20)), self.report(), "run-a")
+        rows, _ = ledger.evaluate(book, self.snapshot(current(5, 20)), self.report(), "run-b")
+        self.assertEqual((rows[0]["proposal"], rows[0]["next_mechanism"]), ("escalate", "hook"))
+
+    def test_missing_or_invalid_signals_are_unknown_without_observation(self):
+        book = dict(version=1, entries=[entry()])
+        for snap in (self.snapshot(), self.snapshot(status="invalid"),
+                     self.snapshot(dict(current(2, 20), sessions_matched=99))):
+            rows, new = ledger.evaluate(book, snap, self.report(), "r")
+            self.assertEqual(rows[0]["verdict"], "unknown")
+            self.assertEqual(new["entries"][0]["observations"], [])
+
+    def test_inactive_entries_are_skipped(self):
+        book = dict(version=1, entries=[entry(state="removed")])
+        rows, _ = ledger.evaluate(book, self.snapshot(current(2, 20)), self.report(), "r")
+        self.assertEqual(rows, [])
+
+    def test_malformed_snapshots_and_reports_are_unknown_not_crashes(self):
+        book = dict(version=1, entries=[entry()])
+        good = self.snapshot(current(2, 20))
+        shapes = [[], "x", None, {},
+                  dict(good, ledger_signals=[]), dict(good, ledger_signals=dict(status="collected", entries=[])),
+                  dict(good, ledger_signals=dict(status="collected", entries={"L-20260901-1": "x"})),
+                  dict(good, ledger_signals=dict(status="collected", entries={"L-20260901-1": [1]})),
+                  self.snapshot(dict(current(2, 20), sessions_scanned="20")),
+                  self.snapshot(dict(current(2, 20), **{"from": 5})),
+                  self.snapshot(dict(current(2, 20), complete="yes"))]
+        for snap in shapes:
+            rows, new = ledger.evaluate(book, snap, self.report(), "r")
+            self.assertEqual([r["verdict"] for r in rows], ["unknown"], snap)
+            self.assertEqual(new["entries"][0]["observations"], [], snap)
+        for report in ([], None, {}, dict(metrics=[], window_days="x", generated=5)):
+            rows, _ = ledger.evaluate(book, good, report, "r")
+            self.assertEqual(len(rows), 1)
+
+    def test_metric_entry_with_bad_report_is_unknown(self):
+        sel = dict(type="metric", name="tokens", basis="measured", unit="tokens", source="transcripts.baseline")
+        base = {"from": "2026-08-02T00:00:00Z", "to": "2026-09-01T00:00:00Z", "value": 100, "complete": True}
+        book = dict(version=1, entries=[entry(selector=sel, baseline=base)])
+        for report in (dict(generated="2026-10-05T00:00:00Z"), dict(window_days=30, metrics={}),
+                       dict(generated="junk", window_days=30, metrics=[]),
+                       dict(generated="2026-10-05T00:00:00Z", window_days=30, metrics=[])):
+            rows, new = ledger.evaluate(book, self.snapshot(), report, "r")
+            self.assertEqual(rows[0]["verdict"], "unknown")
+            self.assertEqual(new["entries"][0]["observations"], [])
+
 if __name__ == "__main__":
     unittest.main()

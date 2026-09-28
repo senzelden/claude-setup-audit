@@ -459,6 +459,69 @@ def record(book, spec, snapshot, report, run, now):
     return validate(book)
 
 
+ROW_COUNTS = ('matches', 'sessions_matched', 'sessions_scanned', 'value')
+
+
+def _current_counts(entry, signals, report):
+    """Current-window counts for one entry, or None when they are missing, malformed or unusable."""
+    try:
+        if entry['selector']['type'] == 'metric':
+            end = report_state.timestamp(report['generated']).timestamp()
+            start = end - report['window_days'] * 86400
+            counts = metric_baseline(entry['selector'], report, start, end)
+            counts['selector_sha'] = selector_hash(entry['selector'])
+            return counts
+        counts = copy.deepcopy(signals.get(entry['id']))
+        if not isinstance(counts, dict):
+            return None
+        sha = counts.pop('selector_sha', None)
+        validate_counts(counts, False)
+        counts['selector_sha'] = sha
+        return counts
+    except (KeyError, TypeError, ValueError, OverflowError, AttributeError, LedgerError,
+            report_state.ReportError):
+        return None
+
+
+def evaluate(book, snapshot, report, run):
+    """Verdict rows for this run and a ledger copy holding this run's observation per entry.
+
+    Rerunning for the same run replaces that run's observation, so reprocessing is idempotent.
+    Entries without usable current counts get an `unknown` row and no observation; a malformed
+    snapshot or report never raises here.
+    """
+    book = copy.deepcopy(validate(book))
+    signals = snapshot.get('ledger_signals') if isinstance(snapshot, dict) else None
+    entries = signals.get('entries') if isinstance(signals, dict) and signals.get('status') == 'collected' else None
+    entries = entries if isinstance(entries, dict) else {}
+    report = report if isinstance(report, dict) else {}
+    try:
+        scope, _ = snapshot_scope(snapshot)
+    except LedgerError:
+        scope = None
+    rows = []
+    for item in book['entries']:
+        if item['state'] != 'active':
+            continue
+        now = _current_counts(item, entries, report)
+        earlier = [o for o in item['observations'] if o['run'] != run]
+        previous = earlier[-1] if earlier else None
+        try:
+            verdict_now, reason = verdict(item, now, scope, previous)
+        except (KeyError, TypeError, ValueError, LedgerError):
+            now, verdict_now, reason = None, 'unknown', 'incomparable'
+        offer = proposal(item, verdict_now, previous)
+        row = dict(entry=item['id'], verdict=verdict_now, reason=reason, proposal=offer,
+                   next_mechanism=next_rung(item) if offer == 'escalate' else None)
+        row.update({k: (now or {}).get(k) for k in ROW_COUNTS})
+        rows.append(row)
+        if now is not None:
+            observation = {k: v for k, v in now.items() if k != 'selector_sha'}
+            observation.update(run=run, verdict=verdict_now, reason=reason)
+            item['observations'] = earlier + [observation]
+    return rows, validate(book)
+
+
 ORDER = {'json_array_append': 0, 'json_set': 0, 'markdown_block': 1, 'hook_script': 2}
 _MISSING = object()
 _MAX_READ = 8 * 1024 * 1024

@@ -68,6 +68,20 @@ class ReportTests(unittest.TestCase):
             self.assertIn(text, output)
         self.assertEqual(InlineAfterLabel(output).bad, [])
 
+    def test_ledger_rows_render_verdicts_and_proposals(self):
+        import report_state
+        from test_report_state import ReportState
+        report = report_state.finalize(ReportState().report())
+        report['trend']['ledger'] = [
+            dict(entry='L-20260901-1', verdict='dropped', reason='rate_at_or_below_half', proposal=None,
+                 next_mechanism=None, matches=1, sessions_matched=1, sessions_scanned=20, value=None),
+            dict(entry='L-20260901-2', verdict='not_dropped', reason='rate_above_half', proposal='escalate',
+                 next_mechanism='hook', matches=9, sessions_matched=6, sessions_scanned=20, value=None)]
+        html = render_report.render(report)
+        self.assertIn('L-20260901-1: the targeted pattern dropped', html)
+        self.assertIn('1 of 20 later sessions matched', html)
+        self.assertIn('propose moving it to a hook', html)
+
     def report(self):
         return {'version': 1, 'generated': '2026-09-15',
                 'profile': {'scope': 'project'},

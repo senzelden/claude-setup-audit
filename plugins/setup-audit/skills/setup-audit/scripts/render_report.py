@@ -189,6 +189,18 @@ def render(report):
             if metric.get('comparable'):
                 parts.append(paragraph(f"{label(name)}: {metric['previous']} → {metric['current']} {metric['unit']} "
                                        f"(change: {metric['delta']:+g}; {metric['basis']})."))
+        verdict_text = {'dropped': 'the targeted pattern dropped', 'not_dropped': 'the targeted pattern did not drop',
+                        'quiet': 'the targeted pattern has been quiet', 'too_early': 'too early to judge',
+                        'unknown': 'not comparable this run'}
+        for row in trend.get('ledger', []):
+            text = f"Learning fix {row['entry']}: {verdict_text.get(row['verdict'], row['verdict'])} ({row['reason']})"
+            if row.get('sessions_scanned') is not None:
+                text += f"; {row['sessions_matched']} of {row['sessions_scanned']} later sessions matched"
+            if row.get('proposal') == 'escalate':
+                text += f"; propose moving it to a {row['next_mechanism']}"
+            elif row.get('proposal') == 'retire':
+                text += '; propose retiring it'
+            parts.append(paragraph(text + '.'))
         if trend.get('findings', {}).get('not_rechecked'):
             parts.append(paragraph('Some earlier findings were not rechecked; they are not counted as resolved.'))
         parts.append(disclosure('Comparison evidence', trend))

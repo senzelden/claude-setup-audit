@@ -166,6 +166,8 @@ def _validate_report(report, strict=False):
                     if field in item:
                         require(isinstance(item[field], list) and all(isinstance(x, str) for x in item[field]),
                                 'action file paths must be arrays of text')
+                if 'ledger_entry' in item:
+                    require(isinstance(item['ledger_entry'], str), 'invalid ledger entry reference')
     if 'trend' in report:
         trend = report['trend']
         require(isinstance(trend, dict) and type(trend.get('comparable')) is bool,
@@ -180,6 +182,18 @@ def _validate_report(report, strict=False):
             require(isinstance(ignored, dict) and all(
                 isinstance(v, list) and all(isinstance(x, str) for x in v) for v in ignored.values()),
                 'invalid trend ignored')
+        if 'ledger' in trend:
+            rows = trend['ledger']
+            require(isinstance(rows, list), 'invalid trend ledger')
+            for row in rows:
+                require(isinstance(row, dict) and isinstance(row.get('entry'), str)
+                        and row.get('verdict') in LEDGER_VERDICTS and isinstance(row.get('reason'), str)
+                        and row.get('proposal') in (None, 'escalate', 'retire')
+                        and (row.get('next_mechanism') is None or isinstance(row['next_mechanism'], str)),
+                        'invalid trend ledger')
+                require(all(row.get(k) is None or (type(row[k]) is int and row[k] >= 0)
+                            for k in ('matches', 'sessions_matched', 'sessions_scanned'))
+                        and (row.get('value') is None or finite(row['value'])), 'invalid trend ledger')
         for metric in trend['metrics'].values():
             require(isinstance(metric, dict) and type(metric.get('comparable')) is bool, 'invalid trend metric')
             if metric['comparable']:
