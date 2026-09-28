@@ -10,6 +10,7 @@ HISTORY = {'new', 'open', 'regressed', 'resolved', 'suppressed'}
 ACTIONS = {'proposed', 'approved', 'applied', 'partial', 'failed', 'skipped', 'declined'}
 COVERAGE = {'collected', 'absent', 'partial', 'unavailable', 'not_checked'}
 BASIS = {'measured', 'estimated', 'unknown'}
+LEDGER_VERDICTS = ('unknown', 'too_early', 'quiet', 'dropped', 'not_dropped')
 
 
 class ReportError(ValueError):
