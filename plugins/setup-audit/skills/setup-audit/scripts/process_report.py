@@ -77,7 +77,12 @@ def main():
         stage = None
         result = report_state.finalize(current, previous, decisions, args.as_of)
         book = None
+        if args.snapshot and not args.ledger:
+            raise report_state.ReportError('--snapshot requires --ledger', input='snapshot')
         if args.ledger:
+            if len(Path(args.report).stem) > 120:
+                raise report_state.ReportError('report file name is too long to serve as a ledger run id',
+                                               input='report')
             if not args.snapshot:
                 raise report_state.ReportError('--ledger requires --snapshot', input='snapshot')
             stage = 'ledger'

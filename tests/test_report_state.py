@@ -242,6 +242,25 @@ class ReportState(unittest.TestCase):
                 self.assertEqual(json.loads(report.read_text())['trend']['ledger'][0]['verdict'], 'unknown')
             self.assertEqual(ledger.load(str(book))['entries'][0]['observations'], [])
 
+    def test_processor_rejects_long_run_id_and_orphan_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = os.path.join(SCRIPTS, 'process_report.py')
+            long_report = Path(tmp, 'a' * 130 + '.json')
+            long_report.write_text(json.dumps(self.report()))
+            book, snap = Path(tmp, 'ledger.json'), Path(tmp, 's.json')
+            snap.write_text('{}')
+            run = subprocess.run([sys.executable, script, str(long_report), '--ledger', str(book),
+                                  '--snapshot', str(snap), '--finalize'], capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn('The current report', run.stderr)
+            self.assertNotIn('aaaa', run.stderr)
+            short = Path(tmp, 'r.json')
+            short.write_text(json.dumps(self.report()))
+            run = subprocess.run([sys.executable, script, str(short), '--snapshot', str(snap)],
+                                 capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn('The snapshot', run.stderr)
+
 
 class PreviousAndInputErrors(unittest.TestCase):
     """The processor must read its own earlier output and say which input failed."""

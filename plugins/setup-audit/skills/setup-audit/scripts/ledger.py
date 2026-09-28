@@ -478,7 +478,7 @@ def _current_counts(entry, signals, report):
         validate_counts(counts, False)
         counts['selector_sha'] = sha
         return counts
-    except (KeyError, TypeError, ValueError, OverflowError, AttributeError, LedgerError,
+    except (KeyError, TypeError, ValueError, OverflowError, OSError, AttributeError, LedgerError,
             report_state.ReportError):
         return None
 
@@ -487,7 +487,7 @@ def evaluate(book, snapshot, report, run):
     """Verdict rows for this run and a ledger copy holding this run's observation per entry.
 
     Rerunning for the same run replaces that run's observation, so reprocessing is idempotent.
-    Entries without usable current counts get an `unknown` row and no observation; a malformed
+    Entries whose verdict is `unknown` (no usable or comparable counts) get a row but no observation; a malformed
     snapshot or report never raises here.
     """
     book = copy.deepcopy(validate(book))
@@ -515,7 +515,7 @@ def evaluate(book, snapshot, report, run):
                    next_mechanism=next_rung(item) if offer == 'escalate' else None)
         row.update({k: (now or {}).get(k) for k in ROW_COUNTS})
         rows.append(row)
-        if now is not None:
+        if now is not None and verdict_now != 'unknown':
             observation = {k: v for k, v in now.items() if k != 'selector_sha'}
             observation.update(run=run, verdict=verdict_now, reason=reason)
             item['observations'] = earlier + [observation]

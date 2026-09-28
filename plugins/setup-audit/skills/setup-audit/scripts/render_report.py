@@ -194,8 +194,11 @@ def render(report):
                         'unknown': 'not comparable this run'}
         for row in trend.get('ledger', []):
             text = f"Learning fix {row['entry']}: {verdict_text.get(row['verdict'], row['verdict'])} ({row['reason']})"
-            if row.get('sessions_scanned') is not None:
-                text += f"; {row['sessions_matched']} of {row['sessions_scanned']} later sessions matched"
+            counts = (row.get('sessions_matched'), row.get('sessions_scanned'))
+            if all(type(n) is int for n in counts):
+                text += f"; {counts[0]} of {counts[1]} later sessions matched"
+            elif isinstance(row.get('value'), (int, float)) and not isinstance(row['value'], bool):
+                text += f"; current value {row['value']:g}"
             if row.get('proposal') == 'escalate':
                 text += f"; propose moving it to a {row['next_mechanism']}"
             elif row.get('proposal') == 'retire':

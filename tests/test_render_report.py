@@ -82,6 +82,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn('1 of 20 later sessions matched', html)
         self.assertIn('propose moving it to a hook', html)
 
+    def test_metric_ledger_row_shows_value_not_session_counts(self):
+        import report_state
+        from test_report_state import ReportState
+        report = report_state.finalize(ReportState().report())
+        report['trend']['ledger'] = [dict(entry='L-20260901-3', verdict='dropped', reason='rate_at_or_below_half',
+                                          proposal=None, next_mechanism=None, matches=None, sessions_matched=None,
+                                          sessions_scanned=None, value=40)]
+        html = render_report.render(report)
+        self.assertIn('current value 40', html)
+        self.assertNotIn('later sessions matched', html)
+
     def report(self):
         return {'version': 1, 'generated': '2026-09-15',
                 'profile': {'scope': 'project'},

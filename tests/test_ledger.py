@@ -799,5 +799,24 @@ class Evaluate(unittest.TestCase):
             self.assertEqual(rows[0]["verdict"], "unknown")
             self.assertEqual(new["entries"][0]["observations"], [])
 
+    def test_incomparable_runs_get_a_row_but_no_observation(self):
+        book = dict(version=1, entries=[entry()])
+        good = self.snapshot(current(2, 20))
+        for snap in (dict(good, collection_scope=dict(requested=[], project=None)),
+                     dict(good, window_days=7),
+                     self.snapshot(current(2, 20, sel=dict(KW, any=["other"])))):
+            rows, new = ledger.evaluate(book, snap, self.report(), "r")
+            self.assertEqual(rows[0]["verdict"], "unknown")
+            self.assertEqual(new["entries"][0]["observations"], [])
+
+    def test_absurd_window_days_is_unknown_not_oserror(self):
+        sel = dict(type="metric", name="tokens", basis="measured", unit="tokens", source="transcripts.baseline")
+        base = {"from": "2026-08-02T00:00:00Z", "to": "2026-09-01T00:00:00Z", "value": 100, "complete": True}
+        book = dict(version=1, entries=[entry(selector=sel, baseline=base)])
+        report = dict(self.report(), window_days=10 ** 12)
+        rows, new = ledger.evaluate(book, self.snapshot(), report, "r")
+        self.assertEqual(rows[0]["verdict"], "unknown")
+        self.assertEqual(new["entries"][0]["observations"], [])
+
 if __name__ == "__main__":
     unittest.main()
