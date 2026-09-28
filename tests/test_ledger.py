@@ -836,7 +836,8 @@ class Docs(unittest.TestCase):
     def test_reference_matches_constants(self):
         ref = self.read(self.SKILL, "references", "ledger.md")
         for value in (str(ledger.MIN_SESSIONS), str(ledger.MIN_BASELINE), str(ledger.QUIET_DAYS),
-                      *ledger.STATES, *ledger.KINDS, *ledger.SOURCES, "fetched 2026-09-28"):
+                      *ledger.STATES, *ledger.KINDS, *ledger.SOURCES, "fetched 2026-09-28",
+                      "finding_id", "supersedes", "pointer"):
             self.assertIn(value, ref)
         self.assertNotIn("retired", ref)
 

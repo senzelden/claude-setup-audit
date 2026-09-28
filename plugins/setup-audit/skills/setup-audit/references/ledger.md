@@ -31,6 +31,42 @@ Only `active` entries are counted and evaluated. Mechanisms form the ladder
 `memory < rule < hook < skill`. `setting` has no next rung, so it is never escalated.
 Escalating writes a new entry with `supersedes` set to the old one.
 
+## Entry spec
+
+`ledger.py record --spec <file>` reads one JSON object with exactly these fields, plus optional
+`supersedes`. `record` computes everything else (hashes, baseline, scope, timestamps); a
+`sha256` is never supplied.
+
+```json
+{
+  "id": "L-20260928-1",
+  "finding_id": "LRN-repeat-tests:myapp",
+  "pattern": "Claude skips the test run before finishing",
+  "mechanism": "hook",
+  "selector": {"type": "keywords", "source": "corrections", "any": ["run the tests"]},
+  "supersedes": "L-20260915-2",
+  "edits": [
+    {"file": "~/.claude/hooks/check-tests.sh", "kind": "hook_script", "backup": null},
+    {"file": "~/.claude/settings.json", "kind": "json_array_append",
+     "pointer": "/hooks/Stop/0/hooks/1", "backup": "~/.claude/backups/setup-audit-20260928/settings.json"}
+  ]
+}
+```
+
+- `id`: the value printed by `ledger.py next-id`.
+- `finding_id`: must exist in the `--report` file (the current audit JSON).
+- `pattern`: at most 200 characters; a short summary, never a quoted prompt.
+- `mechanism`: `memory`, `rule`, `hook`, `skill` or `setting`.
+- `supersedes`: optional; must name an `active` entry, which becomes `superseded`.
+- `selector`, one of:
+  - `{"type": "keywords", "source": "corrections" | "friction_details", "any": [...]}`
+  - `{"type": "friction_category", "name": "..."}`
+  - `{"type": "metric", "name": "...", "basis": "...", "unit": "...", "source": "..."}`
+- Each edit is exactly `{file, kind, backup}`, plus `pointer` for the two `json_*` kinds. For
+  `json_array_append` the pointer names the appended element (for example `/permissions/deny/3`);
+  for `json_set` it names the value that was set. `backup` is the path of the pre-edit copy and
+  must exist on disk, or is `null` when the file did not exist before the edit.
+
 ## Selectors
 
 | Selector | Counts |
@@ -104,7 +140,8 @@ already exists.
 
 ## Removal
 
-`ledger.py remove --ledger <ledger> (--entry <id> ... | --all)` is a dry run. It prints one row
+`ledger.py remove --ledger <ledger> (--entry <id> ... | --all)` is a dry run. `--all` covers every
+entry not already `removed`, including `superseded` ones, so the plan may list them. It prints one row
 per edit (`entry`, `edit` index, `file`, `kind`, `status`, `reason`) and never values.
 
 | Status | Reasons | Meaning |

@@ -321,9 +321,12 @@ execute, follow the blocked-action guidance in Step 1 rather than manually editi
 9. **Ledger.** Before an approved LRN edit run
    `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py next-id --ledger <ledger>` and write the markers
    exactly as in `references/ledger.md`. After verifying the edit, write an entry spec to
-   `$TMPDIR` and run
+   `$TMPDIR` (shape: the "Entry spec" section of `references/ledger.md`) and run
    `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py record --ledger <ledger> --snapshot <snapshot> --report <current.json> --spec <spec>`,
-   then add `ledger_entry` to the matching `applied` item. Escalations set `supersedes`. Do not
+   where `--report` is the current audit JSON (already containing the LRN finding, written in
+   Step 4) and `--snapshot` is the Step 1 snapshot (`$TMPDIR/setup-audit-snapshot.json`), which
+   supplies the baseline window and scope. Afterwards add `ledger_entry` to the matching
+   `applied` item. Escalations set `supersedes`. Do not
    record non-LRN fixes.
 
 Offer to record declined items in `decisions.yaml` with a `review_after` date and the finding’s
@@ -333,7 +336,8 @@ doesn't nag.
 ## Removing tool-written edits
 
 Run `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py remove --ledger <ledger> --all` (a dry run)
-and show the user every row. Apply only after approval, with
+and show the user every row. `--all` covers every entry not already `removed`, including
+`superseded` ones, so the plan may list them. Apply only after approval, with
 `--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`. List `modified` rows for manual
 review and never edit them. Statuses and reasons are in `references/ledger.md`.
 
