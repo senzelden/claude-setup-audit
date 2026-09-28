@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -876,6 +877,108 @@ class QuerySnapshot(FakeHome):
         self.assertEqual(out.stdout.count("</untrusted_snapshot_data>"), 1)
         self.assertEqual(out.stdout.count("<untrusted_snapshot_data>"), 1)
         self.assertEqual(json.loads(self.unwrap(out.stdout)), payload)
+
+
+class LedgerCounting(FakeHome):
+    NOW = 1_790_000_000  # fixed epoch seconds
+
+    def history(self, rows):
+        self.write(".claude/history.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
+
+    def row(self, text, offset, sid="s1", project="/a"):
+        return {"display": text, "timestamp": (self.NOW + offset) * 1000, "project": project, "sessionId": sid}
+
+    def test_corrections_keywords_count_sessions_after_cutoff_only(self):
+        sel = {"type": "keywords", "source": "corrections", "any": ["Run The Tests"]}
+        self.history([
+            self.row("no, run the tests first", -10, "s1"),
+            self.row("no, run the tests again", -9, "s1"),
+            self.row("wrong, you forgot to run the tests", -8, "s2"),
+            self.row("please run the tests", -7, "s3"),        # not a correction
+            self.row("no, run the tests", -500, "s4"),          # before `since`
+            self.row("no, run the tests", -5, "s5", "/b"),      # out of scope
+        ])
+        c = collect.count_selector(sel, self.NOW - 100, self.NOW, {"/a"})
+        self.assertEqual(c, {"matches": 3, "sessions_matched": 2, "sessions_scanned": 3, "complete": True})
+
+    def test_missing_session_id_or_bad_line_marks_incomplete(self):
+        sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
+        self.write(".claude/history.jsonl", json.dumps({"display": "no tests", "timestamp": self.NOW * 1000,
+                                                        "project": "/a"}) + "\n{broken\n")
+        c = collect.count_selector(sel, self.NOW - 100, self.NOW, None)
+        self.assertFalse(c["complete"])
+        self.assertEqual((c["matches"], c["sessions_scanned"]), (1, 1))
+
+    def test_absent_history_is_incomplete(self):
+        sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
+        c = collect.count_selector(sel, 0, self.NOW, None)
+        self.assertEqual(c, {"matches": 0, "sessions_matched": 0, "sessions_scanned": 0, "complete": False})
+
+    def facet(self, sid, offset, project="/a", **fields):
+        start = datetime.fromtimestamp(self.NOW + offset, timezone.utc).isoformat()
+        self.write(f".claude/usage-data/session-meta/{sid}.json",
+                   {"session_id": sid, "start_time": start, "project_path": project})
+        self.write(f".claude/usage-data/facets/{sid}.json", dict(session_id=sid, **fields))
+
+    def test_friction_category_and_details(self):
+        self.facet("a", -10, friction_counts={"buggy_code": 2}, friction_detail="Forgot to RUN tests")
+        self.facet("b", -9, friction_counts={"wrong_approach": 1}, friction_detail="other")
+        self.facet("c", -900, friction_counts={"buggy_code": 5})  # before since
+        cat = collect.count_selector({"type": "friction_category", "name": "buggy_code"},
+                                     self.NOW - 100, self.NOW, None)
+        self.assertEqual(cat, {"matches": 2, "sessions_matched": 1, "sessions_scanned": 2, "complete": True})
+        det = collect.count_selector({"type": "keywords", "source": "friction_details", "any": ["run tests"]},
+                                     self.NOW - 100, self.NOW, None)
+        self.assertEqual(det, {"matches": 1, "sessions_matched": 1, "sessions_scanned": 2, "complete": True})
+
+    def test_orphan_facet_marks_incomplete(self):
+        self.facet("a", -10, friction_counts={"buggy_code": 1})
+        self.write(".claude/usage-data/facets/orphan.json", {"session_id": "nope", "friction_counts": {"buggy_code": 1}})
+        c = collect.count_selector({"type": "friction_category", "name": "buggy_code"}, self.NOW - 100, self.NOW, None)
+        self.assertFalse(c["complete"])
+        self.assertEqual(c["matches"], 1)
+
+    def ledger_file(self, applied_at, state="active"):
+        import ledger
+        sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
+        entry = dict(id="L-20260901-1", applied_at=applied_at, run="r", finding_id="LRN-x", pattern="p",
+                     mechanism="rule", state=state, supersedes=None, selector=sel,
+                     scope=dict(scope="all", project=None, window_days=30),
+                     baseline={"from": "2026-08-01T00:00:00Z", "to": "2026-09-01T00:00:00Z", "matches": 3,
+                               "sessions_matched": 3, "sessions_scanned": 9, "complete": True},
+                     edits=[dict(file="~/x.md", kind="markdown_block", sha256="a" * 64, backup=None)],
+                     observations=[])
+        path = os.path.join(self.claude, "audits", "ledger.json")
+        ledger.dump(dict(version=1, entries=[entry]), path)
+        return path, ledger.selector_hash(sel)
+
+    def test_signals_count_only_after_applied_at(self):
+        import ledger
+        self.history([self.row("no tests", -50, "s1"), self.row("no tests", -5, "s2")])
+        path, sha = self.ledger_file(ledger.iso(self.NOW - 20))
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            out = collect.collect_ledger_signals(path, 30, None)
+        self.assertEqual(out["status"], "collected")
+        sig = out["entries"]["L-20260901-1"]
+        self.assertEqual((sig["matches"], sig["sessions_scanned"]), (1, 1))
+        self.assertEqual(sig["from"], ledger.iso(self.NOW - 20))
+        self.assertEqual(sig["selector_sha"], sha)
+
+    def test_future_applied_at_counts_nothing(self):
+        import ledger
+        self.history([self.row("no tests", -5, "s1")])
+        path, _ = self.ledger_file(ledger.iso(self.NOW + 3600))
+        with mock.patch.object(collect.time, "time", return_value=self.NOW):
+            sig = collect.collect_ledger_signals(path, 30, None)["entries"]["L-20260901-1"]
+        self.assertEqual((sig["matches"], sig["sessions_scanned"]), (0, 0))
+
+    def test_inactive_entries_skipped_and_invalid_ledger_reported(self):
+        import ledger
+        path, _ = self.ledger_file(ledger.iso(self.NOW - 20), state="removed")
+        self.assertEqual(collect.collect_ledger_signals(path, 30, None)["entries"], {})
+        with open(path, "w") as f:
+            f.write('{"version": 1}')
+        self.assertEqual(collect.collect_ledger_signals(path, 30, None), {"status": "invalid", "entries": {}})
 
 
 if __name__ == "__main__":

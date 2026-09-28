@@ -15,6 +15,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - Add optional fields without changing existing meanings within v1. Readers ignore unknown
   fields. New required fields, removed/renamed fields, changed types/units/semantics or new
   status values require a new snapshot version and reader support.
+- `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
+  post-fix `matches`, `sessions_matched`, `sessions_scanned`, `complete`, `from`, `to`, `selector_sha`.
+  Counts only; additive within snapshot v1.
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.
 - Pre-versioned snapshots remain queryable with a stderr warning: they have no validated
   contract. Do not silently label them v1 or infer complete coverage; recollect when needed.

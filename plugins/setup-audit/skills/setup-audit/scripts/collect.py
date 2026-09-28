@@ -1259,6 +1259,112 @@ def collect_corrections(days, project_filter=None):
     return {"count": len(hits), "by_project": by_project.most_common(10), "samples": hits[-40:]}
 
 
+def _history_rows(since, until, project_filter, counts):
+    """Yield (session_id or None, prompt) for in-bounds, in-scope history rows."""
+    path = os.path.join(CLAUDE, "history.jsonl")
+    if not os.path.exists(path):
+        counts["complete"] = False
+        return
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                counts["complete"] = False
+                continue
+            ts = d.get("timestamp") if isinstance(d, dict) else None
+            if type(ts) not in (int, float):
+                counts["complete"] = False
+                continue
+            if not since <= ts / 1000 <= until:
+                continue
+            if project_filter is not None and os.path.expanduser(d.get("project") or "") not in project_filter:
+                continue
+            sid = d.get("sessionId")
+            if not isinstance(sid, str) or not sid:
+                counts["complete"] = False
+                sid = None
+            text = d.get("display")
+            yield sid, (text if isinstance(text, str) else "").strip()
+
+
+def _facet_rows(since, until, project_filter, counts):
+    """Yield (session_id, facet) for facets joined to in-bounds, in-scope session metadata."""
+    index = {}
+    for f in sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json"))):
+        m = load_json(f)
+        sid = m.get("session_id") if isinstance(m, dict) else None
+        if isinstance(sid, str) and sid:
+            index[sid] = m if sid not in index else None
+    facets = sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "facets", "*.json")))
+    if not facets:
+        counts["complete"] = False
+    for f in facets:
+        d = load_json(f)
+        sid = d.get("session_id") if isinstance(d, dict) else None
+        m = index.get(sid) if isinstance(sid, str) else None
+        stamp = _dated(m.get("start_time")) if m else None
+        if stamp is None:
+            counts["complete"] = False
+            continue
+        if not since <= stamp <= until:
+            continue
+        if project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter:
+            continue
+        yield sid, d
+
+
+def _positive(value):
+    return value if type(value) is int and value > 0 else 0
+
+
+def count_selector(selector, since, until, project_filter=None):
+    """Count one ledger selector between epoch-second bounds (inclusive). Counts only, never text."""
+    counts = dict(matches=0, sessions_matched=0, sessions_scanned=0, complete=True)
+    kind = selector["type"]
+    words = [w.lower() for w in selector.get("any", [])]
+    if kind == "keywords" and selector["source"] == "corrections":
+        rows = ((sid, int(bool(CORRECTION_RE.search(text)) and any(w in text.lower() for w in words)))
+                for sid, text in _history_rows(since, until, project_filter, counts))
+    elif kind == "keywords":
+        rows = ((sid, int(any(w in str(d.get("friction_detail") or "").lower() for w in words)))
+                for sid, d in _facet_rows(since, until, project_filter, counts))
+    elif kind == "friction_category":
+        rows = ((sid, _positive((d.get("friction_counts") or {}).get(selector["name"])))
+                for sid, d in _facet_rows(since, until, project_filter, counts))
+    else:
+        raise ValueError("metric selectors are not counted from raw sources")
+    scanned, matched = set(), set()
+    for sid, n in rows:
+        key = sid if sid is not None else object()
+        scanned.add(key)
+        if n:
+            counts["matches"] += n
+            matched.add(key)
+    counts["sessions_scanned"], counts["sessions_matched"] = len(scanned), len(matched)
+    return counts
+
+
+def collect_ledger_signals(path, days, project_filter):
+    """Post-fix counts for each active, non-metric ledger entry. Read-only."""
+    import ledger  # lazy: ledger's CLI imports collect
+    try:
+        book = ledger.load(path)
+    except (ledger.LedgerError, OSError, UnicodeDecodeError):
+        return {"status": "invalid", "entries": {}}
+    now = time.time()
+    entries = {}
+    for entry in book["entries"]:
+        if entry["state"] != "active" or entry["selector"]["type"] == "metric":
+            continue
+        since = max(now - days * 86400, ledger.epoch(entry["applied_at"]))
+        counts = count_selector(entry["selector"], since, now, project_filter)
+        counts.update({"from": ledger.iso(since), "to": ledger.iso(now),
+                       "selector_sha": ledger.selector_hash(entry["selector"])})
+        entries[entry["id"]] = counts
+    return {"status": "collected", "entries": entries}
+
+
 def main():
     global CLAUDE
     ap = argparse.ArgumentParser()
@@ -1273,6 +1379,7 @@ def main():
                          "project: only --project's files and usage/history entries; all: every discovered "
                          "project plus --roots (default)")
     ap.add_argument("--project", help="project root to audit; required with --scope project")
+    ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
     a = ap.parse_args()
     if a.days < 1:
         ap.error('--days must be positive')
@@ -1315,6 +1422,9 @@ def main():
         "transcripts": collect_transcripts(a.days, project_filter=project_filter),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
+    if a.ledger:
+        snap["ledger_signals"] = collect_ledger_signals(
+            os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
     snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),

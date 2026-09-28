@@ -64,6 +64,16 @@ class SnapshotContract(FakeHome):
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
 
+    def test_ledger_signals_are_optional_and_checked(self):
+        snap = self.snapshot()
+        snap["ledger_signals"] = {"status": "collected", "entries": {"L-20260901-1": {
+            "from": "2026-09-01T00:00:00Z", "to": "2026-09-28T00:00:00Z", "matches": 1,
+            "sessions_matched": 1, "sessions_scanned": 5, "complete": True, "selector_sha": "a" * 64}}}
+        contract.validate_snapshot(snap)
+        snap["ledger_signals"]["status"] = "other"
+        with self.assertRaises(contract.SnapshotError):
+            contract.validate_snapshot(snap)
+
     def test_additive_fields_and_legacy_policy(self):
         snapshot = self.snapshot()
         snapshot['future_optional'] = {'value': 1}
