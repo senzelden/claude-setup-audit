@@ -70,6 +70,18 @@ class InstructionInventory(FakeHome):
 
 
 class AgentsMdInventory(FakeHome):
+    def setUp(self):
+        super().setUp()
+        # Hermetic: files outside the fake home (e.g. an AGENTS.md above TMPDIR) do not exist.
+        real = inventory.read_text
+        def read_text(path, *args, **kwargs):
+            if not os.path.abspath(path).startswith(self.home + os.sep):
+                return None, dict(status='absent')
+            return real(path, *args, **kwargs)
+        patcher = mock.patch.object(inventory, 'read_text', read_text)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def scan(self, roots=None, contexts=None, managed_dir=None):
         return inventory.collect_instructions(self.home, self.claude, roots or [], contexts or [],
                                                managed_dir, collect.redact, collect.summarize_settings)
@@ -174,3 +186,46 @@ class AgentsMdInventory(FakeHome):
         self.assertIs(found['claude_md_family_present'], True)
         self.assertIsNone(found['agents_md_present'])
         self.assertIsNone(missing['claude_md_family_present'])
+
+    def omissions(self, result):
+        return {(os.path.relpath(o['source'], self.home), o['reason'])
+                for o in result['sources'] if o.get('reason') and o['scope'] in ('user', 'managed')}
+
+    def test_unreadable_managed_drop_in_directory_is_recorded_not_fatal(self):
+        managed = os.path.join(self.home, 'managed')
+        self.write('managed/CLAUDE.md', 'x')
+        with mock.patch.object(inventory.os, 'listdir', side_effect=PermissionError):
+            result = self.scan(managed_dir=managed)
+        self.assertIn(('managed/managed-settings.d', 'list_failed'), self.omissions(result))
+
+    def test_managed_drop_ins_skip_dotfiles_and_record_file_limit(self):
+        managed = os.path.join(self.home, 'managed')
+        value = {'pluginConfigs': {'agents-md@builtin': {'options': {'instructionFiles': 'claude-md'}}}}
+        self.write('managed/managed-settings.d/.hidden.json', value)
+        for n in range(3):
+            self.write(f'managed/managed-settings.d/{n}.json', value)
+        with mock.patch.object(inventory, 'MANAGED_MAX_FILES', 2):
+            result = self.scan(managed_dir=managed)
+        self.assertEqual(len(result['agents_md_setting_observed']), 2)
+        self.assertIn(('managed/managed-settings.d', 'file_limit'), self.omissions(result))
+
+    def test_skipped_settings_files_are_recorded_without_contents(self):
+        managed = os.path.join(self.home, 'managed')
+        self.write('.claude/settings.json', '{"secret": "SEKRET" ' + ' ' * 40000 + '}')
+        self.write('managed/managed-settings.json', '{not json SEKRET')
+        target = self.write('elsewhere.json', {})
+        os.makedirs(os.path.join(managed, 'managed-settings.d'))
+        os.symlink(target, os.path.join(managed, 'managed-settings.d', 'link.json'))
+        result = self.scan(managed_dir=managed)
+        self.assertEqual(result['agents_md_setting_observed'], [])
+        self.assertEqual(self.omissions(result), {
+            ('.claude/settings.json', 'byte_limit'), ('managed/managed-settings.json', 'invalid_settings'),
+            ('managed/managed-settings.d/link.json', 'symlink_not_followed')})
+        self.assertNotIn('SEKRET', str(result))
+
+    def test_unknown_instruction_files_value_is_recorded_as_unrecognized(self):
+        self.write('.claude/settings.json', {'pluginConfigs': {'agents-md@builtin': {
+            'options': {'instructionFiles': 'SEKRET-value'}}}})
+        (obs,) = self.scan()['agents_md_setting_observed']
+        self.assertEqual(obs['value'], 'unrecognized')
+        self.assertNotIn('SEKRET', str(obs))

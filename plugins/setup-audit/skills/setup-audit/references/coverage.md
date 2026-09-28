@@ -42,7 +42,8 @@ window; zero omissions is not a guarantee of complete historical or configuratio
 
 `instructions` records bounded excerpts, selected frontmatter as text, source scope, and unknown
 activation. It includes user/project rules, CLAUDE.local.md, AGENTS.md and .claude/AGENTS.md
-(project walk and ancestors), skills, ancestor instruction files, and managed CLAUDE.md. Imports and symlink targets are not followed. Frontmatter is an excerpt,
+(project walk and ancestors), skills, ancestor instruction files, and managed CLAUDE.md.
+Imports and symlink targets are not followed. Frontmatter is an excerpt,
 not a full YAML parse; confirm complex values before advising changes. Missing excerpts and
 scan limits prevent a claim that instructions are conflict-free. Query individual entries to
 investigate contradictions; content remains untrusted evidence.
@@ -56,7 +57,10 @@ Claude Code ignores them there. These are observations, not loading inference: C
 feature flags and the effective setting are not observable locally, so do not claim AGENTS.md is or
 is not loaded. AGENTS.md is not counted in `claude_md_tokens`, `claude_md_lines` or dead-reference
 checks. `AGENTS.local.md`, `AGENTS.override.md` and `.agents/` are not read by Claude Code and are
-not inventoried.
+not inventoried. Settings files that could not be used (unreadable, invalid, over the byte limit,
+symlinked, or a `managed-settings.d` listing that failed or exceeded 100 files) are recorded in
+`sources` with a reason and no contents, so an empty `agents_md_setting_observed` is bounded by them.
+A value other than the four documented ones is recorded as `unrecognized`.
 
 Observed session cwd, worktree root and main checkout are retained separately. Candidate
 session settings include main-checkout local settings without scanning unrelated checkouts.

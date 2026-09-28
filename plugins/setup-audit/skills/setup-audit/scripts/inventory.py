@@ -13,6 +13,8 @@ import subprocess
 MAX_BYTES = 32768
 MAX_FILES = 200
 MAX_DIRS = 500
+MANAGED_MAX_FILES = 100  # same bound as collect.py's managed-settings.d scan
+INSTRUCTION_FILES_VALUES = ('claude-md-or-agents-md', 'claude-md-and-agents-md', 'claude-md', 'managed-only')
 SKIP = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', 'dist', 'build', 'vendor', 'target'}
 # AGENTS.local.md, AGENTS.override.md and anything under .agents/ are not read by Claude Code.
 INSTRUCTION_NAMES = ('CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md')
@@ -88,12 +90,14 @@ def git_context(cwd):
 
 
 def agents_md_setting(data):
-    """The instructionFiles value under the built-in agents-md plugin, or None when absent/unusable."""
+    """A documented instructionFiles value, 'unrecognized' for any other string (raw text is never kept), or None."""
     try:
         value = data['pluginConfigs']['agents-md@builtin']['options']['instructionFiles']
     except (KeyError, TypeError):
         return None
-    return value[:64] if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    return value if value in INSTRUCTION_FILES_VALUES else 'unrecognized'
 
 
 def context_flags(contexts, entries, incomplete):
@@ -195,21 +199,42 @@ def collect_instructions(home, claude, roots, contexts, managed_dir, redact, sum
     observed = []
     setting_files = [('user', os.path.join(claude, 'settings.json'))]
     if managed_dir:
-        drop_ins = os.path.join(managed_dir, 'managed-settings.d')
-        names = sorted(n for n in os.listdir(drop_ins) if n.endswith('.json')) if os.path.isdir(drop_ins) else []
         setting_files.append(('managed', os.path.join(managed_dir, 'managed-settings.json')))
-        setting_files.extend(('managed', os.path.join(drop_ins, n)) for n in names[:100])
+        drop_ins = os.path.join(managed_dir, 'managed-settings.d')
+        try:
+            names = sorted(n for n in os.listdir(drop_ins) if not n.startswith('.') and n.endswith('.json'))
+            if len(names) > MANAGED_MAX_FILES:
+                sources.append(source(drop_ins, 'managed', 'partial', reason='file_limit',
+                                      eligible=len(names), scanned=MANAGED_MAX_FILES,
+                                      omitted=len(names) - MANAGED_MAX_FILES))
+            setting_files.extend(('managed', os.path.join(drop_ins, n)) for n in names[:MANAGED_MAX_FILES])
+        except FileNotFoundError:
+            pass
+        except OSError:
+            sources.append(source(drop_ins, 'managed', 'unavailable', reason='list_failed'))
     # Project and local settings are ignored for this setting by Claude Code, so never read here.
     for scope, path in setting_files:
         text, info = read_text(path)
-        if text is None or info.get('truncated'):
-            continue
-        try:
-            value = agents_md_setting(json.loads(text))
-        except ValueError:
-            continue
-        if value is not None:
-            observed.append(dict(source=path, scope=scope, value=redact(value), basis='observed'))
+        reason = None
+        if text is None:
+            if info['status'] != 'absent':
+                reason = info.get('reason', 'read_failed')
+        elif info.get('truncated'):
+            reason = 'byte_limit'
+        else:
+            try:
+                data = json.loads(text)
+                if not isinstance(data, dict):
+                    raise ValueError()
+                value = agents_md_setting(data)
+                if value is not None:
+                    observed.append(dict(source=path, scope=scope, value=value, basis='observed'))
+            except ValueError:
+                reason = 'invalid_settings'
+        if reason:
+            # Path and reason only, never contents.
+            sources.append(source(path, scope, 'unavailable' if reason != 'symlink_not_followed' else 'not_checked',
+                                  reason=reason))
     settings = []
     if summarize_settings:
         candidates = set()
