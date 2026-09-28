@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated 2026-09-17. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
+Updated 2026-09-28. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
 
 ## Shipped in 0.5.0
@@ -67,12 +67,29 @@ both were corrected in follow-up commits before inclusion in 0.6.0.
 - **Quality:** tune dead-reference, environment and cache-breaker heuristics; broaden the
   clarity corpus before considering default activation or automatic rewrites; measure collector
   performance before optimizing.
+- **Per-item learning ledger:** each applied fix records run id, targeted friction pattern,
+  evidence and chosen mechanism. The next run checks deterministically whether that specific
+  pattern recurred, proposes escalation (rule to hook) when it did not drop, and removal when
+  nothing triggers it. Edits the tool writes are marked so later audits and uninstall can tell
+  them from the user's. Builds on the lenient previous-report reading; extends
+  `LRN-effectiveness`, which today compares at report level. Needs its own design first.
+- **Self-modifying harness overhead:** detect plugins that inject skill indexes or run
+  background reflection. Measure per-session injected tokens from transcripts (not only the
+  current file-size estimate of `COST-startup-hooks`), their reflection/subagent spend, and
+  skill-count growth across runs (needs the ledger's history).
+- **Opt-in script-only drift mode:** a documented deterministic mode that runs only the
+  collector with thresholds (CLAUDE.md size, cache hit ratio, new broad permissions) and
+  appends to a drift log. The user runs it or wires it into their own hook; the plugin never
+  installs a background hook. Model analysis stays on demand; approval stays required for any
+  change.
 
 ## Distribution follow-up
 
 The 2026-09-16 handoff records community review approval but no entry in Anthropic's community
 mirror. Recheck the live listing before adding community install instructions. Direct marketplace
 installation remains documented in the README. This is external follow-up, not a release blocker.
+
+- README update/uninstall instructions and a sample report are part of this branch (Task 2).
 
 ## Explicit limits
 
