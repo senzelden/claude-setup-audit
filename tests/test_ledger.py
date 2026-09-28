@@ -1,17 +1,22 @@
 """Ledger format, strict validation, ids and verdict rules. Pure functions; fake paths only."""
 import copy
 import datetime
+import hashlib
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from test_collect import SCRIPTS  # noqa: F401
+from test_collect import SCRIPTS
 import ledger
 
 SCOPE = dict(scope="all", project=None, window_days=30)
 KW = dict(type="keywords", source="corrections", any=["run the tests"])
+SCRIPT = os.path.join(SCRIPTS, "ledger.py")
 
 
 def counts(matched, scanned, matches=None, start="2026-09-01T00:00:00Z", end="2026-09-28T00:00:00Z"):
@@ -173,6 +178,199 @@ class Proposals(unittest.TestCase):
         self.assertEqual(ledger.proposal(entry(mechanism="memory"), "quiet", None), "retire")
         self.assertEqual(ledger.proposal(entry(), "quiet", None), "retire")
         self.assertIsNone(ledger.proposal(entry(mechanism="hook"), "quiet", None))
+
+ZERO = dict(matches=0, sessions_matched=0, sessions_scanned=0, complete=True)
+
+
+class LedgerFiles(unittest.TestCase):
+    """Fake home for record/remove tests: HOME, collect.HOME and collect.CLAUDE all point at it,
+    so `~` in recorded paths never expands to the real home."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = self.tmp.name
+        self.claude = os.path.join(self.home, ".claude")
+        os.makedirs(self.claude)
+        env = mock.patch.dict(os.environ, {"HOME": self.home})
+        env.start()
+        self.addCleanup(env.stop)
+        import collect
+        for name, value in (("HOME", self.home), ("CLAUDE", self.claude)):
+            patcher = mock.patch.object(collect, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.md = self.put("proj/CLAUDE.md", "# Rules\n<!-- setup-audit:begin L-20260928-1 -->\n"
+                                            "Run the tests before saying done.\n"
+                                            "<!-- setup-audit:end L-20260928-1 -->\n")
+        self.settings = self.put(".claude/settings.json", json.dumps(
+            {"permissions": {"deny": ["Bash(rm -rf *)"]}, "hooks": {}}))
+        self.snapshot = dict(window_days=30, collection_scope=dict(requested="all", project=None, projects_collected=1))
+        self.report = dict(version=1, generated="2026-09-28T10:00:00Z", findings=[dict(id="LRN-corrections:tests")],
+                           metrics={}, applied=[])
+
+    def put(self, rel, text):
+        path = os.path.join(self.home, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def spec(self, **changes):
+        s = dict(id="L-20260928-1", finding_id="LRN-corrections:tests", pattern="Reports done without tests",
+                 mechanism="rule", selector=dict(KW),
+                 edits=[dict(file=self.md, kind="markdown_block", backup=None)])
+        s.update(changes)
+        return s
+
+    def record(self, book=None, spec=None, snapshot=None, report=None):
+        with mock.patch("collect.count_selector", return_value=dict(ZERO)):
+            return ledger.record(book or ledger.empty(), spec or self.spec(), snapshot or self.snapshot,
+                                 report or self.report, "r", 1_790_000_000)
+
+
+class Record(LedgerFiles):
+    def test_record_markdown_block_fingerprint_and_baseline(self):
+        with mock.patch("collect.count_selector", return_value=dict(matches=4, sessions_matched=3,
+                                                                     sessions_scanned=12, complete=True)):
+            book = ledger.record(ledger.empty(), self.spec(), self.snapshot, self.report, "2026-09-28-audit", 1_790_000_000)
+        e = book["entries"][0]
+        self.assertEqual(e["edits"][0]["sha256"], hashlib.sha256(b"Run the tests before saying done.\n").hexdigest())
+        self.assertTrue(e["edits"][0]["file"].startswith("~"))
+        self.assertEqual(e["baseline"]["sessions_matched"], 3)
+        self.assertEqual(e["scope"], dict(scope="all", project=None, window_days=30))
+        self.assertEqual((e["state"], e["observations"], e["run"]), ("active", [], "2026-09-28-audit"))
+
+    def test_markers_missing_or_duplicated_are_refused(self):
+        for text in ("# no markers\n",
+                     "<!-- setup-audit:begin L-20260928-1 -->\nx\n<!-- setup-audit:end L-20260928-1 -->\n" * 2,
+                     "<!-- setup-audit:end L-20260928-1 -->\nx\n<!-- setup-audit:begin L-20260928-1 -->\n"):
+            with open(self.md, "w") as f:
+                f.write(text)
+            with self.subTest(text=text[:30]), self.assertRaises(ledger.LedgerError) as caught:
+                ledger.record(ledger.empty(), self.spec(), self.snapshot, self.report, "r", 1_790_000_000)
+            self.assertEqual(caught.exception.input, "edited file")
+
+    def test_json_edits_store_parent_pointer_and_value_hash_only(self):
+        spec = self.spec(mechanism="setting", edits=[dict(file=self.settings, kind="json_array_append",
+                                                         pointer="/permissions/deny/0", backup=None)])
+        book = self.record(spec=spec)
+        edit = book["entries"][0]["edits"][0]
+        self.assertEqual(edit["pointer"], "/permissions/deny")
+        self.assertEqual(edit["sha256"], ledger.fingerprint("Bash(rm -rf *)"))
+        self.assertNotIn("rm -rf", json.dumps(book))
+
+    def test_unknown_finding_duplicate_id_and_bad_supersedes_refused(self):
+        with self.assertRaises(ledger.LedgerError):
+            self.record(spec=self.spec(finding_id="LRN-other"))
+        book = self.record()
+        with self.assertRaises(ledger.LedgerError):
+            self.record(book)
+        with self.assertRaises(ledger.LedgerError):
+            self.record(book, self.spec(id="L-20260928-2", supersedes="L-20260101-1"))
+
+    def test_supersedes_marks_old_entry(self):
+        book = self.record()
+        hook = self.put(".claude/hooks/check-tests.sh", "#!/bin/sh\n# setup-audit: L-20260928-2\nexit 0\n")
+        book = self.record(book, self.spec(id="L-20260928-2", mechanism="hook", supersedes="L-20260928-1",
+                                           edits=[dict(file=hook, kind="hook_script", backup=None)]))
+        self.assertEqual([e["state"] for e in book["entries"]], ["superseded", "active"])
+
+    def test_pattern_and_keywords_are_redacted(self):
+        secret = "ghp_" + "a" * 36
+        book = self.record(spec=self.spec(pattern="leaks " + secret, selector=dict(KW, any=[secret])))
+        self.assertNotIn(secret, json.dumps(book))
+
+    def test_metric_baseline_from_report(self):
+        sel = dict(type="metric", name="corrections_count_30d", basis="measured", unit="prompts", source="corrections.count")
+        report = dict(self.report, window_days=30, metrics={"corrections_count_30d": dict(
+            value=12, basis="measured", unit="prompts", source="corrections.count")},
+            coverage=dict(sources=[dict(source="corrections", status="collected", omitted=0)]))
+        book = ledger.record(ledger.empty(), self.spec(selector=sel), self.snapshot, report, "r", 1_790_000_000)
+        self.assertEqual(book["entries"][0]["baseline"]["value"], 12)
+        self.assertTrue(book["entries"][0]["baseline"]["complete"])
+
+    def test_wrong_typed_fields_raise_ledger_error_naming_the_input(self):
+        sel = dict(type="metric", name="m", basis="measured", unit="prompts", source="corrections.count")
+        cases = [
+            ("report", dict(self.report, findings="x"), self.snapshot, self.spec()),
+            ("report", dict(self.report, findings=["x", 3]), self.snapshot, self.spec()),
+            ("report", dict(self.report, metrics=[1]), self.snapshot, self.spec(selector=sel)),
+            ("report", dict(self.report, metrics={"m": dict(value=1, basis="measured", unit="prompts",
+                                                            source="corrections.count")},
+                            coverage="x"), self.snapshot, self.spec(selector=sel)),
+            ("report", dict(self.report, metrics={"m": dict(value=1, basis="measured", unit="prompts",
+                                                            source="corrections.count")},
+                            coverage=dict(sources=[3])), self.snapshot, self.spec(selector=sel)),
+            ("snapshot", self.report, dict(self.snapshot, collection_scope="x"), self.spec()),
+            ("snapshot", self.report, dict(self.snapshot, collection_scope=[]), self.spec()),
+            ("snapshot", self.report, dict(self.snapshot, collection_scope=dict(requested="project", project=None)),
+             self.spec()),
+            ("spec", self.report, self.snapshot, self.spec(edits=["x"])),
+            ("spec", self.report, self.snapshot, self.spec(edits="x")),
+            ("spec", self.report, self.snapshot, self.spec(supersedes=["L-1"])),
+            ("spec", self.report, self.snapshot, self.spec(finding_id=["x"])),
+            ("spec", self.report, self.snapshot, self.spec(selector="x")),
+            ("spec", self.report, self.snapshot, self.spec(pattern=5)),
+        ]
+        for label, report, snapshot, spec in cases:
+            with self.subTest(label=label, spec=str(spec)[:40]), mock.patch(
+                    "collect.count_selector", return_value=dict(ZERO)):
+                with self.assertRaises(ledger.LedgerError) as caught:
+                    ledger.record(ledger.empty(), spec, snapshot, report, "r", 1_790_000_000)
+                self.assertEqual(caught.exception.input, label)
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True,
+                              env=dict(os.environ, HOME=self.home))
+
+    def test_cli_next_id_and_record_write_private_ledger(self):
+        path = os.path.join(self.home, "audits", "ledger.json")
+        out = self.cli("next-id", "--ledger", path).stdout.strip()
+        self.assertRegex(out, r"^L-\d{8}-1$")
+        files = {}
+        for name, data in (("snap.json", self.snapshot), ("report.json", self.report),
+                           ("spec.json", self.spec(id=out, edits=[dict(file=self.settings, kind="json_set",
+                                                                       pointer="/permissions/deny", backup=None)]))):
+            files[name] = self.put(name, json.dumps(data))
+        run = self.cli("record", "--ledger", path, "--snapshot", files["snap.json"],
+                       "--report", files["report.json"], "--spec", files["spec.json"], "--claude-dir", self.claude)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(ledger.load(path)["entries"][0]["id"], out)
+
+    def test_cli_errors_name_input_and_leave_ledger_unchanged(self):
+        path = os.path.join(self.home, "audits", "ledger.json")
+        ledger.dump(ledger.empty(), path)
+        before = open(path).read()
+        bad = self.put("spec.json", '{"id": "sk-SECRET-VALUE"}')
+        snap = self.put("snap.json", json.dumps(self.snapshot))
+        rep = self.put("report.json", json.dumps(self.report))
+        run = self.cli("record", "--ledger", path, "--snapshot", snap, "--report", rep, "--spec", bad,
+                       "--claude-dir", self.claude)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("entry spec", run.stderr)
+        self.assertNotIn("SECRET", run.stderr)
+        self.assertEqual(open(path).read(), before)
+
+    def test_cli_non_object_json_inputs_fail_with_constant_message(self):
+        path = os.path.join(self.home, "audits", "ledger.json")
+        ledger.dump(ledger.empty(), path)
+        before = open(path).read()
+        good = {"snap": self.snapshot, "rep": self.report, "spec": self.spec()}
+        labels = {"snap": "snapshot", "rep": "current report", "spec": "entry spec"}
+        for which in good:
+            for bad in ('["SECRET-VALUE"]', '"SECRET-VALUE"', "3", "null"):
+                paths = {k: self.put(k + ".json", json.dumps(v)) for k, v in good.items()}
+                paths[which] = self.put(which + ".json", bad)
+                with self.subTest(which=which, bad=bad):
+                    run = self.cli("record", "--ledger", path, "--snapshot", paths["snap"], "--report", paths["rep"],
+                                   "--spec", paths["spec"], "--claude-dir", self.claude)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertIn("Ledger update failed. The " + labels[which], run.stderr)
+                    self.assertNotIn("SECRET", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+                    self.assertEqual(open(path).read(), before)
 
 
 if __name__ == "__main__":
