@@ -176,14 +176,19 @@ def loads(text, input='ledger'):
         raise
     except report_state.ReportError as exc:
         raise LedgerError(exc.message, input=input, line=exc.line) from None
+    except (ValueError, RecursionError):
+        raise LedgerError('invalid JSON', input=input) from None
 
 
 def load(path):
     require(not os.path.islink(path), 'ledger must not be a symlink')
     if not os.path.exists(path):
         return empty()
-    with open(path, encoding='utf-8') as stream:
-        text = stream.read(8 * 1024 * 1024 + 1)
+    try:
+        with open(path, encoding='utf-8') as stream:
+            text = stream.read(8 * 1024 * 1024 + 1)
+    except (UnicodeDecodeError, OSError):
+        raise LedgerError('ledger cannot be read') from None
     require(len(text) <= 8 * 1024 * 1024, 'ledger too large')
     return loads(text)
 

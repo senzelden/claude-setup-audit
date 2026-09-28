@@ -87,6 +87,24 @@ class Format(unittest.TestCase):
             ledger.loads('{"version": 1,\n "version": 1, "entries": []}')
         self.assertEqual(caught.exception.input, "ledger")
 
+    def test_unparseable_input_is_a_constant_ledger_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = os.path.join(tmp, "binary.json")
+            with open(binary, "wb") as stream:
+                stream.write(b"\xff\xfeSECRETBYTES")
+            folder = os.path.join(tmp, "dir.json")
+            os.mkdir(folder)
+            cases = [lambda: ledger.loads("[" * 100000),
+                     lambda: ledger.loads('{"version": ' + "9" * 5000 + "}"),
+                     lambda: ledger.load(binary),
+                     lambda: ledger.load(folder)]
+            for run in cases:
+                with self.assertRaises(ledger.LedgerError) as caught:
+                    run()
+                self.assertEqual(caught.exception.input, "ledger")
+                self.assertNotIn("SECRETBYTES", str(caught.exception))
+                self.assertNotIn("xff", str(caught.exception))
+
     def test_next_id_counts_per_day(self):
         book = dict(version=1, entries=[entry(id="L-20260928-1"), entry(id="L-20260928-7"),
                                         entry(id="L-20260927-9")])
