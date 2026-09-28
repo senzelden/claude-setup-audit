@@ -67,6 +67,10 @@ number is bumped in a release. New commits alone do not change what you get.
 
 ## Uninstall
 
+If the audit recorded learning fixes, ask Claude to run the setup-audit removal dry run first
+(`ledger.py remove --all`); it lists every edit the plugin made and removes only unchanged ones
+after you approve. Edits you changed since are listed for manual review.
+
 ```
 /plugin uninstall setup-audit@claude-setup-audit
 /plugin marketplace remove claude-setup-audit

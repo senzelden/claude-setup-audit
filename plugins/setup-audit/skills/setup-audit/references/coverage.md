@@ -38,6 +38,16 @@ work beyond the instruction/worktree and MCP/plugin inventories below (including
 overrides) stays explicitly unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
 
+## Learning ledger counts
+
+`ledger_signals` (from `collect.py --ledger`) counts post-fix matches per active, non-metric
+entry. `status` is `collected`; an unreadable or invalid ledger gives `invalid`, and an absent
+file counts as empty. Each entry's counts are `complete: false` when history has malformed lines
+or rows without a session id. Facet selectors are also incomplete when any facet is orphaned
+(no matching session metadata) or undated, a facet's `friction_counts` is malformed, or no facets
+exist; sessions with metadata but no facet are not a gap. Incomplete counts give an `unknown`
+verdict. See `ledger.md`.
+
 ## Instruction and working-directory inventory
 
 `instructions` records bounded excerpts, selected frontmatter as text, source scope, and unknown

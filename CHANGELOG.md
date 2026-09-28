@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Per-item learning ledger (`ledger.py`), post-fix selector counts in the collector (`--ledger`),
+  `trend.ledger` verdicts and escalation/retirement proposals, and dry-run-first removal of
+  recorded edits.
+
+### Changed
+
+- File-safety helpers moved to `safe_write.py`.
+
 ## [0.7.0] - 2026-09-28
 
 ### Added

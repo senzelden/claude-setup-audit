@@ -3,6 +3,14 @@
 Updated 2026-09-28. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
 
+## Unreleased
+
+- [x] Per-item learning ledger: applied learning fixes are recorded with the targeted pattern,
+  a pre-fix baseline and the edits made; later runs count post-fix recurrence, propose
+  escalation or removal, and can remove recorded edits after a dry run. v1 limits: no backfill
+  of earlier fixes, no regular-expression selectors, no tool-error source, and hooks are never
+  proposed for retirement.
+
 ## Shipped in 0.5.0
 
 - Bounded managed settings, instruction/worktree and MCP/plugin inventory, with explicit
@@ -78,12 +86,6 @@ Hosted validation passed all eight jobs at `b93e179`:
 - **Quality:** tune dead-reference, environment and cache-breaker heuristics; broaden the
   clarity corpus before considering default activation or automatic rewrites; measure collector
   performance before optimizing.
-- **Per-item learning ledger:** each applied fix records run id, targeted friction pattern,
-  evidence and chosen mechanism. The next run checks deterministically whether that specific
-  pattern recurred, proposes escalation (rule to hook) when it did not drop, and removal when
-  nothing triggers it. Edits the tool writes are marked so later audits and uninstall can tell
-  them from the user's. Builds on the lenient previous-report reading; extends
-  `LRN-effectiveness`, which today compares at report level. Needs its own design first.
 - **Self-modifying harness overhead:** detect plugins that inject skill indexes or run
   background reflection. Measure per-session injected tokens from transcripts (not only the
   current file-size estimate of `COST-startup-hooks`), their reflection/subagent spend, and

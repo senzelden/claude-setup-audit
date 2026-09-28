@@ -66,6 +66,15 @@ uses `transcripts.*`). Unsupported source labels, legacy metrics and partial sca
 Deltas are current minus previous, without a causal or improvement claim. HTML shows available
 comparisons and their limitations.
 
+## Learning ledger
+
+`--ledger <path>` and `--snapshot <path>` go together; either alone is an error. The snapshot
+must come from a collector run with `--ledger`. The processor adds `trend.ledger` rows (see
+`report-format.md`). The ledger file is written only with `--finalize`, and the write is
+idempotent per run: observations carry the report stem as run id (at most 120 characters, so the
+report file name must be short), and rerunning replaces that run's observation instead of adding a
+second. Failures name `ledger` or `snapshot` as the input. Details: `ledger.md`.
+
 ## Decisions
 
 Accepted formats: a JSON array or a YAML list of flat scalar maps using `id`, `reason`, `settled`,

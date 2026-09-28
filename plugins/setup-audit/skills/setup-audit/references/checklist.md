@@ -159,9 +159,10 @@ metric that motivated it, so the next run can check whether it moved.
   active without saying this.
 - **LRN-enforce**: a rule that exists in CLAUDE.md but keeps being violated (it recurs in corrections
   or friction) should become a hook.
-- **LRN-effectiveness** (previous `audit.json` `applied` + `metrics`): did the motivating metric
-  improve? If not, escalate the mechanism. If it's solved and quiet, consider retiring the rule to
-  save context.
+- **LRN-effectiveness** (`trend.ledger` from the ledger; report-level `applied` + `metrics` only
+  for fixes applied before the ledger existed). Act on processor proposals: escalate after two
+  consecutive `not_dropped` verdicts, retire quiet memory/rule entries. A verdict is not causal
+  proof.
 
 ## Hygiene (`HYG-`)
 

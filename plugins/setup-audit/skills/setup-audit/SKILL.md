@@ -86,6 +86,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --scope <scope> [--proj
   --out "$TMPDIR/setup-audit-snapshot.json"
 ```
 
+When `<report_dir>/ledger.json` exists, append `--ledger "<report_dir>/ledger.json"`. The
+collector only counts; it never writes the ledger. See `references/ledger.md`.
+
 **If this command — or Bash itself — fails to run at all** (permission denied, a sandbox/seccomp
 error, or any other failure before the collector produces output), tell the user up front, once,
 that the collector couldn't run (quote the error after redacting secret values) and that findings below come from reading
@@ -210,6 +213,9 @@ report from the same report directory; never infer resolution just because a fin
 For learning findings, use comparable metric deltas as evidence for whether an applied fix helped.
 A delta alone does not establish that the fix caused the change. The processor reads the previous
 report leniently (only `version` 1 and finding ids are required) and lists what it ignored in `trend.ignored`.
+For each `trend.ledger` row with a `proposal`, write a finding `LRN-effectiveness:<entry>`:
+`escalate` proposes `next_mechanism`, `retire` proposes `ledger.py remove --entry <id>`.
+`unknown`/`too_early` rows are reported, never acted on. See `references/ledger.md`.
 
 ## Step 4: Write Markdown, JSON and HTML reports
 
@@ -261,6 +267,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json"
 python3 ${CLAUDE_SKILL_DIR}/scripts/render_report.py "<report_dir>/<stem>.json"
 ```
 
+When a ledger exists or any LRN item may be applied, add
+`--ledger "<report_dir>/ledger.json" --snapshot <snapshot>` to the `process_report.py` command
+(the two flags go together). The ledger is written only with `--finalize`.
+
 This writes a private, self-contained sibling `<stem>.html`. If it fails, correct malformed input
 or report the failure; do not claim the HTML exists. The same temporary-directory fallback above
 applies to all three formats. Treat the report as private; do not upload it or launch a browser.
@@ -308,10 +318,24 @@ execute, follow the blocked-action guidance in Step 1 rather than manually editi
    in the report: files, backup paths, the verification you ran, and how to revert. Report
    skipped or failed items plainly. Update each finding’s `action_status` and regenerate the
    HTML from the updated JSON, so the linked report reflects the final results.
+9. **Ledger.** Before an approved LRN edit run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py next-id --ledger <ledger>` and write the markers
+   exactly as in `references/ledger.md`. After verifying the edit, write an entry spec to
+   `$TMPDIR` and run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py record --ledger <ledger> --snapshot <snapshot> --report <current.json> --spec <spec>`,
+   then add `ledger_entry` to the matching `applied` item. Escalations set `supersedes`. Do not
+   record non-LRN fixes.
 
 Offer to record declined items in `decisions.yaml` with a `review_after` date and the finding’s
 `evidence_hash` from finalized JSON, so the next run
 doesn't nag.
+
+## Removing tool-written edits
+
+Run `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py remove --ledger <ledger> --all` (a dry run)
+and show the user every row. Apply only after approval, with
+`--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`. List `modified` rows for manual
+review and never edit them. Statuses and reasons are in `references/ledger.md`.
 
 ## Boundaries
 

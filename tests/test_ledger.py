@@ -818,5 +818,34 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(rows[0]["verdict"], "unknown")
         self.assertEqual(new["entries"][0]["observations"], [])
 
+
+class Docs(unittest.TestCase):
+    ROOT = os.path.join(os.path.dirname(__file__), "..")
+    SKILL = os.path.join(ROOT, "plugins", "setup-audit", "skills", "setup-audit")
+
+    def read(self, *parts):
+        with open(os.path.join(*parts), encoding="utf-8") as f:
+            return f.read()
+
+    def test_skill_documents_every_ledger_command(self):
+        skill = self.read(self.SKILL, "SKILL.md")
+        for text in ("ledger.py next-id", "ledger.py record", "ledger.py remove", "--ledger", "--snapshot",
+                     "references/ledger.md"):
+            self.assertIn(text, skill)
+
+    def test_reference_matches_constants(self):
+        ref = self.read(self.SKILL, "references", "ledger.md")
+        for value in (str(ledger.MIN_SESSIONS), str(ledger.MIN_BASELINE), str(ledger.QUIET_DAYS),
+                      *ledger.STATES, *ledger.KINDS, *ledger.SOURCES, "fetched 2026-09-28"):
+            self.assertIn(value, ref)
+        self.assertNotIn("retired", ref)
+
+    def test_readme_uninstall_mentions_removal_dry_run(self):
+        readme = self.read(self.ROOT, "README.md")
+        section = readme.split("## Uninstall", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("ledger", section)
+        self.assertIn("dry run", section)
+
+
 if __name__ == "__main__":
     unittest.main()

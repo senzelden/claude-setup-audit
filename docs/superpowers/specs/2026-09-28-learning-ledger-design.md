@@ -93,7 +93,7 @@ constant messages that never quote values.
 ```
 
 - `mechanism`: `memory` | `rule` | `hook` | `skill` | `setting`.
-- `state`: `active` | `retired` | `removed` | `superseded`. Only `active` entries are counted.
+- `state`: `active` | `removed` | `superseded` (retirement is carried out with `remove`). Only `active` entries are counted.
 - `pattern`: at most 200 characters, passed through `collect.redact()`; model-written summary,
   never a quoted prompt.
 - Strict validation, like decisions: unknown top-level or entry fields fail. The ledger is the

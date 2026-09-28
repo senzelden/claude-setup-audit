@@ -70,6 +70,11 @@ A complete fictional example is in `examples/readable-audit.json` in the plugin 
 - For suppressed findings the processor includes `decision.reason` and `decision.review_after`. For each attempted
   action, append an object to `applied` with `id`, `status`, `files`, `backups`, `verification`,
   and `revert`. Update the finding's `action_status` and regenerate HTML after changes.
+- `applied[].ledger_entry` is an optional string: the ledger entry id recorded for that fix.
+  `trend.ledger` (added by the processor when run with `--ledger`) holds one row per active
+  entry: `entry`, `verdict`, `reason`, `proposal` (`escalate`, `retire` or null),
+  `next_mechanism`, and the counts `matches`, `sessions_matched`, `sessions_scanned`, `value`
+  (each may be null). See `ledger.md`.
 - Text is plain text, including evidence, diffs, commands and URLs. The renderer does not execute
   commands, interpret Markdown, activate URLs, fetch resources, or add model-written narrative.
   Use redacted evidence only; escaping HTML does not redact secrets.
