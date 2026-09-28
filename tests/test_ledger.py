@@ -699,6 +699,32 @@ class Remove(LedgerFiles):
         self.assertNotIn("setup-audit:begin", slurp(self.md))  # the edit did happen
         self.assertEqual(ledger.load(path), book)
 
+    def test_other_spellings_and_sibling_settings_keep_the_script(self):
+        hook, book = self.hook_book()
+        spellings = ["$HOME/.claude/hooks/check.sh", ".claude/hooks/check.sh",
+                     '"$CLAUDE_PROJECT_DIR"/.claude/hooks/check.sh']
+        for command in spellings:
+            with self.subTest(command=command):
+                doc = jload(self.settings)
+                doc["hooks"]["Other"] = [{"hooks": [{"type": "command", "command": command}]}]
+                with open(self.settings, "w") as f:
+                    json.dump(doc, f)
+                book, rows = ledger.apply_removal(book, ledger.plan_removal(book, ["L-20260928-1"]),
+                                                  self.backups(), self.home)
+                self.assertTrue(os.path.exists(hook))
+                self.assertEqual(rows[-1]["reason"], "registration_remains")
+                hook, book = self.hook_book()  # reset fixture
+        local = self.put(".claude/settings.local.json", json.dumps(
+            {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": hook}]}]}}))
+        rows = ledger.plan_removal(book, ["L-20260928-1"])
+        self.assertEqual((rows[-1]["kind"], rows[-1]["reason"]), ("hook_script", "registration_remains"))
+        book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
+        self.assertTrue(os.path.exists(hook))
+        self.assertEqual(book["entries"][0]["state"], "active")
+        os.unlink(local)
+        # the entry's own registration was removed above, so with the sibling gone the script is removable
+        self.assertEqual([r["status"] for r in ledger.plan_removal(book, ["L-20260928-1"])], ["absent", "removable"])
+
 
 if __name__ == "__main__":
     unittest.main()

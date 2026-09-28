@@ -498,20 +498,35 @@ def _strings(node):
             yield from _strings(value)
 
 
+def _settings_candidates(entry, script):
+    """Settings files that may register the script: those the entry edited, plus every settings*.json
+    directly inside the nearest ancestor `.claude` directory of the script."""
+    paths = [os.path.abspath(os.path.expanduser(e['file'])) for e in entry['edits'] if e['kind'].startswith('json_')]
+    folder = os.path.dirname(os.path.abspath(os.path.expanduser(script)))
+    while os.path.basename(folder) != '.claude' and os.path.dirname(folder) != folder:
+        folder = os.path.dirname(folder)
+    if os.path.basename(folder) == '.claude':
+        try:
+            names = sorted(n for n in os.listdir(folder) if n.startswith('settings') and n.endswith('.json'))
+        except OSError:
+            names = []
+        paths.extend(os.path.join(folder, n) for n in names)
+    return list(dict.fromkeys(paths))
+
+
 def _still_registered(entry, script):
-    """True when a settings file of the entry still mentions the hook script's path, ignoring the
-    elements this entry's own json_array_append edits would remove. Fails closed on unreadable files."""
-    names = {script, os.path.abspath(os.path.expanduser(script))}
-    for edit in entry['edits']:
-        if not edit['kind'].startswith('json_'):
-            continue
-        path = os.path.expanduser(edit['file'])
+    """True when a settings file may still register the hook script. Any string containing the
+    script's basename counts (so $HOME, relative and $CLAUDE_PROJECT_DIR spellings are caught); a
+    false positive only keeps the script. The elements this entry's own json_array_append edits
+    would remove are ignored; unreadable files fail closed."""
+    name = os.path.basename(script)
+    for path in _settings_candidates(entry, script):
         if not os.path.lexists(path):
             continue
         try:
             doc = read_json(path)
             for other in entry['edits']:
-                if other['kind'] == 'json_array_append' and other['file'] == edit['file']:
+                if other['kind'] == 'json_array_append' and os.path.abspath(os.path.expanduser(other['file'])) == path:
                     try:
                         array = resolve(doc, pointer_parts(other['pointer']))
                     except LedgerError:
@@ -522,7 +537,7 @@ def _still_registered(entry, script):
                         del array[hits[0]]
         except LedgerError:
             return True
-        if any(name in text for text in _strings(doc) for name in names):
+        if any(name in text for text in _strings(doc)):
             return True
     return False
 
