@@ -229,3 +229,52 @@ class AgentsMdInventory(FakeHome):
         (obs,) = self.scan()['agents_md_setting_observed']
         self.assertEqual(obs['value'], 'unrecognized')
         self.assertNotIn('SEKRET', str(obs))
+
+    def flags(self, result, cwd):
+        (context,) = [c for c in result['contexts'] if c['session_cwd'] == cwd]
+        return context['claude_md_family_present'], context['agents_md_present']
+
+    def test_flags_unknown_when_cwd_sits_under_a_symlinked_ancestor(self):
+        real = os.path.join(self.home, 'real')
+        os.makedirs(os.path.join(real, 'repo'))
+        os.symlink(real, os.path.join(self.home, 'link'))
+        cwd = os.path.join(self.home, 'link', 'repo')
+        result = self.scan([cwd], [inventory.git_context(cwd)])
+        self.assertEqual(self.flags(result, cwd), (None, None))
+
+    def test_flags_unknown_for_a_symlinked_project_root_with_instruction_files(self):
+        self.write('real/CLAUDE.md', 'x')
+        self.write('real/AGENTS.md', 'x')
+        os.symlink(os.path.join(self.home, 'real'), os.path.join(self.home, 'link'))
+        cwd = os.path.join(self.home, 'link')
+        result = self.scan([cwd], [inventory.git_context(cwd)])
+        self.assertEqual(self.flags(result, cwd), (None, None))
+
+    def test_unrelated_symlink_does_not_blur_flags(self):
+        self.write('repo/CLAUDE.md', 'x')
+        os.symlink(self.write('elsewhere/f.txt', 'x'), os.path.join(self.home, 'repo', 'link'))
+        cwd = os.path.join(self.home, 'repo')
+        self.assertEqual(self.flags(self.scan([cwd], [inventory.git_context(cwd)]), cwd), (True, False))
+
+    def test_directory_read_failure_makes_absent_flags_unknown(self):
+        cwd = os.path.join(self.home, 'repo')
+        os.makedirs(os.path.join(cwd, 'sub'))
+        self.write('repo/CLAUDE.md', 'x')
+        real_walk = os.walk
+        def walk(base, **kw):
+            kw['onerror'](OSError())
+            return real_walk(base, **kw)
+        with mock.patch.object(inventory.os, 'walk', walk):
+            result = self.scan([cwd], [inventory.git_context(cwd)])
+        self.assertEqual(self.flags(result, cwd), (True, None))
+
+    def test_settings_omissions_do_not_make_instruction_flags_unknown(self):
+        managed = os.path.join(self.home, 'managed')
+        for n in range(3):
+            self.write(f'managed/managed-settings.d/{n}.json', {})
+        cwd = os.path.join(self.home, 'repo')
+        os.makedirs(cwd)
+        with mock.patch.object(inventory, 'MANAGED_MAX_FILES', 1):
+            result = self.scan([cwd], [inventory.git_context(cwd)], managed)
+        self.assertTrue(any(s.get('reason') == 'file_limit' for s in result['sources']))
+        self.assertEqual(self.flags(result, cwd), (False, False))

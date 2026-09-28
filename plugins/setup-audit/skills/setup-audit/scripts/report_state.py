@@ -15,8 +15,8 @@ BASIS = {'measured', 'estimated', 'unknown'}
 class ReportError(ValueError):
     """Validation failure with a constant message; never built from input values.
 
-    `input` names the failing input ('report', 'previous', 'decisions') and `line` is set only
-    when the parser already knows it.
+    `input` names the failing input ('report', 'previous', 'decisions', 'as_of', or 'output' when
+    the result cannot be written) and `line` is set only when the parser already knows it.
     """
 
     def __init__(self, message, input=None, line=None):

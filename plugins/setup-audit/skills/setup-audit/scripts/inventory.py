@@ -100,20 +100,29 @@ def agents_md_setting(data):
     return value if value in INSTRUCTION_FILES_VALUES else 'unrecognized'
 
 
-def context_flags(contexts, entries, incomplete):
+def context_flags(contexts, entries, sources, incomplete):
     """Observed presence of instruction files in each cwd or above. Nothing here says what loads.
 
-    ~/.claude/CLAUDE.md and managed CLAUDE.md are user/managed entries and never count as a
-    CLAUDE-family file in scope. With incomplete collection an absent file is unknown (None).
+    Only entries whose status shows the file exists count as present. ~/.claude/CLAUDE.md and
+    managed CLAUDE.md are user/managed entries and never count as a CLAUDE-family file in scope.
+    An absent file is unknown (None) when the scan was incomplete, when a candidate path was
+    not_checked (symlink on its path), or when the cwd or one of its parents was skipped as a symlink.
     """
-    present = {e['source'] for e in entries if e['kind'] == 'instruction' and e['scope'] in ('project', 'ancestor')}
+    scoped = [e for e in entries if e['kind'] == 'instruction' and e['scope'] in ('project', 'ancestor')]
+    present = {e['source'] for e in scoped if e['status'] in ('collected', 'partial', 'unavailable')}
+    unchecked = {e['source'] for e in scoped if e['status'] == 'not_checked'}
+    skipped = {os.path.abspath(x['source']) for x in sources if x.get('reason') == 'symlink_not_followed'}
     result = []
     for context in contexts:
         dirs = [Path(context['session_cwd']), *Path(context['session_cwd']).parents]
+        blurred = incomplete or any(str(d) in skipped for d in dirs)
         flags = {}
         for key, names in (('claude_md_family_present', CLAUDE_FAMILY), ('agents_md_present', AGENTS_FILES)):
-            found = any(os.path.join(d, n) in present for d in dirs for n in names)
-            flags[key] = True if found else (None if incomplete else False)
+            paths = [os.path.join(d, n) for d in dirs for n in names]
+            if any(p in present for p in paths):
+                flags[key] = True
+            else:
+                flags[key] = None if blurred or any(p in unchecked for p in paths) else False
         result.append(dict(context, **flags))
     return result
 
@@ -196,6 +205,10 @@ def collect_instructions(home, claude, roots, contexts, managed_dir, redact, sum
             for rel in ('CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md', 'AGENTS.md',
                         '.claude/AGENTS.md'):
                 add(parent / rel, 'ancestor', 'instruction', context['session_cwd'])
+    # Only instruction-walk limits blur the context flags, not settings omissions recorded below.
+    incomplete = exhausted or any(x.get('status') == 'partial' and
+                                  x.get('reason') in ('scan_limit', 'file_limit', 'directory_read_failed')
+                                  for x in sources)
     observed = []
     setting_files = [('user', os.path.join(claude, 'settings.json'))]
     if managed_dir:
@@ -257,9 +270,7 @@ def collect_instructions(home, claude, roots, contexts, managed_dir, redact, sum
     if exhausted:
         sources.append(source('instruction files', 'all_collected_scopes', 'partial', reason='file_limit'))
     sources.extend(source(e['source'], e['scope'], e['status'], kind=e['kind']) for e in entries)
-    incomplete = exhausted or any(x.get('status') == 'partial' and x.get('reason') in ('scan_limit', 'file_limit')
-                                  for x in sources)
-    return dict(entries=entries, sources=sources, contexts=context_flags(contexts, entries, incomplete),
+    return dict(entries=entries, sources=sources, contexts=context_flags(contexts, entries, sources, incomplete),
                 settings_candidates=settings, agents_md_setting_observed=observed,
                 limitations=['Imports, symlink targets, runtime exclusions and actual loading are unverified.',
                              'AGENTS.md files and the agents-md instructionFiles setting are inventoried as observed '

@@ -44,10 +44,15 @@ Proposals are applied only when you approve them, with backups and verification.
 ## Update
 
 Third-party marketplaces do not auto-update by default. Refresh the listing, then update the
-plugin from a shell:
+plugin. In a Claude Code session:
 
 ```
 /plugin marketplace update claude-setup-audit
+```
+
+Then, from a shell:
+
+```
 claude plugin update setup-audit@claude-setup-audit
 ```
 
