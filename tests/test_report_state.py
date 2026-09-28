@@ -359,3 +359,29 @@ class PreviousAndInputErrors(unittest.TestCase):
         self.assertIn('cannot be written', message)
         self.assertNotIn('PRIVATE', message)
         self.assertNotIn('Input:', process_report.failure_message(ValueError('PRIVATE'), None))
+
+    def test_dropped_previous_coverage_source_makes_metrics_not_comparable(self):
+        for bad in (dict(source='transcripts.main_files.x', status='truncated'), 'PRIVATE'):
+            previous = self.report('2026-09-10')
+            previous['coverage']['sources'].append(bad)
+            out = state.finalize(self.report('2026-09-20'), previous)
+            self.assertTrue(out['trend']['comparable'])
+            self.assertFalse(out['trend']['metrics']['tokens']['comparable'])
+            self.assertNotIn('delta', out['trend']['metrics']['tokens'])
+        previous = self.report('2026-09-10')
+        previous['coverage']['sources'] = 'PRIVATE'
+        out = state.finalize(self.report('2026-09-20'), previous)
+        self.assertFalse(out['trend']['metrics']['tokens']['comparable'])
+        # Control: an intact previous still yields a delta.
+        out = state.finalize(self.report('2026-09-20'), self.report('2026-09-10'))
+        self.assertTrue(out['trend']['metrics']['tokens']['comparable'])
+
+    def test_same_file_error_is_labelled_current_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'r.json'
+            path.write_text(json.dumps(self.report()))
+            result = subprocess.run([sys.executable, str(Path(SCRIPTS) / 'process_report.py'), str(path),
+                                     '--previous', str(path), '--finalize'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('current report', result.stderr)
+        self.assertNotIn('Report processing', result.stderr)

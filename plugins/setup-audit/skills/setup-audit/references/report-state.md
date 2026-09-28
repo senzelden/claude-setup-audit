@@ -30,7 +30,8 @@ version does not define. It needs `version` 1 and, for each finding to count, a 
 fields (`severity`, `action_status`, `score`, `evidence`), `applied` entries, `checks` values,
 coverage sources, profile fields, an older `trend` shape, metrics, and a malformed or missing
 `generated`. Comparisons that need a dropped field become not comparable or unavailable, and
-data that was dropped never proves resolution. A finding without a usable id, or with a
+data that was dropped never proves resolution. If any previous coverage source is dropped, no
+metric is compared. A finding without a usable id, or with a
 duplicate id, is dropped.
 
 A finding status outside the history enum (for example `fixed`, `no_change_needed`, `partial`)
@@ -42,7 +43,7 @@ checks is skipped with no delta. `trend.ignored` records what was dropped: `find
 `applied[0].status`, `checks.NAME`, `generated`; `findings[N]` marks a finding dropped for its
 id). It never holds values. The current report and decisions stay strict.
 
-Failures name the input (current report, previous report, decisions file) and, when the parser
+Failures name the input (current report, previous report, decisions file, `--as-of` value) and, when the parser
 knows it, the line. Messages are constant text: they never quote input values.
 
 ## History and measurements

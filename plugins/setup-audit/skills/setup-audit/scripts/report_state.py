@@ -433,6 +433,8 @@ def finalize(current, previous=None, decisions=(), as_of=None):
     out = copy.deepcopy(current)
     out['findings'] = [f for f in out['findings'] if not f.get('comparison_generated')]
     same, reason = comparable(current, previous)
+    # A dropped previous coverage source may have been incomplete, so no metric may be compared.
+    lost_coverage = any(f == 'coverage' or f.startswith('coverage.sources') for f in ignored['fields'])
     prior = {f['id']: f for f in (previous or {}).get('findings', []) if 'id' in f}
     trend = dict(comparable=same, reason=reason, previous_generated=(previous or {}).get('generated'),
                  findings={'new': [], 'open': [], 'regressed': [], 'resolved': [], 'not_rechecked': []}, metrics={},
@@ -485,7 +487,7 @@ def finalize(current, previous=None, decisions=(), as_of=None):
         old = (previous or {}).get('metrics', {}).get(key)
         result = dict(comparable=False, reason='Comparable labeled values and complete source coverage required.')
         if same and isinstance(metric, dict) and isinstance(old, dict) and all(
-                metric.get(k) == old.get(k) and metric.get(k) is not None for k in ('basis', 'unit', 'source')) and metric.get('basis') != 'unknown' and finite(metric['value']) and finite(old.get('value')) and metric_coverage(current, metric) and metric_coverage(previous, old):
+                metric.get(k) == old.get(k) and metric.get(k) is not None for k in ('basis', 'unit', 'source')) and metric.get('basis') != 'unknown' and finite(metric['value']) and finite(old.get('value')) and metric_coverage(current, metric) and not lost_coverage and metric_coverage(previous, old):
             delta = metric['value'] - old['value']
             if finite(delta):
                 result = dict(comparable=True, previous=old['value'], current=metric['value'],

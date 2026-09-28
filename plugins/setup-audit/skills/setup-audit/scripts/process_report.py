@@ -72,7 +72,7 @@ def main():
         result = report_state.finalize(current, previous, decisions, args.as_of)
         if args.finalize:
             if args.previous and os.path.realpath(args.previous) == os.path.realpath(args.report):
-                raise report_state.ReportError('current and previous reports must differ')
+                raise report_state.ReportError('current and previous reports must differ', input='report')
             stage = 'output'
             write(args.report, result)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
