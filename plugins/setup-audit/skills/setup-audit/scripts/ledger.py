@@ -486,6 +486,47 @@ def _previous_value(edit):
         raise
 
 
+def _strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from _strings(key)
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _strings(value)
+
+
+def _still_registered(entry, script):
+    """True when a settings file of the entry still mentions the hook script's path, ignoring the
+    elements this entry's own json_array_append edits would remove. Fails closed on unreadable files."""
+    names = {script, os.path.abspath(os.path.expanduser(script))}
+    for edit in entry['edits']:
+        if not edit['kind'].startswith('json_'):
+            continue
+        path = os.path.expanduser(edit['file'])
+        if not os.path.lexists(path):
+            continue
+        try:
+            doc = read_json(path)
+            for other in entry['edits']:
+                if other['kind'] == 'json_array_append' and other['file'] == edit['file']:
+                    try:
+                        array = resolve(doc, pointer_parts(other['pointer']))
+                    except LedgerError:
+                        continue
+                    hits = [i for i, x in enumerate(array) if fingerprint(x) == other['sha256']] \
+                        if isinstance(array, list) else []
+                    if len(hits) == 1:
+                        del array[hits[0]]
+        except LedgerError:
+            return True
+        if any(name in text for text in _strings(doc) for name in names):
+            return True
+    return False
+
+
 def plan_edit(entry, index):
     edit = entry['edits'][index]
     path = os.path.expanduser(edit['file'])
@@ -507,6 +548,8 @@ def plan_edit(entry, index):
             if not any(e['kind'] == 'json_array_append' for e in entry['edits']):
                 return row('blocked', 'registration_unrecorded')
             same = hashlib.sha256(read_text(path)).hexdigest() == edit['sha256']
+            if same and _still_registered(entry, edit['file']):
+                return row('blocked', 'registration_remains')
             return row('removable' if same else 'modified', '' if same else 'hash_mismatch')
         if kind == 'markdown_block':
             text = read_text(path).decode('utf-8', 'replace')
@@ -526,7 +569,9 @@ def plan_edit(entry, index):
         if kind == 'json_array_append':
             if not isinstance(node, list):
                 return row('modified', 'not_an_array')
-            found = any(fingerprint(x) == edit['sha256'] for x in node)
+            found = sum(fingerprint(x) == edit['sha256'] for x in node)
+            if found > 1:
+                return row('modified', 'ambiguous_duplicate')
             return row('removable' if found else 'absent', '' if found else 'value_missing')
         if fingerprint(node) != edit['sha256']:
             return row('modified', 'hash_mismatch')
@@ -562,10 +607,10 @@ def _remove_json(doc, edit):
     parts = pointer_parts(edit['pointer'])
     if edit['kind'] == 'json_array_append':
         array = resolve(doc, parts)
-        for i, item in enumerate(array):
-            if fingerprint(item) == edit['sha256']:
-                del array[i]
-                return
+        hits = [i for i, item in enumerate(array) if fingerprint(item) == edit['sha256']]
+        require(len(hits) <= 1, 'ambiguous duplicate', input='edited file')
+        if hits:
+            del array[hits[0]]
         return
     parent = resolve(doc, parts[:-1])
     key = int(parts[-1]) if isinstance(parent, list) else parts[-1]
@@ -650,16 +695,18 @@ def _apply_file(book, group, path, backup_dir, home):
             doc = report_state.load_json(before.decode('utf-8'))
             for entry, index in planned:
                 _remove_json(doc, entry['edits'][index])
-            new_text = json.dumps(doc, indent=2) + '\n'
+            new_text = json.dumps(doc, indent=2, ensure_ascii=False) + '\n'
             json.loads(new_text)
     except (LedgerError, report_state.ReportError, UnicodeDecodeError, ValueError, RecursionError,
             KeyError, TypeError, IndexError):
         return _block(group, 'changed_since_plan')
+    if new_text is None and any(_still_registered(e, e['edits'][i]['file']) for e, i in planned):
+        return _block(group, 'registration_remains')
     try:
         if new_text is None:
             os.unlink(path)
         else:
-            safe_write.atomic_write(path, new_text, prefix='.ledger.')
+            safe_write.atomic_write(path, new_text, prefix='.ledger.', encoding='utf-8')
     except OSError:
         return _block(group, 'write_failed')
     for r, (entry, index) in zip(group, planned):
@@ -730,7 +777,7 @@ def main(argv=None):
     p.add_argument('--backup-dir')
     args = parser.parse_args(argv)
     if args.command == 'remove' and args.apply and not args.backup_dir:
-        parser.error('--apply requires --backup-dir')
+        fail(parser, LedgerError('--apply requires --backup-dir', input='input'))
     try:
         book = load(args.ledger)
         if args.command == 'remove':
@@ -738,9 +785,13 @@ def main(argv=None):
                 e['id'] for e in book['entries'] if e['state'] != 'removed']
             rows = plan_removal(book, ids)
             if args.apply:
-                book, rows = apply_removal(book, rows, os.path.abspath(os.path.expanduser(args.backup_dir)),
-                                           os.path.expanduser('~'))
-                dump(book, args.ledger)
+                try:
+                    book, rows = apply_removal(book, rows, os.path.abspath(os.path.expanduser(args.backup_dir)),
+                                               os.path.expanduser('~'))
+                    dump(book, args.ledger)
+                except (report_state.ReportError, OSError, ValueError, TypeError, KeyError):
+                    parser.exit(1, 'Ledger update failed after files were changed. Backups are in the backup '
+                                   'directory; the ledger was not updated.\n')
             for row in rows:
                 row.pop('_identity', None)
             print(json.dumps(rows, indent=2))

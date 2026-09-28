@@ -40,7 +40,7 @@ def identity_of(st):
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
-def atomic_write(target, text, prefix=".prune_permissions."):
+def atomic_write(target, text, prefix=".prune_permissions.", encoding=None):
     """Write text to path without ever leaving it truncated or partially written.
 
     The caller supplies the target used for identity verification. Never resolve a symlink here:
@@ -49,7 +49,7 @@ def atomic_write(target, text, prefix=".prune_permissions."):
     dirpath = os.path.dirname(target) or "."
     fd, tmp = tempfile.mkstemp(prefix=prefix, dir=dirpath)
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())

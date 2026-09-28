@@ -1,6 +1,8 @@
 """Ledger format, strict validation, ids and verdict rules. Pure functions; fake paths only."""
+import contextlib
 import copy
 import datetime
+import io
 import hashlib
 import json
 import os
@@ -17,6 +19,16 @@ import ledger
 SCOPE = dict(scope="all", project=None, window_days=30)
 KW = dict(type="keywords", source="corrections", any=["run the tests"])
 SCRIPT = os.path.join(SCRIPTS, "ledger.py")
+
+
+def slurp(path, mode="r"):
+    with open(path, mode) as stream:
+        return stream.read()
+
+
+def jload(path):
+    with open(path) as stream:
+        return json.load(stream)
 
 
 def counts(matched, scanned, matches=None, start="2026-09-01T00:00:00Z", end="2026-09-28T00:00:00Z"):
@@ -361,7 +373,7 @@ class Record(LedgerFiles):
     def test_cli_errors_name_input_and_leave_ledger_unchanged(self):
         path = os.path.join(self.home, "audits", "ledger.json")
         ledger.dump(ledger.empty(), path)
-        before = open(path).read()
+        before = slurp(path)
         bad = self.put("spec.json", '{"id": "sk-SECRET-VALUE"}')
         snap = self.put("snap.json", json.dumps(self.snapshot))
         rep = self.put("report.json", json.dumps(self.report))
@@ -370,12 +382,12 @@ class Record(LedgerFiles):
         self.assertNotEqual(run.returncode, 0)
         self.assertIn("entry spec", run.stderr)
         self.assertNotIn("SECRET", run.stderr)
-        self.assertEqual(open(path).read(), before)
+        self.assertEqual(slurp(path), before)
 
     def test_cli_non_object_json_inputs_fail_with_constant_message(self):
         path = os.path.join(self.home, "audits", "ledger.json")
         ledger.dump(ledger.empty(), path)
-        before = open(path).read()
+        before = slurp(path)
         good = {"snap": self.snapshot, "rep": self.report, "spec": self.spec()}
         labels = {"snap": "snapshot", "rep": "current report", "spec": "entry spec"}
         for which in good:
@@ -389,7 +401,7 @@ class Record(LedgerFiles):
                     self.assertIn("Ledger update failed. The " + labels[which], run.stderr)
                     self.assertNotIn("SECRET", run.stderr)
                     self.assertNotIn("Traceback", run.stderr)
-                    self.assertEqual(open(path).read(), before)
+                    self.assertEqual(slurp(path), before)
 
 
 class Remove(LedgerFiles):
@@ -413,9 +425,9 @@ class Remove(LedgerFiles):
         rows = ledger.plan_removal(book, ["L-20260928-1"])
         self.assertEqual([r["status"] for r in rows], ["removable"])
         self.assertEqual(rows[0]["edit"], 0)
-        self.assertIn("setup-audit:begin", open(self.md).read())  # plan changed nothing
+        self.assertIn("setup-audit:begin", slurp(self.md))  # plan changed nothing
         book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
-        self.assertEqual(open(self.md).read(), before)
+        self.assertEqual(slurp(self.md), before)
         self.assertEqual(rows[0]["status"], "removed")
         self.assertTrue(os.path.exists(rows[0]["backup"]))
         self.assertEqual(book["entries"][0]["state"], "removed")
@@ -431,7 +443,7 @@ class Remove(LedgerFiles):
         rows = ledger.plan_removal(book, ["L-20260928-1"])
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("modified", "hash_mismatch"))
         book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
-        self.assertEqual(open(self.md, "rb").read(), data.replace(b"\n", b"\r\n"))
+        self.assertEqual(slurp(self.md, "rb"), data.replace(b"\n", b"\r\n"))
         self.assertEqual(book["entries"][0]["state"], "active")
 
     def test_missing_file_is_absent_and_entry_closes(self):
@@ -447,7 +459,7 @@ class Remove(LedgerFiles):
             f.write("<!-- setup-audit:begin L-20260928-2 -->\nKeep me.\n<!-- setup-audit:end L-20260928-2 -->\n")
         book = self.recorded(self.spec(), self.spec(id="L-20260928-2"))
         book, _ = self.remove(book)
-        self.assertEqual(open(self.md).read(), "# Rules\n<!-- setup-audit:begin L-20260928-2 -->\nKeep me.\n"
+        self.assertEqual(slurp(self.md), "# Rules\n<!-- setup-audit:begin L-20260928-2 -->\nKeep me.\n"
                                                "<!-- setup-audit:end L-20260928-2 -->\n")
         self.assertEqual([e["state"] for e in book["entries"]], ["removed", "active"])
 
@@ -465,7 +477,7 @@ class Remove(LedgerFiles):
         book, rows = self.remove(book)
         self.assertEqual([r["status"] for r in rows], ["removed", "removed"])
         self.assertFalse(os.path.exists(hook))
-        self.assertEqual(json.load(open(self.settings)), {"permissions": {"deny": ["Bash(rm -rf *)"]},
+        self.assertEqual(jload(self.settings), {"permissions": {"deny": ["Bash(rm -rf *)"]},
                                                           "hooks": {"PreToolUse": []}})
 
     def test_hook_script_blocked_when_registration_removal_blocked(self):
@@ -495,7 +507,7 @@ class Remove(LedgerFiles):
         os.rename(backup + ".gone", backup)
         book, rows = self.remove(book)
         self.assertEqual(rows[0]["status"], "removed")
-        self.assertEqual(json.load(open(self.settings)), {"model": "sonnet", "env": {}})
+        self.assertEqual(jload(self.settings), {"model": "sonnet", "env": {}})
 
     def test_json_set_without_backup_deletes_key(self):
         with open(self.settings, "w") as f:
@@ -504,7 +516,7 @@ class Remove(LedgerFiles):
             dict(file=self.settings, kind="json_set", pointer="/model", backup=None)]))
         book, rows = self.remove(book)
         self.assertEqual(rows[0]["status"], "removed")
-        self.assertEqual(json.load(open(self.settings)), {})
+        self.assertEqual(jload(self.settings), {})
 
     def test_two_appends_to_the_same_array_in_one_entry_are_both_removed(self):
         with open(self.settings, "w") as f:
@@ -516,7 +528,7 @@ class Remove(LedgerFiles):
         self.assertEqual([r["edit"] for r in rows], [0, 1])
         book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
         self.assertEqual([r["status"] for r in rows], ["removed", "removed"])
-        self.assertEqual(json.load(open(self.settings)), {"permissions": {"deny": ["Bash(rm -rf *)"]}})
+        self.assertEqual(jload(self.settings), {"permissions": {"deny": ["Bash(rm -rf *)"]}})
         self.assertEqual(len(os.listdir(self.backups())), 1)  # one backup per file
         self.assertEqual(rows[0]["backup"], rows[1]["backup"])
 
@@ -535,12 +547,12 @@ class Remove(LedgerFiles):
             f.write("user line\n")
         book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("blocked", "changed_since_plan"))
-        self.assertIn("setup-audit:begin", open(self.md).read())
+        self.assertIn("setup-audit:begin", slurp(self.md))
 
     def test_failed_backup_blocks_the_edit_and_other_files_continue(self):
         book = self.recorded(self.spec(), self.spec(id="L-20260928-2", mechanism="setting", edits=[
             dict(file=self.settings, kind="json_array_append", pointer="/permissions/deny/0", backup=None)]))
-        before = open(self.md).read()
+        before = slurp(self.md)
         real = ledger.safe_write.backup_from_fd
 
         def flaky(fd, path, backup_dir, home):
@@ -552,17 +564,17 @@ class Remove(LedgerFiles):
         with mock.patch.object(ledger.safe_write, "backup_from_fd", side_effect=flaky):
             book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("blocked", "backup_failed"))
-        self.assertEqual(open(self.md).read(), before)
+        self.assertEqual(slurp(self.md), before)
         self.assertEqual(rows[1]["status"], "removed")
         self.assertEqual([e["state"] for e in book["entries"]], ["active", "removed"])
 
     def test_failed_write_blocks_the_edit_and_leaves_file(self):
         book = self.recorded(self.spec())
-        before = open(self.md).read()
+        before = slurp(self.md)
         with mock.patch.object(ledger.safe_write, "atomic_write", side_effect=OSError("read-only")):
             book, rows = self.remove(book)
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("blocked", "write_failed"))
-        self.assertEqual(open(self.md).read(), before)
+        self.assertEqual(slurp(self.md), before)
         self.assertEqual(book["entries"][0]["state"], "active")
 
     def test_apply_rejects_rows_without_plan_identity(self):
@@ -572,7 +584,7 @@ class Remove(LedgerFiles):
             r.pop("_identity")
         book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
         self.assertEqual(rows[0]["reason"], "changed_since_plan")
-        self.assertIn("setup-audit:begin", open(self.md).read())
+        self.assertIn("setup-audit:begin", slurp(self.md))
 
     def test_unknown_entry_id_is_a_ledger_error(self):
         with self.assertRaises(ledger.LedgerError):
@@ -617,9 +629,75 @@ class Remove(LedgerFiles):
         self.assertIn("Ledger update failed", run.stderr)
         self.assertNotIn("Traceback", run.stderr)
         run = self.cli("remove", "--ledger", path, "--all", "--apply")
-        self.assertEqual(run.returncode, 2)
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("Ledger update failed", run.stderr)
         self.assertIn("--backup-dir", run.stderr)
-        self.assertIn("setup-audit:begin", open(self.md).read())
+        self.assertIn("setup-audit:begin", slurp(self.md))
+
+    def test_hook_script_survives_when_registration_was_edited(self):
+        hook, book = self.hook_book()
+        registration = jload(self.settings)
+        registration["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 9  # user edited the group
+        with open(self.settings, "w") as f:
+            json.dump(registration, f)
+        rows = ledger.plan_removal(book, ["L-20260928-1"])
+        self.assertEqual([(r["kind"], r["status"], r["reason"]) for r in rows],
+                         [("json_array_append", "absent", "value_missing"),
+                          ("hook_script", "blocked", "registration_remains")])
+        book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
+        self.assertTrue(os.path.exists(hook))
+        self.assertEqual(jload(self.settings), registration)
+        self.assertEqual(book["entries"][0]["state"], "active")
+
+    def test_hook_registration_appearing_after_plan_blocks_the_unlink(self):
+        hook, book = self.hook_book()
+        rows = ledger.plan_removal(book, ["L-20260928-1"])
+        self.assertEqual([r["status"] for r in rows], ["removable", "removable"])
+        registered = jload(self.settings)
+        registered["hooks"]["Other"] = [{"hooks": [{"type": "command", "command": hook}]}]
+        with open(self.settings, "w") as f:
+            json.dump(registered, f)
+        book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
+        self.assertTrue(os.path.exists(hook))
+        self.assertEqual(rows[1]["status"], "blocked")
+
+    def test_duplicate_appended_values_are_ambiguous_and_untouched(self):
+        with open(self.settings, "w") as f:
+            json.dump({"permissions": {"deny": ["Read(.env)", "Read(.env)"]}}, f)
+        book = self.recorded(self.spec(mechanism="setting", edits=[
+            dict(file=self.settings, kind="json_array_append", pointer="/permissions/deny/0", backup=None)]))
+        before = slurp(self.settings)
+        rows = ledger.plan_removal(book, ["L-20260928-1"])
+        self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("modified", "ambiguous_duplicate"))
+        book, rows = ledger.apply_removal(book, rows, self.backups(), self.home)
+        self.assertEqual(slurp(self.settings), before)
+        self.assertEqual(book["entries"][0]["state"], "active")
+
+    def test_non_ascii_settings_survive_a_json_rewrite_as_utf8(self):
+        with open(self.settings, "w", encoding="utf-8") as f:
+            json.dump({"note": "caf\u00e9 \u2603", "permissions": {"deny": ["Read(.env)"]}}, f, ensure_ascii=False)
+        book = self.recorded(self.spec(mechanism="setting", edits=[
+            dict(file=self.settings, kind="json_array_append", pointer="/permissions/deny/0", backup=None)]))
+        book, rows = self.remove(book)
+        self.assertEqual(rows[0]["status"], "removed")
+        raw = slurp(self.settings, "rb")
+        self.assertIn("caf\u00e9 \u2603".encode("utf-8"), raw)
+        self.assertNotIn(b"\\u00e9", raw)
+
+    def test_cli_failure_after_files_changed_says_so(self):
+        book = self.recorded(self.spec())
+        path = os.path.join(self.home, "audits", "ledger.json")
+        ledger.dump(book, path)
+        err = io.StringIO()
+        with mock.patch.object(ledger, "dump", side_effect=OSError("disk full")), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaises(SystemExit) as caught:
+            ledger.main(["remove", "--ledger", path, "--all", "--apply", "--backup-dir", self.backups()])
+        self.assertEqual(caught.exception.code, 1)
+        self.assertIn("after files were changed", err.getvalue())
+        self.assertNotIn("Nothing was changed", err.getvalue())
+        self.assertNotIn("setup-audit:begin", slurp(self.md))  # the edit did happen
+        self.assertEqual(ledger.load(path), book)
 
 
 if __name__ == "__main__":
