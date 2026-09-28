@@ -43,6 +43,22 @@ Version-sensitive commands checked 2026-09-16 against the installed CLI help and
 [plugin validation reference](https://code.claude.com/docs/en/plugins-reference) and
 [versioned native installation instructions](https://code.claude.com/docs/en/setup#install-a-specific-version).
 
+## Coverage
+
+CI enforces a coverage floor of 88% over the bundled scripts (`.coveragerc`). The floor is not
+a target; the README badge states the same number, so raise both in one commit. Measured
+2026-09-28 with coverage 7.16.2: 88.49% (2,059 statements, 237 missed). `patch = subprocess`
+needs coverage 7.10 or newer; it counts scripts that tests run as subprocesses. Without it the
+figure is about 83%. To reproduce locally:
+
+```sh
+uvx --from coverage==7.16.2 coverage run -m unittest discover -s tests
+uvx --from coverage==7.16.2 coverage combine
+uvx --from coverage==7.16.2 coverage report --fail-under=88
+```
+
+Coverage data files (`.coverage`, `.coverage.*`) are git-ignored.
+
 Paid trigger/quality evaluations are separate; see
 [evals/README.md](../plugins/setup-audit/evals/README.md).
 

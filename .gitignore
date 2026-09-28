@@ -8,3 +8,6 @@ snapshot*.json
 !plugins/setup-audit/skills/setup-audit/references/snapshot.schema.json
 # claude plugin eval run output
 plugins/*/evals/results/
+# coverage data
+.coverage
+.coverage.*

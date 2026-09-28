@@ -39,6 +39,31 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: python3 tests/check_snapshot_schema.py -v
 
+  # Coverage floor, not a target. The README badge states the same number: raise the floor and
+  # the badge in the same commit. Measured 2026-09-28 with coverage 7.16.2: 88.49% (2,059
+  # statements, 237 missed), counting scripts that tests run as subprocesses (patch = subprocess
+  # in .coveragerc, needs coverage 7.10+).
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install coverage (CI only)
+        run: python3 -m pip install coverage==7.16.2
+      - name: Run regression suite under coverage
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python3 -m coverage run -m unittest discover -s tests
+      - name: Combine data from subprocesses
+        run: python3 -m coverage combine
+      - name: Enforce coverage floor
+        run: python3 -m coverage report --fail-under=88
+
   plugin:
     runs-on: ubuntu-latest
     timeout-minutes: 10

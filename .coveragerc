@@ -1,0 +1,4 @@
+[run]
+source = plugins/setup-audit/skills/setup-audit/scripts
+patch = subprocess
+parallel = true
