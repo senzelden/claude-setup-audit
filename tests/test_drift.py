@@ -219,3 +219,45 @@ class Compare(unittest.TestCase):
         self.assertIsNone(drift.comparable(entries[1:], META, 'skill_listing_chars'))
         self.assertEqual(drift.comparable(entries, META, 'skill_listing_chars'), {'value': 0, 'complete': True})
         self.assertEqual(self.run_compare(snapshot(), entries), [])
+
+
+class CorruptLog(unittest.TestCase):
+    run_compare = Compare.run_compare
+    entry = Compare.entry
+
+    def corrupt(self, **signals):
+        return {'version': 1, 'at': 'x', **META, 'signals': signals, 'crossings': []}
+
+    def test_corrupt_previous_shapes_never_crash(self):
+        now = snapshot()
+        now['global']['settings'] = []
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 99999
+        bad = self.corrupt(broad_permissions={'count': 5, 'fingerprints': 3},
+                           skill_listing_chars={'value': 'x', 'complete': True},
+                           injected_tokens={'value': True, 'plugin': 'p@m', 'hook_event': 'SessionStart'})
+        self.assertEqual(self.run_compare(now, [bad]), [])
+        for junk in (5, 'x', [1], True):
+            entry = self.corrupt(broad_permissions=junk, skill_listing_chars=junk, injected_tokens=junk)
+            self.assertEqual(self.run_compare(now, [entry]), [])
+        self.assertEqual(self.run_compare(now, [{'signals': 7, **META}]), [])
+
+    def test_corrupt_latest_falls_back_to_earlier_dict(self):
+        good = self.entry(snapshot())
+        bad = self.corrupt(skill_listing_chars=5)
+        now = snapshot()
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 20000
+        self.assertEqual([c['signal'] for c in self.run_compare(now, [good, bad])], ['skill_listing_chars'])
+
+    def test_injected_growth_fires(self):
+        before = self.entry(snapshot())
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 1000
+        self.assertEqual(self.run_compare(now, [before]), [
+            {'signal': 'injected_tokens', 'kind': 'growth', 'value': 1000, 'previous': 800,
+             'fraction': 0.25, 'threshold': 0.25}])
+
+    def test_incomplete_does_not_suppress_cache_crossing(self):
+        snap = snapshot(transcripts={'cache': {'hit_ratio': 0.5}},
+                        coverage={'sources': [{'source': 'transcripts.main_files', 'status': 'partial'}]})
+        crossings = self.run_compare(snap)
+        self.assertEqual([(c['signal'], c['kind']) for c in crossings], [('cache_hit_ratio', 'below_min')])

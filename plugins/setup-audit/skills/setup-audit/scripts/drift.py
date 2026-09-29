@@ -52,11 +52,17 @@ def derive(snap, global_claude_md):
 
 
 def comparable(entries, meta, name):
-    """The signal from the most recent entry with the same scope, project and window, if not null."""
+    """The signal from the most recent entry with the same scope, project and window, if a dict."""
     for e in reversed(entries):
-        if all(e.get(k) == meta[k] for k in META_KEYS) and (e.get('signals') or {}).get(name) is not None:
-            return e['signals'][name]
+        signals = e.get('signals')
+        if all(e.get(k) == meta[k] for k in META_KEYS) and isinstance(signals, dict) \
+                and isinstance(signals.get(name), dict):
+            return signals[name]
     return None
+
+
+def _number(x):
+    return type(x) in (int, float)
 
 
 def compare(signals, fingerprint_paths, entries, meta, thresholds):
@@ -66,12 +72,14 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
             crossings.append({'signal': 'claude_md', 'kind': 'above_max', 'path': path, 'value': v['lines'],
                               'threshold': thresholds['claude_md_max_lines']})
     cache = signals['cache_hit_ratio']
-    if cache and cache['value'] < thresholds['cache_hit_min']:
+    if cache and _number(cache.get('value')) and cache['value'] < thresholds['cache_hit_min']:
         crossings.append({'signal': 'cache_hit_ratio', 'kind': 'below_min', 'value': cache['value'],
                           'threshold': thresholds['cache_hit_min']})
     previous = comparable(entries, meta, 'broad_permissions')
     if previous is not None:
-        new = sorted(set(signals['broad_permissions']['fingerprints']) - set(previous.get('fingerprints') or []))
+        before_fps = previous.get('fingerprints')
+        before_fps = {f for f in before_fps if isinstance(f, str)} if isinstance(before_fps, list) else set()
+        new = sorted(set(signals['broad_permissions']['fingerprints']) - before_fps)
         if new:
             crossings.append({'signal': 'broad_permissions', 'kind': 'new', 'fingerprints': new,
                               'paths': sorted({fingerprint_paths[f] for f in new if fingerprint_paths.get(f)})})
@@ -83,7 +91,7 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
                 previous.get('plugin'), previous.get('hook_event')):
             continue
         before = previous.get('value')
-        if type(before) not in (int, float) or before <= 0:
+        if not _number(before) or not _number(current.get('value')) or before <= 0:
             continue
         fraction = (current['value'] - before) / before
         if fraction >= thresholds['growth_min']:
