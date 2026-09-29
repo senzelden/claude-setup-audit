@@ -94,6 +94,66 @@ RISKY_RULES = [
     ("secret-via-env-file", re.compile(r"\$\\?\(.*\.env\b|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\S*\s+\S*\.env\b")),
     ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
 ]
+# permissions.md "Wildcard patterns" / "Match by input parameter" and errors.md "Has a wildcard before
+# the rest of the command", fetched 2026-09-29. See references/checklist.md SEC-wildcard-placement.
+PRIMARY_FIELD_RULE = re.compile(r"(?:(?:Bash|PowerShell)\(\s*command|(?:Read|Edit|Write)\(\s*file_path"
+                                r"|(?:Grep|Glob)\(\s*path|NotebookEdit\(\s*notebook_path|WebFetch\(\s*url)\s*:")
+FAIL_OPEN = ("colon-star-literal", "ignored-primary-field", "mcp-rule-with-parentheses")
+# Deny/ask shapes that over-match fail closed (errors.md), so only fail-open shapes are kept there.
+RULE_SHAPE_LISTS = {
+    "allow": ("wildcard-before-subcommand", "wildcard-program", "star-joined-to-program",
+              "colon-star-literal", "mcp-rule-with-parentheses"),
+    "ask": FAIL_OPEN,
+    "deny": FAIL_OPEN,
+}
+
+
+def rule_shape_flags(rule):
+    """Every documented misleading shape of one rule; rule_shape_issues keeps those relevant per list."""
+    flags = set()
+    rule = rule.strip()
+    if rule.startswith("mcp__") and "(" in rule:
+        flags.add("mcp-rule-with-parentheses")
+    if PRIMARY_FIELD_RULE.match(rule):
+        flags.add("ignored-primary-field")
+    m = re.fullmatch(r"Bash\((.*)\)", rule, re.S)
+    if not m:
+        return flags
+    body = m.group(1).strip()
+    if body.endswith(":*"):
+        body = body[:-2]  # a trailing :* is the documented prefix form
+    if ":*" in body:
+        flags.add("colon-star-literal")
+    tokens = body.split()
+    starred = [i for i, t in enumerate(tokens) if "*" in t]
+    if not starred or body == "*":
+        return flags
+    first = starred[0]
+    if first == 0:
+        if tokens[0] == "*" and len(tokens) > 1:
+            flags.add("wildcard-program")
+    else:
+        words = [t for t in tokens[:first] if not t.startswith("-")]
+        later = [t for t in tokens[first + 1:] if not t.startswith("-") and t != "*"]
+        if len(words) == 1 and later:
+            flags.add("wildcard-before-subcommand")
+    if len(tokens) == 1 and body.count("*") == 1 and re.fullmatch(r"[^*]*[A-Za-z0-9_]\*", body):
+        flags.add("star-joined-to-program")
+    return flags
+
+
+def rule_shape_issues(perms):
+    """{list: {flag: [redacted rules, at most 6]}} for flagged rules only; {} when clean."""
+    out = {}
+    for name, wanted in RULE_SHAPE_LISTS.items():
+        flagged = defaultdict(list)
+        for rule in perms.get(name, []) or []:
+            if isinstance(rule, str):
+                for flag in sorted(rule_shape_flags(rule) & set(wanted)):
+                    flagged[flag].append(redact(rule)[:160])
+        if flagged:
+            out[name] = {k: v[:6] for k, v in sorted(flagged.items())}
+    return out
 ONE_OFF_RE = re.compile(r".{120,}|/tmp/|\b\d{4,}\b|https?://\S+\?")
 CORRECTION_RE = re.compile(
     r"^(no\b|nope|stop\b|wait\b|don'?t\b|that'?s (wrong|not)|wrong\b|again\b|i said|why did you|"
@@ -253,6 +313,7 @@ def analyze_permissions(perms):
                                     if not os.path.isdir(os.path.expanduser(p))],
         "one_off_rules": one_offs,
         "risky": {k: v[:6] for k, v in flags.items()},
+        "rule_shape_issues": rule_shape_issues(perms),
     }
 
 
