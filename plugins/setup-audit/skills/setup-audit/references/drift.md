@@ -89,7 +89,8 @@ prompt text or configuration values.
 
 Measured on the author's machine on 2026-09-29: about 7 seconds at scope `all`, near-instant at
 scope `global`. Scope `global` has no transcript signals, so `cache_hit_ratio` is `null`. Seven
-seconds fits cron or an asynchronous hook, not a blocking SessionStart hook.
+seconds fits cron, or an asynchronous hook on an event off the startup path. `SessionStart` hooks
+delay the first response even when marked async (hooks docs, fetched 2026-09-29).
 
 ## Wiring (yours to add)
 
@@ -101,13 +102,19 @@ Crontab, weekdays at 08:00, appending to the default log and mailing any output 
 0 8 * * 1-5 python3 <plugin dir>/skills/setup-audit/scripts/drift.py
 ```
 
-Hook entry in `~/.claude/settings.json`. The hooks docs (fetched 2026-09-29) give `async` as a
-command-hook field: `{"type": "command", "command": "long-running-task.sh", "async": true}` runs in
-the background without blocking. Check the docs for which events it applies to before choosing one;
-`SessionStart` stdout is added to Claude's context as plain text, and a drift line would be too.
+Hook entry in `~/.claude/settings.json` (project settings can hold hooks too). The hooks docs
+(fetched 2026-09-29) say `async: true` on a command hook runs it in the background without blocking,
+that an async hook's exit code and stdout are ignored, and that `SessionStart`, `SessionEnd`,
+`UserPromptSubmit`, `PreModelSwitch`, `PostModelSwitch`, `MessageDisplay` and `Setup` ignore `async`
+and block. `SessionEnd` hooks also share a 1.5-second budget by default, too short for a 7-second
+run. So the example uses `Stop`, which runs after each response; that appends one log line per
+response, so cron is the better fit for a steady cadence.
 
 ```json
-{"hooks": {"SessionStart": [{"hooks": [
+{"hooks": {"Stop": [{"hooks": [
   {"type": "command", "command": "python3 <plugin dir>/skills/setup-audit/scripts/drift.py", "async": true}
 ]}]}}
 ```
+
+With async, stdout is ignored, so crossings land only in the log; the next audit reads them through
+`--drift-log`. For a visible one-line alert, use cron with mail, or run `drift.py` by hand.
