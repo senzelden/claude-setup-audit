@@ -125,3 +125,113 @@ def handler_issues(event, matcher, handler):
         if unknown:
             issues.append('unknown_fields')
     return issues, unknown
+
+
+MAX_OVERLAPS, MAX_DUPLICATES, MAX_SOURCES = 30, 20, 10
+BASH_PARAMS = ('command', 'description', 'timeout', 'run_in_background')  # hooks.md Bash tool input
+RULE_RE = re.compile(r'([^()]+?)(?:\((.*)\))?', re.S)
+BASH_RULE_RE = re.compile(r'Bash\((.*)\)', re.S)
+PARAM_RE = re.compile(r'(%s)\s*:' % '|'.join(BASH_PARAMS))
+
+
+def bash_rule_body(rule):
+    """(body, colon_prefix) of a `Bash(...)` rule, else None; shared with collect.rule_shape_flags.
+
+    colon_prefix is True when a trailing `:*` (the documented prefix form) was stripped from body.
+    """
+    m = BASH_RULE_RE.fullmatch(rule.strip()) if isinstance(rule, str) else None
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if body.endswith(':*'):
+        return body[:-2], True
+    return body, False
+
+
+def _parse(rule):
+    """(tool, specifier or None, is_bash_param_rule); None for unparseable rules.
+
+    permissions.md: `Bash(*)` is equivalent to `Bash`; a trailing `:*` equals a trailing ` *`.
+    """
+    m = RULE_RE.fullmatch(rule.strip()) if isinstance(rule, str) else None
+    if not m:
+        return None
+    tool, spec = m.group(1).strip(), m.group(2)
+    param = False
+    if tool == 'Bash' and spec is not None:
+        body, colon = bash_rule_body(rule)
+        param = bool(PARAM_RE.match(body + ':*' if colon else body))
+        if colon and ':*' not in body:
+            spec = body + ' *'
+        else:
+            spec = None if body == '*' else body + (':*' if colon else '')
+    return tool, spec, param
+
+
+def rule_covers(by, allow):
+    """'exact' | 'tool' | 'prefix' when every call `allow` matches is provably matched by `by`.
+
+    Conservative: path globs and mid-rule wildcards are never compared, and a deny shaped like a
+    Bash input-parameter rule (`Bash(timeout:*)`) is ambiguous, so it only matches exactly.
+    """
+    b, a = _parse(by), _parse(allow)
+    if not b or not a:
+        return None
+    (btool, bspec, bparam), (atool, aspec, _) = b, a
+    if atool.startswith('mcp__') and aspec is not None:
+        return None  # "it skips any `mcp__` rule that has parentheses"
+    if (btool, bspec) == (atool, aspec):
+        return 'exact'
+    if bspec is None:
+        if btool == atool:
+            return 'tool'
+        if btool.count('*') == 1 and btool.endswith('*') and atool.startswith(btool[:-1]):
+            return 'tool'
+        return None
+    if btool != atool or atool != 'Bash' or aspec is None or bparam:
+        return None
+    if bspec.count('*') != 1 or not bspec.endswith('*'):
+        return None
+    spaced = bspec.endswith(' *')
+    prefix = bspec[:-2] if spaced else bspec[:-1]
+
+    def ok(text, open_ended):
+        if spaced:  # `git *` matches `git` and `git ...`, not `gitk`
+            return text.startswith(prefix + ' ') or (not open_ended and text == prefix)
+        return text.startswith(prefix)
+
+    literal = aspec.split('*', 1)[0]
+    bare = aspec[:-2] if aspec.endswith(' *') and aspec.count('*') == 1 else None
+    if not ok(literal, '*' in aspec) or (bare is not None and not ok(bare, False)):
+        return None
+    return 'prefix'
+
+
+def permission_overlaps(stacks, redact, cap=MAX_OVERLAPS):
+    """Allow rules a deny or ask rule in the same stack always matches first; each pair reported once.
+
+    permissions.md: "Rules are evaluated in order: deny, then ask, then allow", across all scopes.
+    """
+    seen, found = set(), []
+    for stack in stacks:
+        files = stack['settings']
+        candidates = [(lst, f, rule) for lst in ('deny', 'ask') for f in files
+                      for rule in f['permissions'].get(lst, [])]
+        for f in files:
+            for allow in f['permissions'].get('allow', []):
+                for lst, by_file, by in candidates:
+                    match = rule_covers(by, allow)
+                    if match:
+                        break
+                else:
+                    continue
+                key = (f['path'], allow, by_file['path'], lst, by)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append({'stack': stack['name'],
+                              'allow': {'layer': f['layer'], 'path': f['path'], 'rule': redact(allow)[:160]},
+                              'by': {'list': lst, 'layer': by_file['layer'], 'path': by_file['path'],
+                                     'rule': redact(by)[:160]},
+                              'match': match})
+    return found[:cap], max(0, len(found) - cap)

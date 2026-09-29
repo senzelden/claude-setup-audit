@@ -117,12 +117,10 @@ def rule_shape_flags(rule):
         flags.add("mcp-rule-with-parentheses")
     if PRIMARY_FIELD_RULE.match(rule):
         flags.add("ignored-primary-field")
-    m = re.fullmatch(r"Bash\((.*)\)", rule, re.S)
-    if not m:
+    parsed = config_checks.bash_rule_body(rule)  # a trailing :* is the documented prefix form
+    if not parsed:
         return flags
-    body = m.group(1).strip()
-    if body.endswith(":*"):
-        body = body[:-2]  # a trailing :* is the documented prefix form
+    body = parsed[0]
     if ":*" in body:
         flags.add("colon-star-literal")
     tokens = body.split()

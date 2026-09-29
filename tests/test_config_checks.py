@@ -166,3 +166,75 @@ class HookFieldsInSummary(FakeHome):
             'Stop': [{'hooks': [{'type': ['command'], 'command': 'x'}]}]}})
         handlers = collect.summarize_settings(path)['hook_handlers']
         self.assertEqual(handlers[0]['issues'], ['unknown_type'])
+
+
+def sfile(layer, path, allow=(), ask=(), deny=(), handlers=()):
+    return {'layer': layer, 'path': path, 'handlers': list(handlers), 'enabled_plugins': {},
+            'permissions': {'allow': list(allow), 'ask': list(ask), 'deny': list(deny)}}
+
+
+def stack(name, *files, plugins=()):
+    return {'name': name, 'settings': list(files), 'plugins': list(plugins)}
+
+
+USER, MANAGED, PROJECT = '~/.claude/settings.json', '/etc/claude-code/managed-settings.json', '~/app/.claude/settings.json'
+
+
+class RuleCoverage(unittest.TestCase):
+    def test_covering_pairs(self):
+        for by, allow, match in (
+                ('Bash(git push *)', 'Bash(git push *)', 'exact'), ('Bash(ls *)', 'Bash(ls:*)', 'exact'),
+                ('Bash', 'Bash', 'exact'), ('Bash(*)', 'Bash(npm test)', 'tool'), ('Bash', 'Bash(npm test)', 'tool'),
+                ('Read', 'Read(./src/**)', 'tool'), ('mcp__*', 'mcp__github__get_issue', 'tool'),
+                ('*', 'WebSearch', 'tool'), ('Bash(git *)', 'Bash(git log *)', 'prefix'),
+                ('Bash(git *)', 'Bash(git)', 'prefix'), ('Bash(git *)', 'Bash(git log*)', 'prefix'),
+                ('Bash(git*)', 'Bash(gitk)', 'prefix'), ('Bash(git:*)', 'Bash(git status)', 'prefix')):
+            with self.subTest(by=by, allow=allow):
+                self.assertEqual(config_checks.rule_covers(by, allow), match)
+
+    def test_non_covering_pairs(self):
+        for by, allow in (
+                ('Bash(git *)', 'Bash(gitk)'), ('Bash(git *)', 'Bash(git*)'), ('Bash(git *)', 'Bash(* --version)'),
+                ('Bash(git push --force *)', 'Bash(git push *)'), ('Bash(rm *)', 'Bash'),
+                ('Bash(timeout:*)', 'Bash(timeout 5 ls)'), ('Read(./src/**)', 'Read(./src/a.py)'),
+                ('Bash(git * main)', 'Bash(git merge main)'), ('mcp__github__*', 'mcp__gitlab__get'),
+                ('Bash(git push *)', 'mcp__github__push(x)'), ('mcp__*', 'mcp__github__create(x)'),
+                ('Bash(git:* push)', 'Bash(git push)'), (None, 'Bash'), ('Bash(', 'Bash')):
+            with self.subTest(by=by, allow=allow):
+                self.assertIsNone(config_checks.rule_covers(by, allow))
+
+
+class PermissionOverlaps(unittest.TestCase):
+    def overlaps(self, *stacks):
+        return config_checks.permission_overlaps(list(stacks), collect.redact)
+
+    def test_deny_or_ask_in_any_layer_shadows_allow_and_is_reported_once(self):
+        user = sfile('user', USER, allow=['Bash(git push *)', 'Bash(git log *)'])
+        managed = sfile('managed', MANAGED, deny=['Bash(git push *)'])
+        found, omitted = self.overlaps(stack('global', managed, user),
+                                       stack('~/app', managed, user, sfile('project', PROJECT, ask=['Bash(git *)'])))
+        self.assertEqual(omitted, 0)
+        self.assertEqual(found, [
+            {'stack': 'global', 'allow': {'layer': 'user', 'path': USER, 'rule': 'Bash(git push *)'},
+             'by': {'list': 'deny', 'layer': 'managed', 'path': MANAGED, 'rule': 'Bash(git push *)'}, 'match': 'exact'},
+            {'stack': '~/app', 'allow': {'layer': 'user', 'path': USER, 'rule': 'Bash(git log *)'},
+             'by': {'list': 'ask', 'layer': 'project', 'path': PROJECT, 'rule': 'Bash(git *)'}, 'match': 'prefix'}])
+
+    def test_deny_is_preferred_over_ask_and_same_file_counts(self):
+        found, _ = self.overlaps(stack('global', sfile('user', USER, allow=['Bash(git push *)'],
+                                                       ask=['Bash(git *)'], deny=['Bash(git push *)'])))
+        self.assertEqual([(o['by']['list'], o['match']) for o in found], [('deny', 'exact')])
+
+    def test_other_projects_are_never_paired(self):
+        self.assertEqual(self.overlaps(stack('~/a', sfile('project', '~/a/.claude/settings.json', allow=['Bash(x)'])),
+                                       stack('~/b', sfile('project', '~/b/.claude/settings.json', deny=['Bash(x)']))),
+                         ([], 0))
+
+    def test_cap_and_redaction(self):
+        found, omitted = self.overlaps(stack('global', sfile('user', USER, allow=[f'Bash(t{i})' for i in range(35)],
+                                                             deny=['Bash'])))
+        self.assertEqual((len(found), omitted), (30, 5))
+        secret = 'Bash(sk-abcdefghijklmnopqrstuv *)'
+        found, _ = self.overlaps(stack('global', sfile('user', USER, allow=[secret], deny=[secret])))
+        self.assertEqual(found[0]['allow']['rule'], 'Bash([REDACTED] *)')
+        self.assertEqual(found[0]['by']['rule'], 'Bash([REDACTED] *)')
