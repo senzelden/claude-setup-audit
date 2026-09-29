@@ -83,7 +83,7 @@ Hosted validation passed all eight jobs at `48d9d5d`:
   Approved apply independently checks final artifacts and successful helper execution; the
   skill blocks manual substitution when a required method cannot run. Runner write-tool
   grouping and namespace limitations are documented in the eval instructions. Local
-  validation now passes 167 regression tests. Check the
+  validation passes the full regression suite. Check the
   [validation workflow](https://github.com/senzelden/claude-setup-audit/actions/workflows/tests.yml)
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
