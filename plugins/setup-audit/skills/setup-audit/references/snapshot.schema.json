@@ -410,6 +410,27 @@
         }
       }
     },
+    "drift_signals": {
+      "type": "object",
+      "required": ["status", "path"],
+      "properties": {
+        "status": {"enum": ["collected", "invalid"]},
+        "path": {"type": "string"},
+        "entries": {"type": "integer", "minimum": 0},
+        "malformed": {"type": "integer", "minimum": 0},
+        "first_at": {"type": ["string", "null"]},
+        "last_at": {"type": ["string", "null"]},
+        "signals": {"type": "object", "additionalProperties": {
+          "type": "object",
+          "required": ["last_value", "crossings", "first_crossing_at", "last_crossing_at", "scopes"],
+          "properties": {
+            "crossings": {"type": "integer", "minimum": 0},
+            "first_crossing_at": {"type": ["string", "null"]},
+            "last_crossing_at": {"type": ["string", "null"]},
+            "scopes": {"type": "array", "items": {"type": "string"}}
+          }}}
+      }
+    },
     "harness_overhead": {
       "type": "object",
       "required": ["window_days", "sessions_scanned", "complete", "incomplete_reasons", "injected_context",

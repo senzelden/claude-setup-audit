@@ -31,6 +31,7 @@ import inventory
 import extensions
 import harness
 import clarity
+import drift_log
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
 
@@ -1519,6 +1520,14 @@ def build_snapshot(a):
     if getattr(a, "ledger", None):
         snap["ledger_signals"] = collect_ledger_signals(
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
+    if getattr(a, "drift_log", None):
+        path = os.path.abspath(os.path.expanduser(a.drift_log))
+        display = path.replace(HOME, "~")
+        try:
+            entries, malformed = drift_log.read(path)
+            snap["drift_signals"] = drift_log.summarize(entries, malformed, display)
+        except drift_log.DriftLogError:
+            snap["drift_signals"] = {"status": "invalid", "path": display}
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
     hook_index, hook_index_reasons = harness.hook_index(CLAUDE, settings)
@@ -1571,6 +1580,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--clarity-pilot", action="store_true", help="opt-in instruction clarity review candidates")
     ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
+    ap.add_argument("--drift-log", help="drift log to summarize (read-only)")
     a = ap.parse_args()
     apply_collection_args(ap, a)
     text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)

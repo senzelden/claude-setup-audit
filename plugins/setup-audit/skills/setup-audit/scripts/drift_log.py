@@ -76,3 +76,37 @@ def read(path):
         else:
             malformed += 1
     return entries, malformed
+
+
+def _num(v):
+    return v if type(v) in (int, float) else None
+
+
+def _last_value(name, signal):
+    """Scalar for one signal; anything not a plain number becomes None."""
+    if name == 'claude_md':
+        return max((v['lines'] for v in signal.values()
+                    if isinstance(v, dict) and type(v.get('lines')) is int), default=None)
+    if name == 'broad_permissions':
+        return _num(signal.get('count'))
+    return _num(signal.get('value'))
+
+
+def summarize(entries, malformed, display_path):
+    """Per-signal last value, crossing count and dates, for the collector's drift_signals."""
+    signals = {}
+    for name in SIGNALS:
+        seen = [e for e in entries if isinstance(e['signals'].get(name), dict)]
+        dates = [e.get('at') for e in entries for c in (e.get('crossings') if isinstance(e.get('crossings'), list) else [])
+                 if isinstance(c, dict) and c.get('signal') == name]
+        if not seen and not dates:
+            continue
+        dated = sorted(d for d in dates if isinstance(d, str))
+        signals[name] = {'last_value': _last_value(name, seen[-1]['signals'][name]) if seen else None,
+                         'crossings': len(dates),
+                         'first_crossing_at': dated[0] if dated else None,
+                         'last_crossing_at': dated[-1] if dated else None,
+                         'scopes': sorted({e['scope'] for e in seen if isinstance(e.get('scope'), str)})}
+    ats = sorted(e['at'] for e in entries if isinstance(e.get('at'), str))
+    return {'status': 'collected', 'path': display_path, 'entries': len(entries), 'malformed': malformed,
+            'first_at': ats[0] if ats else None, 'last_at': ats[-1] if ats else None, 'signals': signals}

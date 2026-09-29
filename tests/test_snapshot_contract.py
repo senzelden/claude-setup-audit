@@ -74,6 +74,23 @@ class SnapshotContract(FakeHome):
         with self.assertRaises(contract.SnapshotError):
             contract.validate_snapshot(snap)
 
+    def test_drift_signals_are_optional_and_checked(self):
+        snap = self.snapshot()
+        snap["drift_signals"] = {"status": "collected", "path": "~/d.jsonl", "entries": 1, "malformed": 0,
+                                 "first_at": "2026-09-01T00:00:00Z", "last_at": "2026-09-01T00:00:00Z",
+                                 "signals": {"cache_hit_ratio": {"last_value": 0.93, "crossings": 0,
+                                                                 "first_crossing_at": None,
+                                                                 "last_crossing_at": None, "scopes": ["all"]}}}
+        contract.validate_snapshot(snap)
+        contract.validate_snapshot({**snap, "drift_signals": {"status": "invalid", "path": "~/d.jsonl"}})
+        for mutate in (lambda d: d.update(status="bogus"), lambda d: d.update(entries=-1),
+                       lambda d: d["signals"]["cache_hit_ratio"].update(crossings=-1),
+                       lambda d: d["signals"]["cache_hit_ratio"].pop("scopes")):
+            altered = copy.deepcopy(snap)
+            mutate(altered["drift_signals"])
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(altered)
+
     def test_harness_overhead_is_checked(self):
         snap = self.snapshot()
         snap["harness_overhead"] = {

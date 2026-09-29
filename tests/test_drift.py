@@ -370,3 +370,56 @@ class DriftCli(FakeHome):
             importlib.reload(collect)
             collect.HOME, collect.CLAUDE = saved
         self.assertEqual(len(drift_log.read(os.path.join(cfg, 'audits', 'drift.jsonl'))[0]), 1)
+
+
+class Summary(unittest.TestCase):
+    def test_summarize_counts_dates_scopes(self):
+        e1 = {'version': 1, 'at': '2026-09-01T00:00:00Z', 'scope': 'all',
+              'signals': {'cache_hit_ratio': {'value': 0.95}, 'claude_md': {'a': {'lines': 10}, 'b': {'lines': 30}},
+                          'broad_permissions': {'count': 2, 'fingerprints': ['x', 'y']}},
+              'crossings': []}
+        e2 = {'version': 1, 'at': '2026-09-05T00:00:00Z', 'scope': 'global',
+              'signals': {'cache_hit_ratio': None, 'claude_md': {'a': {'lines': 250}},
+                          'broad_permissions': {'count': 3, 'fingerprints': []}},
+              'crossings': [{'signal': 'claude_md', 'kind': 'above_max'}]}
+        s = drift_log.summarize([e1, e2], 1, '~/.claude/audits/drift.jsonl')
+        self.assertEqual({k: s[k] for k in ('status', 'entries', 'malformed', 'first_at', 'last_at')},
+                         {'status': 'collected', 'entries': 2, 'malformed': 1,
+                          'first_at': '2026-09-01T00:00:00Z', 'last_at': '2026-09-05T00:00:00Z'})
+        self.assertEqual(s['signals']['claude_md'], {'last_value': 250, 'crossings': 1,
+                                                     'first_crossing_at': '2026-09-05T00:00:00Z',
+                                                     'last_crossing_at': '2026-09-05T00:00:00Z',
+                                                     'scopes': ['all', 'global']})
+        self.assertEqual(s['signals']['cache_hit_ratio']['last_value'], 0.95)
+        self.assertEqual(s['signals']['broad_permissions']['last_value'], 3)
+        self.assertNotIn('injected_tokens', s['signals'])
+
+    def test_wrong_value_types_never_crash(self):
+        bad = {'version': 1, 'at': 5, 'scope': ['x'],
+               'signals': {'cache_hit_ratio': {'value': 'high'}, 'claude_md': {'a': {'lines': True}, 'b': 7},
+                           'broad_permissions': {'count': [1]}, 'skill_listing_chars': 'oops'},
+               'crossings': 'nope'}
+        s = drift_log.summarize([bad], 0, 'p')
+        self.assertIsNone(s['first_at'])
+        for name in ('cache_hit_ratio', 'claude_md', 'broad_permissions'):
+            self.assertIsNone(s['signals'][name]['last_value'])
+            self.assertEqual(s['signals'][name]['scopes'], [])
+        self.assertNotIn('skill_listing_chars', s['signals'])
+
+
+class CollectorDriftLog(FakeHome):
+    def test_snapshot_carries_drift_signals(self):
+        log = os.path.join(self.home, 'drift.jsonl')
+        with contextlib.redirect_stdout(io.StringIO()):
+            drift.main(['--claude-dir', self.claude, '--scope', 'global', '--log', log])
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global', '--drift-log', log))
+        self.assertEqual((snap['drift_signals']['status'], snap['drift_signals']['entries']), ('collected', 1))
+
+    def test_unreadable_log_is_invalid(self):
+        directory = os.path.join(self.home, 'adir')
+        os.makedirs(directory)
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global', '--drift-log', directory))
+        self.assertEqual(snap['drift_signals']['status'], 'invalid')
+
+    def test_without_flag_no_section(self):
+        self.assertNotIn('drift_signals', collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global')))
