@@ -151,7 +151,9 @@ What is **measured** versus **estimated** matters for credibility; say which in 
 - Estimated: CLAUDE.md tokens (chars/4). `COST-startup-hooks` is measured from
   `harness_overhead.injected_context` and falls back to the file-size estimate
   (`plugin_session_start_hooks`, `basis: file_size_estimate`) when no session has records; add
-  `COST-harness-overhead` for listing growth, model-invoking hooks and subagent spend.
+  `COST-harness-overhead` for listing growth, model-invoking hooks and subagent spend. Global
+  scope reads no transcripts, so `harness_overhead` then holds only static signals
+  (`transcripts_not_read`).
 
 The collector does not launch `claude --version` or `claude doctor`: CLI startup can write
 configuration, backups and telemetry. Keep these under "Not checked" and the version unknown

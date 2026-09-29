@@ -46,16 +46,36 @@ come from undocumented transcript attachment records (`hook_additional_context`,
 observed, not zero. A hook injection with missing or null content is not counted; a non-string
 entrypoint counts as `other`. Estimated tokens are round(median chars / 4). Attribution is an exact
 command-string match against enabled plugins resolved through the registry `installPath` (all
-settings layers); no match is `unattributed`, several are `ambiguous`. `complete: false` lists
-`incomplete_reasons`:
+settings layers); no match is `unattributed`, several are `ambiguous`. An injection is paired with
+its `hook_success` by `toolUseID` first. SessionStart injections carry the event name as
+`toolUseID` (observed 2026-09-29), so when pairing fails the candidates are the commands of
+`hook_success` records in the same file with the same `hookEvent` and non-empty `stdout`; user and
+project hooks drop out, one plugin left is `matched`, several are `ambiguous`, none is
+`unattributed`. `skill_listing_series` covers main sessions whose entrypoint does not start with
+`sdk-` (no or unknown entrypoint counts as non-SDK); `sdk_sessions_excluded` counts the rest, and
+only-SDK listings give `null` with `not_observed`. `per_plugin_skills` lists enabled plugins only,
+once each. `subagent_spend.entrypoints` keys are `cli`, `sdk-py`, `sdk-cli` and `other`;
+`main_tokens_median_in_subagent_sessions` is the main-token median over the sessions that have
+subagent tokens, the like-for-like comparison for the subagent median. Global scope
+(`--scope global`) reads no transcripts, so this section then holds only static signals (hook
+index and scan). The static scan follows script references one level deep and only references
+rooted at `${CLAUDE_PLUGIN_ROOT}`; wrapper scripts, relative references after `cd`, and unquoted
+roots containing spaces are not followed. `complete: false` lists `incomplete_reasons`:
 
 - `main_file_cap`, `subagent_file_cap`: the transcript file cap was hit, so later files are unread.
 - `malformed_records`: some transcript lines could not be parsed.
-- `plugin_root_unreadable`: an enabled plugin's registry `installPath` was missing, outside plugin
-  storage or not a directory, so its hooks are unscanned.
+- `plugin_registry_unreadable`: at least one plugin is enabled and `installed_plugins.json` is
+  missing or unparseable, its `plugins` is not an object, or an enabled plugin has no registry rows.
+- `plugin_root_unreadable`: an enabled plugin's registry `installPath` was missing, relative, not a
+  string, outside plugin storage or not a directory, so its hooks are unscanned.
+- `hook_file_unreadable`: an existing `hooks/hooks.json` or a hooks file named by the manifest
+  (`hooks` as a path or a list of paths and inline objects, resolved against the plugin root) is a
+  symlink, escapes the plugin root, is missing (manifest paths), unreadable, not a JSON object, or
+  larger than 1 MiB.
 - `script_unresolved`: a hook script path was a symlink, outside the plugin root, missing or
   unreadable, so it was not scanned.
 - `script_truncated`: a hook script exceeded the scan size limit; only its start was scanned.
+- `transcripts_not_read`: global scope; no transcript signal was collected.
 - `not_observed`: no `skill_listing` records were seen (`skill_listing_series` is null); reported
   but does not make the section incomplete.
 

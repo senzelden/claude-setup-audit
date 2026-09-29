@@ -99,6 +99,7 @@ files scanned; `sessions_scanned` counts main sessions with at least one record 
     "first": {"date": "2026-08-31", "skill_count": 12, "chars": 5837},
     "last": {"date": "2026-09-29", "skill_count": 79, "chars": 29782},
     "max": {"skill_count": 79, "chars": 29782},
+    "sdk_sessions_excluded": 15,
     "per_plugin_skills": [{"plugin": "superpowers@claude-plugins-official", "skills": 14}]
   },
   "subagent_spend": {
@@ -106,6 +107,7 @@ files scanned; `sessions_scanned` counts main sessions with at least one record 
     "sessions_with_subagents": 58,
     "subagent_tokens_per_session_median": 120000,
     "main_tokens_per_session_median": 450000,
+    "main_tokens_median_in_subagent_sessions": 2100000,
     "entrypoints": {"cli": 37, "sdk-py": 361, "sdk-cli": 2, "other": 0}
   },
   "model_spawning_hooks": [
@@ -128,12 +130,25 @@ Rules:
   recorded command string equals a registered command string. Unpaired injection records (no
   `hook_success` with the same `toolUseID`) and user/project hooks are `unattributed`; the source
   key is then `(null, hook_event)`. Command strings are not stored.
+  Real-data finding (2026-09-29): SessionStart `hook_additional_context.toolUseID` is the literal
+  event name while its `hook_success.toolUseID` is a UUID, so 69 of 69 SessionStart injections were
+  unpaired. After exact pairing fails, the candidates are the commands of `hook_success` records in
+  the same file with the same `hookEvent` and non-empty `stdout`; candidates that match no plugin
+  (user/project hooks) drop out; one plugin left is `matched`, several (or an ambiguous command)
+  `ambiguous`, none `unattributed`. The index also reads manifest `hooks` given as a path string or
+  a list of paths and inline objects, resolved inside the plugin root with the scan's containment
+  rules.
 - **Skill listing.** Only the first `skill_listing` with `isInitial` true per main session. Dates are
-  the record's day (UTC). `per_plugin_skills` comes from the inventory, not transcripts.
+  the record's day (UTC). `per_plugin_skills` comes from the inventory, not transcripts: enabled
+  plugins only, once each. The series covers main sessions whose entrypoint does not start with
+  `sdk-` (SDK sessions list different skills); `sdk_sessions_excluded` counts the others, and
+  only-SDK listings give `null` with `not_observed`.
 - **Subagent spend.** Sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens +
   output_tokens` of assistant records inside the window, per parent session directory. Main-session
   totals use the same formula over non-sidechain records, so the two are comparable. Duplicate
   message ids (streamed chunks) are counted once, as the existing MCP deduplication does.
+  `main_tokens_median_in_subagent_sessions` is the main-token median over the sessions that have
+  subagent tokens, so the subagent median is compared with like sessions.
 - **Entrypoints.** First user/assistant record per main file; unknown values go to `other`.
 - **Static scan.** For each enabled plugin hook: the command string, plus any file it references
   that resolves inside the plugin root (after `${CLAUDE_PLUGIN_ROOT}` substitution; symlinks and
@@ -143,8 +158,12 @@ Rules:
   (`anthropic.Anthropic(`, `new Anthropic(`, `api.anthropic.com`). Commented-out lines (`#`, `//`)
   are skipped. Only file (relative to plugin root), line and pattern id are emitted.
 - **Completeness.** `complete: false` with reasons (`main_file_cap`, `subagent_file_cap`,
-  `malformed_records`, `plugin_root_unreadable`, `script_unresolved`, `script_truncated`) when any
-  applies. No `skill_listing` records at all yields `skill_listing_series: null` with reason
+  `malformed_records`, `plugin_registry_unreadable`, `plugin_root_unreadable`,
+  `hook_file_unreadable`, `script_unresolved`, `script_truncated`, `transcripts_not_read`) when any
+  applies. The registry reason covers a missing or malformed `installed_plugins.json` or an enabled
+  plugin without rows; the hook-file reason covers a hooks file that is a symlink, escapes the root,
+  is unreadable, not an object or above 1 MiB. Global scope reads no transcripts
+  (`transcripts_not_read`), so the section then holds only static signals. No `skill_listing` records at all yields `skill_listing_series: null` with reason
   `not_observed`, which is reported but does not make the section incomplete.
 - **Privacy.** No content, command strings, script text, prompt text or hook output is stored.
   Plugin names, relative script paths, counts, sizes and dates only.

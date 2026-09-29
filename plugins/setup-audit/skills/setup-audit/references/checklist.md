@@ -113,16 +113,23 @@ the collector snapshot.
   - skill listing growth (`skill_listing_series` first -> last, and `last.chars` against the
     documented listing budget: 1% of the model's context window, raised by
     `skillListingBudgetFraction` or `SLASH_COMMAND_TOOL_CHAR_BUDGET`, each entry capped at 1,536
-    characters by `skillListingMaxDescChars`; https://code.claude.com/docs/en/skills.md, fetched
+    characters by default, configurable with `skillListingMaxDescChars`; https://code.claude.com/docs/en/skills.md, fetched
     2026-09-29), with `per_plugin_skills` naming the largest contributors;
   - `model_spawning_hooks`: an enabled plugin hook that runs `claude -p`, the Agent SDK or the
     Anthropic API spends tokens outside the session; cite file, line and pattern id;
-  - `subagent_spend`: subagent median tokens per session against the main-session median.
+  - `subagent_spend`: subagent median tokens per session against
+    `main_tokens_median_in_subagent_sessions` (main tokens of the same sessions), not the
+    all-session `main_tokens_per_session_median`, which mixes in small SDK runs;
+  - the listing series covers non-SDK sessions only (`sdk_sessions_excluded` counts the rest).
   `entrypoints` are shares only: never call SDK sessions "reflection" or attribute them to a plugin
   or hook. Treat `complete: false` and its `incomplete_reasons` as limits on every claim. Record
   metrics `skills.listing_count` (unit `skills`), `skills.listing_chars` (unit `chars`) and
   `hooks.injected_tokens_per_session_median` (unit `tokens`, basis `estimated`), all with
   `source: harness_overhead.<field>`, so the next audit gets deltas.
+  `hooks.injected_tokens_per_session_median` is the `est_tokens_per_session_median` of the first
+  `injected_context.sources` row (rows are sorted by sessions descending, so the most frequent
+  source); name that row's plugin and attribution in the evidence. Under global scope
+  (`transcripts_not_read`) only `model_spawning_hooks` is observed; record no transcript metrics.
 - **COST-subagents** (`usage.subagent_session_share`, Agent tool counts): many small agents
   re-reading context, or a top-tier model on mechanical agents.
 - **COST-tool-errors** (`avg_tool_errors_per_session`, `tool_error_categories`): every failed call

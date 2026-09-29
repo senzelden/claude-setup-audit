@@ -9,8 +9,9 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - Measured harness overhead in the snapshot (`harness_overhead`): hook-injected context per plugin,
-  skill listing series, subagent spend, entrypoint shares and a scan for enabled plugin hooks that
-  invoke a model; new check `COST-harness-overhead`.
+  skill listing series (non-SDK sessions), subagent spend compared with the same sessions' main
+  spend, entrypoint shares and a scan for enabled plugin hooks that invoke a model; new check
+  `COST-harness-overhead`. Unreadable registry or hook files and global scope mark it incomplete.
 
 ### Changed
 
