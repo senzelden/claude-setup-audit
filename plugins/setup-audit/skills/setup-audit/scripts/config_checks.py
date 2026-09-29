@@ -105,6 +105,8 @@ def _matcher_issues(event, spec, matcher):
                 re.compile(matcher)
         except re.error:
             issues.append('invalid_regex')
+        except (OverflowError, RecursionError):
+            pass  # JavaScript accepts large quantifiers and deep nesting; not judged
     return issues
 
 
@@ -116,7 +118,7 @@ def handler_issues(event, matcher, handler):
         issues.append('if_never_runs')
     kind = handler.get('type', 'command')
     unknown = []
-    if kind not in TYPE_FIELDS:
+    if not isinstance(kind, str) or kind not in TYPE_FIELDS:
         issues.append('unknown_type')
     else:
         unknown = sorted(str(k) for k in handler if k not in COMMON_FIELDS | TYPE_FIELDS[kind])[:10]

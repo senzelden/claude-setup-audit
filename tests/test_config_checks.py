@@ -104,7 +104,9 @@ class HookHandlerChecks(unittest.TestCase):
                 ('Notification', 'permission_prompt'), ('SessionStart', 'mcp__memory'),
                 ('StopFailure', 'rate_limit|overloaded'), ('FileChanged', '.envrc|.env'),
                 ('FileChanged', r'^\.env'), ('PreToolUse', '(?<tool>Bash)'), ('PreToolUse', r'\p{L}+'),
-                ('Stop', '*'), ('Stop', ''), ('Stop', None)):
+                ('Stop', '*'), ('Stop', ''), ('Stop', None),
+                ('FileChanged', '*.local'), ('FileChanged', 'my-config'),
+                ('PreToolUse', 'a{99999999999}')):
             with self.subTest(event=event, matcher=matcher):
                 self.assertEqual(hook_issues(event, matcher), [])
 
@@ -126,6 +128,10 @@ class HookHandlerChecks(unittest.TestCase):
         self.assertEqual(check('Stop', None, {'command': 'x'}), ([], []))
         self.assertEqual(check('Stop', 'Bash', {'type': 'command', 'command': 'x', 'colour': 'r'}),
                          (['matcher_ignored', 'unknown_fields'], ['colour']))
+
+    def test_non_string_type_is_an_unknown_type(self):
+        self.assertEqual(config_checks.handler_issues('Stop', None, {'type': ['command']}),
+                         (['unknown_type'], []))
 
     def test_fingerprint(self):
         fp = config_checks.handler_fingerprint
@@ -154,3 +160,9 @@ class HookFieldsInSummary(FakeHome):
         self.assertTrue(handlers['SessionStart']['plugin_relative'])
         self.assertNotIn('plugin_relative', handlers['Stop'])
         self.assertRegex(handlers['Stop']['fingerprint'], r'^[0-9a-f]{16}$')
+
+    def test_unhashable_handler_type_does_not_abort_the_summary(self):
+        path = self.write('.claude/settings.json', {'hooks': {
+            'Stop': [{'hooks': [{'type': ['command'], 'command': 'x'}]}]}})
+        handlers = collect.summarize_settings(path)['hook_handlers']
+        self.assertEqual(handlers[0]['issues'], ['unknown_type'])
