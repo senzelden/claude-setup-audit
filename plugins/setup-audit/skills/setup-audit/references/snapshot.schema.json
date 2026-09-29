@@ -420,7 +420,7 @@
         "complete": {"type": "boolean"},
         "incomplete_reasons": {"type": "array", "items": {"enum": ["main_file_cap", "subagent_file_cap",
           "malformed_records", "plugin_registry_unreadable", "plugin_root_unreadable", "hook_file_unreadable",
-          "script_unresolved", "script_truncated", "not_observed"]}},
+          "script_unresolved", "script_truncated", "transcripts_not_read", "not_observed"]}},
         "injected_context": {
           "type": "object",
           "required": ["sessions_with_injection", "sources"],
@@ -446,12 +446,14 @@
         "subagent_spend": {
           "type": "object",
           "required": ["subagent_files_scanned", "sessions_with_subagents", "subagent_tokens_per_session_median",
-                       "main_tokens_per_session_median", "entrypoints"],
+                       "main_tokens_per_session_median",
+                       "main_tokens_median_in_subagent_sessions", "entrypoints"],
           "properties": {
             "subagent_files_scanned": {"type": "integer", "minimum": 0},
             "sessions_with_subagents": {"type": "integer", "minimum": 0},
             "subagent_tokens_per_session_median": {"type": ["integer", "null"]},
             "main_tokens_per_session_median": {"type": ["integer", "null"]},
+            "main_tokens_median_in_subagent_sessions": {"type": ["integer", "null"]},
             "entrypoints": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
           }
         },

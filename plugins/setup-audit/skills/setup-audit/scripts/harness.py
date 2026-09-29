@@ -207,9 +207,27 @@ def _attribute(index, raw, path, event, tool_id):
     return None, 'unattributed'
 
 
-def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage, window_days, pct, scan=None):
-    """Build the harness_overhead snapshot section from in-memory transcript signals."""
+def _per_plugin_skills(extension_inventory):
+    """Skill counts of enabled plugins (any settings observation is True), max across registry rows."""
+    counts = {}
+    for p in extension_inventory.get('plugins', []):
+        if not any(o.get('value') is True for o in p.get('enablement_observations') or []):
+            continue
+        n = sum(1 for c in p.get('components', []) if c.get('kind') == 'skills')
+        counts[p['name']] = max(counts.get(p['name'], 0), n)
+    return [dict(plugin=name, skills=n) for name, n in counts.items() if n]
+
+
+def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage, window_days, pct, scan=None,
+             transcripts_read=True):
+    """Build the harness_overhead snapshot section from in-memory transcript signals.
+
+    transcripts_read is False for global scope, which reads no transcripts: only the static
+    signals (hook index and scan) are then meaningful.
+    """
     reasons = set(index_reasons)
+    if not transcripts_read:
+        reasons.add('transcripts_not_read')
     if transcript_coverage['main_files'].get('omitted'):
         reasons.add('main_file_cap')
     if transcript_coverage['subagent_files'].get('omitted'):
@@ -239,8 +257,7 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
     is_sdk = lambda p: raw.get('file_entrypoints', {}).get(p, '').startswith('sdk-')  # noqa: E731
     listings = sorted(x for x in raw['listings'] if not is_sdk(x[3]))
     sdk_excluded = sum(1 for x in raw['listings'] if is_sdk(x[3]))
-    per_plugin = [dict(plugin=p['name'], skills=n) for p in extension_inventory.get('plugins', [])
-                  if (n := sum(1 for c in p.get('components', []) if c.get('kind') == 'skills'))]
+    per_plugin = _per_plugin_skills(extension_inventory)
     if listings:
         first, last = listings[0], listings[-1]
         top = max(listings, key=lambda x: (x[1], x[2]))
@@ -257,10 +274,13 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
     for name, count in raw['entrypoints'].items():
         entry[name if name in ENTRYPOINTS else 'other'] += count
     sub = [v for v in raw['sub_tokens'].values() if v]
+    # Main tokens of the same sessions that spawned subagents, so the two medians compare like sessions.
+    paired = [m for k, v in raw['sub_tokens'].items() if v and (m := raw['main_tokens'].get(k))]
     spend = dict(subagent_files_scanned=transcript_coverage['subagent_files'].get('scanned', 0),
                  sessions_with_subagents=len(sub),
                  subagent_tokens_per_session_median=_int(pct(sub, 0.5)),
                  main_tokens_per_session_median=_int(pct([v for v in raw['main_tokens'].values() if v], 0.5)),
+                 main_tokens_median_in_subagent_sessions=_int(pct(paired, 0.5)),
                  entrypoints=entry)
 
     spawning, scan_reasons = (scan or scan_hooks)(index)

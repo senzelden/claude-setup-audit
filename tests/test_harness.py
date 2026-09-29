@@ -307,9 +307,9 @@ class Assemble(unittest.TestCase):
              {'plugin': 'c@m', 'command': 'dup', 'event': 'SessionStart'},
              {'plugin': 'd@m', 'command': 'run-d', 'event': 'SessionStart'}]
 
-    def build(self, raw, coverage=None, inventory=None, reasons=()):
+    def build(self, raw, coverage=None, inventory=None, reasons=(), **kw):
         return harness.assemble(raw, self.index, list(reasons), inventory or {'plugins': []},
-                                coverage or cover(), 30, collect.pct, scan=lambda index: ([], []))
+                                coverage or cover(), 30, collect.pct, scan=lambda index: ([], []), **kw)
 
     def test_startup_and_compact_sum_to_one_session(self):
         raw = raw_signals(sessions=1, injections=[('s1', 'SessionStart', 't1', 3000), ('s1', 'SessionStart', 't2', 1000)],
@@ -369,8 +369,10 @@ class Assemble(unittest.TestCase):
 
     def test_skill_listing_series_and_per_plugin_skills(self):
         raw = raw_signals(listings=[(2000.0, 79, 29782, 'p1'), (1000.0, 12, 5837, 'p2'), (1500.0, 90, 20000, 'p3')])
-        inv = {'plugins': [{'name': 'a@m', 'components': [{'kind': 'skills'}, {'kind': 'skills'}, {'kind': 'agents'}]},
-                           {'name': 'b@m', 'components': [{'kind': 'hooks'}]}]}
+        on = [{'source': 'settings.json', 'value': True}]
+        inv = {'plugins': [{'name': 'a@m', 'enablement_observations': on,
+                            'components': [{'kind': 'skills'}, {'kind': 'skills'}, {'kind': 'agents'}]},
+                           {'name': 'b@m', 'enablement_observations': on, 'components': [{'kind': 'hooks'}]}]}
         series = self.build(raw, inventory=inv)['skill_listing_series']
         self.assertEqual(series['sessions'], 3)
         self.assertEqual(series['first'], {'date': '1970-01-01', 'skill_count': 12, 'chars': 5837})
@@ -378,6 +380,24 @@ class Assemble(unittest.TestCase):
         self.assertEqual(series['max'], {'skill_count': 90, 'chars': 20000})
         self.assertEqual(series['sdk_sessions_excluded'], 0)
         self.assertEqual(series['per_plugin_skills'], [{'plugin': 'a@m', 'skills': 2}])
+
+    def test_per_plugin_skills_only_enabled_plugins_once_each(self):
+        skills = lambda n: [{'kind': 'skills'}] * n  # noqa: E731
+        obs = lambda *values: [{'source': 's', 'value': v} for v in values]  # noqa: E731
+        inv = {'plugins': [{'name': 'a@m', 'enablement_observations': obs(True), 'components': skills(2)},
+                           {'name': 'off@m', 'enablement_observations': obs(False), 'components': skills(4)},
+                           {'name': 'unset@m', 'enablement_observations': [], 'components': skills(4)},
+                           {'name': 'str@m', 'enablement_observations': obs('true'), 'components': skills(4)},
+                           {'name': 'mixed@m', 'enablement_observations': obs(False, True), 'components': skills(1)},
+                           {'name': 'a@m', 'enablement_observations': obs(True), 'components': skills(3)}]}
+        series = self.build(raw_signals(listings=[(1.0, 1, 1, 'p')]), inventory=inv)['skill_listing_series']
+        self.assertEqual(series['per_plugin_skills'], [{'plugin': 'a@m', 'skills': 3}, {'plugin': 'mixed@m', 'skills': 1}])
+
+    def test_global_scope_without_transcripts_is_incomplete(self):
+        out = self.build(raw_signals(listings=[(1.0, 1, 1, 'p')]), transcripts_read=False)
+        self.assertFalse(out['complete'])
+        self.assertEqual(out['incomplete_reasons'], ['transcripts_not_read'])
+        self.assertTrue(self.build(raw_signals(listings=[(1.0, 1, 1, 'p')]))['complete'])
 
     def test_no_listings_is_null_and_not_observed(self):
         out = self.build(raw_signals())
@@ -387,11 +407,15 @@ class Assemble(unittest.TestCase):
 
     def test_subagent_spend_and_entrypoints(self):
         raw = raw_signals(entrypoints={'cli': 2, 'sdk-py': 1, 'weird': 1},
-                          main_tokens={('p', 's1'): 100, ('p', 's2'): 300}, sub_tokens={('p', 's1'): 50})
+                          main_tokens={('p', 's1'): 100, ('p', 's2'): 300, ('p', 's3'): 900, ('p', 's4'): 1000},
+                          sub_tokens={('p', 's1'): 50, ('p', 's3'): 70, ('p', 'gone'): 5})
         spend = self.build(raw, coverage=cover(sub_scanned=4))['subagent_spend']
-        self.assertEqual(spend, {'subagent_files_scanned': 4, 'sessions_with_subagents': 1,
-                                 'subagent_tokens_per_session_median': 50, 'main_tokens_per_session_median': 200,
+        self.assertEqual(spend, {'subagent_files_scanned': 4, 'sessions_with_subagents': 3,
+                                 'subagent_tokens_per_session_median': 50, 'main_tokens_per_session_median': 600,
+                                 'main_tokens_median_in_subagent_sessions': 500,
                                  'entrypoints': {'cli': 2, 'sdk-py': 1, 'sdk-cli': 0, 'other': 1}})
+        none = self.build(raw_signals(main_tokens={('p', 's1'): 100}))['subagent_spend']
+        self.assertIsNone(none['main_tokens_median_in_subagent_sessions'])
 
     def test_caps_malformed_and_index_reasons_make_it_incomplete(self):
         out = self.build(raw_signals(malformed=1, listings=[(1.0, 1, 1, 'p')]),
@@ -404,12 +428,16 @@ class Assemble(unittest.TestCase):
 class EndToEnd(FakeHome):
     def test_snapshot_has_valid_private_harness_section(self):
         secret = 'sk-ant-api03-' + 'A' * 40
-        _, s = install(self, hooks=session_start(f'echo {secret}'), files={'hooks/x.sh': f'TOKEN={secret}\n'})
+        canary = 'HARNESS-CANARY-7f3a'  # does not look like a secret, so redaction cannot hide it
+        command = f'sh ${{CLAUDE_PLUGIN_ROOT}}/hooks/x.sh {canary} {secret}'
+        _, s = install(self, hooks=session_start(command), files={'hooks/x.sh': f'TOKEN={secret} {canary}\n'})
         self.write('.claude/settings.json', {'enabledPlugins': s['enabled_plugins']})
         self.write('.claude/projects/-p/s1.jsonl', '\n'.join(json.dumps(r) for r in [
-            attachment('hook_success', toolUseID='t1', command=f'echo {secret}', hookEvent='SessionStart'),
-            attachment('hook_additional_context', toolUseID='t1', hookEvent='SessionStart', content=secret),
-            attachment('skill_listing', isInitial=True, skillCount=2, content=secret)]))
+            attachment('hook_success', toolUseID='u-1', command=command, hookEvent='SessionStart',
+                       stdout=canary),
+            attachment('hook_additional_context', toolUseID='SessionStart', hookEvent='SessionStart',
+                       content=secret + canary),
+            attachment('skill_listing', isInitial=True, skillCount=2, content=secret + canary)]))
         out = os.path.join(self.home, 'snap.json')
         with unittest.mock.patch('sys.argv', ['collect.py', '--claude-dir', self.claude, '--out', out]), \
                 unittest.mock.patch.object(collect, '_write_snapshot',
@@ -417,9 +445,26 @@ class EndToEnd(FakeHome):
             collect.main()
         text = Path(out).read_text()
         self.assertNotIn(secret, text)
-        self.assertNotIn('echo', json.dumps(json.loads(text)['harness_overhead']))
-        section = json.loads(text)['harness_overhead']
+        snap = json.loads(text)
+        # extensions may show a redacted, truncated hook command target (pre-existing, not this section).
+        self.assertEqual([k for k in snap if canary in json.dumps(snap[k])], ['extensions'])
+        for key in ('harness_overhead', 'transcripts'):
+            self.assertNotIn(canary, json.dumps(snap[key]), key)
+        self.assertNotIn(canary, json.dumps(snap['global']['plugin_session_start_hooks']))
+        self.assertNotIn('x.sh', json.dumps(snap['harness_overhead']))
+        section = snap['harness_overhead']
         self.assertEqual(section['injected_context']['sources'][0]['plugin'], 'demo@market')
         self.assertEqual(section['skill_listing_series']['last']['skill_count'], 2)
         sources = {c['source']: c for c in json.loads(text)['coverage']['sources']}
         self.assertIn('harness_overhead', sources)
+
+    def test_global_scope_marks_transcripts_not_read(self):
+        out = os.path.join(self.home, 'snap.json')
+        for scope, expected in (('global', True), ('all', False)):
+            with unittest.mock.patch('sys.argv', ['collect.py', '--claude-dir', self.claude, '--out', out,
+                                                  '--scope', scope]), \
+                    unittest.mock.patch.object(collect, '_write_snapshot',
+                                               lambda path, text: Path(path).write_text(text)):
+                collect.main()
+            reasons = json.loads(Path(out).read_text())['harness_overhead']['incomplete_reasons']
+            self.assertEqual('transcripts_not_read' in reasons, expected, scope)

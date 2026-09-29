@@ -1525,7 +1525,8 @@ def main():
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["harness_overhead"] = harness.assemble(
         harness_raw, hook_index, hook_index_reasons, snap["extensions"],
-        snap["transcripts"]["coverage"], a.days, pct)
+        snap["transcripts"]["coverage"], a.days, pct,
+        transcripts_read=project_filter != set())  # global scope reads no transcripts
     if a.clarity_pilot:
         snap["instruction_clarity"] = clarity.review(snap["instructions"], snap["extensions"])
     snap["coverage"] = snapshot_coverage(snap, roots)

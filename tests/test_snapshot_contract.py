@@ -86,16 +86,19 @@ class SnapshotContract(FakeHome):
             "subagent_spend": {"subagent_files_scanned": 0, "sessions_with_subagents": 0,
                                "subagent_tokens_per_session_median": None,
                                "main_tokens_per_session_median": 100,
+                               "main_tokens_median_in_subagent_sessions": None,
                                "entrypoints": {"cli": 2, "sdk-py": 0, "sdk-cli": 0, "other": 0}},
             "model_spawning_hooks": [{"plugin": "a@m", "hook_event": "Stop", "file": "hooks/r.sh",
                                       "line": 1, "pattern": "claude_print"}]}
         contract.validate_snapshot(snap)
-        for reason in ("plugin_registry_unreadable", "hook_file_unreadable"):
+        for reason in ("plugin_registry_unreadable", "hook_file_unreadable", "transcripts_not_read"):
             accepted = copy.deepcopy(snap)
             accepted["harness_overhead"].update(complete=False, incomplete_reasons=[reason])
             contract.validate_snapshot(accepted)
         for mutate in (lambda h: h.update(incomplete_reasons=["bogus"]),
-                       lambda h: h["subagent_spend"]["entrypoints"].update(cli=-1)):
+                       lambda h: h["subagent_spend"]["entrypoints"].update(cli=-1),
+                       lambda h: h["subagent_spend"].update(main_tokens_median_in_subagent_sessions="1"),
+                       lambda h: h["subagent_spend"].pop("main_tokens_median_in_subagent_sessions")):
             altered = copy.deepcopy(snap)
             mutate(altered["harness_overhead"])
             with self.assertRaises(contract.SnapshotError):
