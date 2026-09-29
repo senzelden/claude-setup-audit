@@ -78,7 +78,11 @@ roots containing spaces are not followed. `complete: false` lists `incomplete_re
 - `script_unresolved`: a hook script path was a symlink, outside the plugin root, missing or
   unreadable, so it was not scanned.
 - `script_truncated`: a hook script exceeded the scan size limit; only its start was scanned.
-- `transcripts_not_read`: global scope; no transcript signal was collected.
+- `transcripts_not_read`: `--scope global` only, the sole caller path that passes
+  `transcripts_read=False` (`collect.build_snapshot` filters transcripts by the audited project
+  roots, and only global scope has none); no transcript signal was collected. `--scope project`
+  and `--scope all` always read transcripts, even when no session matches: an empty window
+  yields `not_observed` instead.
 - `not_observed`: no non-SDK `skill_listing` record was seen (`skill_listing_series` is null),
   either because none exist or because every one came from an SDK session (those are counted in
   `sdk_sessions_excluded` only when a series exists); reported but does not make the section

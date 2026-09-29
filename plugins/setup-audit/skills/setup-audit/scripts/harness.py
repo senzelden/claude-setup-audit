@@ -225,8 +225,10 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
              transcripts_read=True):
     """Build the harness_overhead snapshot section from in-memory transcript signals.
 
-    transcripts_read is False for global scope, which reads no transcripts: only the static
-    signals (hook index and scan) are then meaningful.
+    transcripts_read is False only when collect.build_snapshot runs with --scope global (its
+    project filter is the empty set, the only caller passing False): no transcripts are read,
+    so only the static signals (hook index and scan) are meaningful. Scopes project and all
+    pass True, even when no session matches.
     """
     reasons = set(index_reasons)
     if not transcripts_read:
