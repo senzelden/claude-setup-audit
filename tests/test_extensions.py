@@ -74,3 +74,16 @@ class ExtensionInventory(FakeHome):
             result = self.scan()
         self.assertEqual(result['mcp_servers'][0]['status'], 'unavailable')
         self.assertTrue(any(s.get('reason') == 'server_limit' for s in result['sources']))
+
+    def test_only_skill_md_counts_as_a_skill(self):
+        root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
+        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {
+            'demo@market': [{'scope': 'user', 'installPath': root, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/market/demo/1/.claude-plugin/plugin.json', {'name': 'demo'})
+        self.write('.claude/plugins/cache/market/demo/1/skills/a/SKILL.md', '---\ndescription: A\n---\nBody')
+        self.write('.claude/plugins/cache/market/demo/1/skills/a/reference.md', 'Reference doc')
+        self.write('.claude/plugins/cache/market/demo/1/agents/helper.md', '---\nname: helper\n---\nAgent')
+        plugin = self.scan()['plugins'][0]
+        skills = [c for c in plugin['components'] if c['kind'] == 'skills']
+        self.assertEqual([os.path.basename(c['source']) for c in skills], ['SKILL.md'])
+        self.assertEqual(len([c for c in plugin['components'] if c['kind'] == 'agents']), 1)

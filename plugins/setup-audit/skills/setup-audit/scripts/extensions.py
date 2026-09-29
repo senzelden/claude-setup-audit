@@ -209,7 +209,8 @@ def component_files(plugin, base, kind, sources, redact):
             if i >= 100 or len(paths) >= 100:
                 sources.append(inventory.source(base, 'plugin', 'partial', reason='component_scan_limit'))
                 break
-            paths.extend(os.path.join(directory, f) for f in sorted(files) if f.endswith('.md'))
+            wanted = (lambda f: f == 'SKILL.md') if kind == 'skills' else (lambda f: f.endswith('.md'))
+            paths.extend(os.path.join(directory, f) for f in sorted(files) if wanted(f))
     else:
         paths = [base]
     if len(paths) > 100:
