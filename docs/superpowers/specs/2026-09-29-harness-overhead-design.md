@@ -143,8 +143,9 @@ Rules:
   (`anthropic.Anthropic(`, `new Anthropic(`, `api.anthropic.com`). Commented-out lines (`#`, `//`)
   are skipped. Only file (relative to plugin root), line and pattern id are emitted.
 - **Completeness.** `complete: false` with reasons (`main_file_cap`, `subagent_file_cap`,
-  `malformed_records`, `plugin_root_unreadable`, `script_unresolved`) when any applies. No
-  `skill_listing` records at all yields `skill_listing_series: null` with reason `not_observed`.
+  `malformed_records`, `plugin_root_unreadable`, `script_unresolved`, `script_truncated`) when any
+  applies. No `skill_listing` records at all yields `skill_listing_series: null` with reason
+  `not_observed`, which is reported but does not make the section incomplete.
 - **Privacy.** No content, command strings, script text, prompt text or hook output is stored.
   Plugin names, relative script paths, counts, sizes and dates only.
 
