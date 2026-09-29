@@ -1524,6 +1524,7 @@ def build_snapshot(a):
         path = os.path.abspath(os.path.expanduser(a.drift_log))
         display = path.replace(HOME, "~")
         try:
+            path = drift_log.check_path(path, _out_allowed_dirs())
             entries, malformed = drift_log.read(path)
             snap["drift_signals"] = drift_log.summarize(entries, malformed, display)
         except drift_log.DriftLogError:

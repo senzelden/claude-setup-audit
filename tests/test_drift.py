@@ -423,3 +423,16 @@ class CollectorDriftLog(FakeHome):
 
     def test_without_flag_no_section(self):
         self.assertNotIn('drift_signals', collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global')))
+
+    def test_path_outside_allowed_dirs_is_invalid(self):
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global',
+                                             '--drift-log', '/etc/drift.jsonl'))
+        self.assertEqual(snap['drift_signals'], {'status': 'invalid', 'path': '/etc/drift.jsonl'})
+
+    def test_symlinked_log_is_invalid(self):
+        real = os.path.join(self.home, 'real.jsonl')
+        Path(real).write_text('')
+        link = os.path.join(self.home, 'link.jsonl')
+        os.symlink(real, link)
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'global', '--drift-log', link))
+        self.assertEqual(snap['drift_signals']['status'], 'invalid')

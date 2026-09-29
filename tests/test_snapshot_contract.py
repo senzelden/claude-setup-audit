@@ -85,7 +85,8 @@ class SnapshotContract(FakeHome):
         contract.validate_snapshot({**snap, "drift_signals": {"status": "invalid", "path": "~/d.jsonl"}})
         for mutate in (lambda d: d.update(status="bogus"), lambda d: d.update(entries=-1),
                        lambda d: d["signals"]["cache_hit_ratio"].update(crossings=-1),
-                       lambda d: d["signals"]["cache_hit_ratio"].pop("scopes")):
+                       lambda d: d["signals"]["cache_hit_ratio"].pop("scopes"),
+                       lambda d: d["signals"]["cache_hit_ratio"].pop("last_value")):
             altered = copy.deepcopy(snap)
             mutate(altered["drift_signals"])
             with self.assertRaises(contract.SnapshotError):
