@@ -74,9 +74,9 @@ def match_command(index, command):
 
 
 MAX_SCRIPT = 64 * 1024
-# Word boundaries exclude names such as claude-setup or myclaude.
+# Word boundaries exclude names such as claude-setup or myclaude; a backtick-quoted `claude` is prose.
 PATTERNS = (
-    ('claude_print', re.compile(r'(?<![\w.-])claude(?![\w.-])[^\n|;&]*?\s(?:-p|--print)(?![\w-])')),
+    ('claude_print', re.compile(r'(?<![\w.`-])claude(?![\w.-])[^\n|;&]*?\s(?:-p|--print)(?![\w-])')),
     ('agent_sdk_py', re.compile(r'\bclaude_agent_sdk\b')),
     ('agent_sdk_js', re.compile(r'@anthropic-ai/claude-agent-sdk')),
     ('anthropic_client', re.compile(r'anthropic\.Anthropic\(|new Anthropic\(|api\.anthropic\.com')),

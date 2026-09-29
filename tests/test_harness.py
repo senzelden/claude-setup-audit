@@ -104,6 +104,11 @@ class StaticScan(FakeHome):
         found, _ = self.scan(self.stop('claude-setup -p x; myclaude --print'), {})
         self.assertEqual(found, [])
 
+    def test_backtick_quoted_claude_in_prose_is_not_flagged(self):
+        found, _ = self.scan(self.stop('python3 ${CLAUDE_PLUGIN_ROOT}/hooks/r.py'),
+                             {'hooks/r.py': '"""Unlike a hook, see `claude -p` docs."""\nclaude -p x\n'})
+        self.assertEqual([(f['line'], f['pattern']) for f in found], [(2, 'claude_print')])
+
     def test_symlink_escape_missing_and_truncation(self):
         outside = self.write('outside.sh', 'claude -p x\n')
         root, s = install(self, hooks=self.stop('sh ${CLAUDE_PLUGIN_ROOT}/hooks/link.sh; '
