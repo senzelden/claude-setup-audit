@@ -665,8 +665,14 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
             content = a["content"]
             size = len(content) if isinstance(content, str) else len(json.dumps(content, separators=(",", ":")))
             raw["injections"].append((path, a["hookEvent"], tool_id, size))
-        elif a.get("type") == "hook_success" and tool_id and isinstance(a.get("command"), str):
-            raw["commands"][(path, tool_id)] = a["command"]
+        elif a.get("type") == "hook_success" and isinstance(a.get("command"), str):
+            if tool_id:
+                raw["commands"][(path, tool_id)] = a["command"]
+            # SessionStart injections carry the event name as toolUseID, so they are resolved
+            # against the hooks of that event that printed something (harness.assemble).
+            stdout = a.get("stdout")
+            if isinstance(a.get("hookEvent"), str) and isinstance(stdout, str) and stdout.strip():
+                raw["event_commands"].setdefault((path, a["hookEvent"]), set()).add(a["command"])
     if record.get("type") == "assistant" and (not is_top or not record.get("isSidechain")):
         msg = record.get("message") if isinstance(record.get("message"), dict) else {}
         usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
@@ -682,7 +688,7 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
         raw["main_tokens" if is_top else "sub_tokens"][session_key] += total
 
 
-def harness_listing(raw, record, timestamp):
+def harness_listing(raw, record, timestamp, path):
     """First initial skill_listing of a main session; returns True once one is recorded."""
     a = record.get("attachment")
     if not isinstance(a, dict) or a.get("type") != "skill_listing" or a.get("isInitial") is not True:
@@ -690,7 +696,7 @@ def harness_listing(raw, record, timestamp):
     if type(a.get("skillCount")) is not int:
         return False
     content = a.get("content")
-    raw["listings"].append((timestamp, a["skillCount"], len(content) if isinstance(content, str) else 0))
+    raw["listings"].append((timestamp, a["skillCount"], len(content) if isinstance(content, str) else 0, path))
     return True
 
 
@@ -728,8 +734,9 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
-    raw = {"sessions": 0, "injections": [], "commands": {}, "listings": [], "entrypoints": Counter(),
-           "main_tokens": defaultdict(int), "sub_tokens": defaultdict(int), "malformed": 0}
+    raw = {"sessions": 0, "injections": [], "commands": {}, "event_commands": {}, "listings": [],
+           "entrypoints": Counter(), "file_entrypoints": {}, "main_tokens": defaultdict(int),
+           "sub_tokens": defaultdict(int), "malformed": 0}
     for path in top + sub:
         need_baseline = is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
@@ -772,9 +779,11 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                         entry_seen = True
                         ep = record.get("entrypoint")
                         if ep is not None:
-                            raw["entrypoints"][ep if isinstance(ep, str) else "other"] += 1
+                            ep = ep if isinstance(ep, str) else "other"
+                            raw["entrypoints"][ep] += 1
+                            raw["file_entrypoints"][path] = ep
                     if is_top and not listed and record.get("type") == "attachment":
-                        listed = harness_listing(raw, record, timestamp)
+                        listed = harness_listing(raw, record, timestamp, path)
                     if is_top and '"tool_result"' in line:
                         if ENV_ERROR_RE.search(line):
                             env_hits[proj_key] += 1

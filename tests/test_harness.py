@@ -162,8 +162,9 @@ class TranscriptSignals(FakeHome):
         self.assertEqual(h['sessions'], 1)
         self.assertEqual(h['injections'], [(main, 'SessionStart', 't1', 40)])
         self.assertEqual(h['commands'], {(main, 't1'): 'run'})
-        self.assertEqual([(c, n) for _, c, n in h['listings']], [(12, 100)])
+        self.assertEqual([(c, n, p) for _, c, n, p in h['listings']], [(12, 100, main)])
         self.assertEqual(dict(h['entrypoints']), {'sdk-py': 1})
+        self.assertEqual(h['file_entrypoints'], {main: 'sdk-py'})
         self.assertEqual(h['main_tokens'], {('-p', 's1'): 10})
         self.assertEqual(h['sub_tokens'], {('-p', 's1'): 10})
 
@@ -176,7 +177,7 @@ class TranscriptSignals(FakeHome):
     def test_bad_skill_listing_fields_are_ignored(self):
         self.put('-p/s1.jsonl', [attachment('skill_listing', isInitial=True, skillCount='12', content='y'),
                                  attachment('skill_listing', isInitial=True, skillCount=3, content=None)])
-        self.assertEqual([(c, n) for _, c, n in collect.collect_transcripts(days=30)['_harness']['listings']],
+        self.assertEqual([(c, n) for _, c, n, _ in collect.collect_transcripts(days=30)['_harness']['listings']],
                          [(3, 0)])
 
     def test_malformed_lines_and_non_string_content(self):
@@ -196,7 +197,21 @@ class TranscriptSignals(FakeHome):
     def test_non_string_entrypoint_counts_as_other(self):
         self.put('-p/s1.jsonl', [assistant('m1', 1, entrypoint=7)])
         self.put('-p/s2.jsonl', [assistant('m2', 1, entrypoint=None)])
-        self.assertEqual(dict(collect.collect_transcripts(days=30)['_harness']['entrypoints']), {'other': 1})
+        h = collect.collect_transcripts(days=30)['_harness']
+        self.assertEqual(dict(h['entrypoints']), {'other': 1})
+        self.assertEqual(h['file_entrypoints'], {os.path.join(self.claude, 'projects', '-p', 's1.jsonl'): 'other'})
+
+    def test_event_commands_keep_only_hooks_that_printed(self):
+        self.put('-p/s1.jsonl', [
+            attachment('hook_success', toolUseID='u1', command='quiet', hookEvent='SessionStart', stdout=''),
+            attachment('hook_success', toolUseID='u2', command='blank', hookEvent='SessionStart', stdout=' \n'),
+            attachment('hook_success', toolUseID='u3', command='nonstr', hookEvent='SessionStart', stdout=5),
+            attachment('hook_success', toolUseID='u4', command='loud', hookEvent='SessionStart', stdout='hi'),
+            attachment('hook_additional_context', toolUseID='SessionStart', hookEvent='SessionStart',
+                       content='x')])
+        main = os.path.join(self.claude, 'projects', '-p', 's1.jsonl')
+        h = collect.collect_transcripts(days=30)['_harness']
+        self.assertEqual(h['event_commands'], {(main, 'SessionStart'): {'loud'}})
 
 
 def cover(main_omitted=0, sub_omitted=0, sub_scanned=0):
@@ -204,8 +219,8 @@ def cover(main_omitted=0, sub_omitted=0, sub_scanned=0):
 
 
 def raw_signals(**over):
-    raw = {'sessions': 0, 'injections': [], 'commands': {}, 'listings': [], 'entrypoints': {},
-           'main_tokens': {}, 'sub_tokens': {}, 'malformed': 0}
+    raw = {'sessions': 0, 'injections': [], 'commands': {}, 'event_commands': {}, 'listings': [],
+           'entrypoints': {}, 'file_entrypoints': {}, 'main_tokens': {}, 'sub_tokens': {}, 'malformed': 0}
     raw.update(over)
     return raw
 
@@ -213,7 +228,8 @@ def raw_signals(**over):
 class Assemble(unittest.TestCase):
     index = [{'plugin': 'a@m', 'command': 'run-a', 'event': 'SessionStart'},
              {'plugin': 'b@m', 'command': 'dup', 'event': 'SessionStart'},
-             {'plugin': 'c@m', 'command': 'dup', 'event': 'SessionStart'}]
+             {'plugin': 'c@m', 'command': 'dup', 'event': 'SessionStart'},
+             {'plugin': 'd@m', 'command': 'run-d', 'event': 'SessionStart'}]
 
     def build(self, raw, coverage=None, inventory=None, reasons=()):
         return harness.assemble(raw, self.index, list(reasons), inventory or {'plugins': []},
@@ -235,8 +251,48 @@ class Assemble(unittest.TestCase):
         self.assertIsNone(rows[('ambiguous', 'SessionStart')]['plugin'])
         self.assertEqual(self.build(raw)['injected_context']['sessions_with_injection'], 2)
 
+    def fallback(self, candidates, tool_id='SessionStart'):
+        raw = raw_signals(sessions=1, injections=[('s1', 'SessionStart', tool_id, 400)],
+                          event_commands={('s1', 'SessionStart'): set(candidates)})
+        row, = self.build(raw)['injected_context']['sources']
+        return row['plugin'], row['attribution']
+
+    def test_event_name_tool_id_is_attributed_through_the_event_fallback(self):
+        self.assertEqual(self.fallback({'run-a'}), ('a@m', 'matched'))
+
+    def test_event_fallback_with_two_plugins_or_an_ambiguous_command_is_ambiguous(self):
+        self.assertEqual(self.fallback({'run-a', 'run-d'}), (None, 'ambiguous'))
+        self.assertEqual(self.fallback({'dup'}), (None, 'ambiguous'))
+
+    def test_event_fallback_ignores_user_hooks_and_needs_a_candidate(self):
+        self.assertEqual(self.fallback({'my-user-hook', 'run-a'}), ('a@m', 'matched'))
+        self.assertEqual(self.fallback({'my-user-hook'}), (None, 'unattributed'))
+        self.assertEqual(self.fallback(set()), (None, 'unattributed'))
+
+    def test_exact_pairing_wins_over_the_event_fallback(self):
+        raw = raw_signals(sessions=1, injections=[('s1', 'SessionStart', 't1', 400)],
+                          commands={('s1', 't1'): 'user-hook'},
+                          event_commands={('s1', 'SessionStart'): {'run-a'}})
+        row, = self.build(raw)['injected_context']['sources']
+        self.assertEqual((row['plugin'], row['attribution']), (None, 'unattributed'))
+
+    def test_skill_listing_series_excludes_sdk_sessions(self):
+        raw = raw_signals(listings=[(1000.0, 90, 900, 'sdk'), (2000.0, 12, 120, 'cli'), (3000.0, 20, 200, 'none'),
+                                    (4000.0, 30, 300, 'sdk2')],
+                          file_entrypoints={'sdk': 'sdk-py', 'sdk2': 'sdk-cli', 'cli': 'cli'})
+        series = self.build(raw)['skill_listing_series']
+        self.assertEqual(series['sessions'], 2)
+        self.assertEqual(series['sdk_sessions_excluded'], 2)
+        self.assertEqual((series['first']['skill_count'], series['last']['skill_count']), (12, 20))
+        self.assertEqual(series['max'], {'skill_count': 20, 'chars': 200})
+
+    def test_only_sdk_listings_is_null_and_not_observed(self):
+        out = self.build(raw_signals(listings=[(1.0, 5, 50, 'p')], file_entrypoints={'p': 'sdk-py'}))
+        self.assertIsNone(out['skill_listing_series'])
+        self.assertEqual(out['incomplete_reasons'], ['not_observed'])
+
     def test_skill_listing_series_and_per_plugin_skills(self):
-        raw = raw_signals(listings=[(2000.0, 79, 29782), (1000.0, 12, 5837), (1500.0, 90, 20000)])
+        raw = raw_signals(listings=[(2000.0, 79, 29782, 'p1'), (1000.0, 12, 5837, 'p2'), (1500.0, 90, 20000, 'p3')])
         inv = {'plugins': [{'name': 'a@m', 'components': [{'kind': 'skills'}, {'kind': 'skills'}, {'kind': 'agents'}]},
                            {'name': 'b@m', 'components': [{'kind': 'hooks'}]}]}
         series = self.build(raw, inventory=inv)['skill_listing_series']
@@ -244,6 +300,7 @@ class Assemble(unittest.TestCase):
         self.assertEqual(series['first'], {'date': '1970-01-01', 'skill_count': 12, 'chars': 5837})
         self.assertEqual(series['last']['skill_count'], 79)
         self.assertEqual(series['max'], {'skill_count': 90, 'chars': 20000})
+        self.assertEqual(series['sdk_sessions_excluded'], 0)
         self.assertEqual(series['per_plugin_skills'], [{'plugin': 'a@m', 'skills': 2}])
 
     def test_no_listings_is_null_and_not_observed(self):
@@ -261,7 +318,7 @@ class Assemble(unittest.TestCase):
                                  'entrypoints': {'cli': 2, 'sdk-py': 1, 'sdk-cli': 0, 'other': 1}})
 
     def test_caps_malformed_and_index_reasons_make_it_incomplete(self):
-        out = self.build(raw_signals(malformed=1, listings=[(1.0, 1, 1)]),
+        out = self.build(raw_signals(malformed=1, listings=[(1.0, 1, 1, 'p')]),
                          coverage=cover(main_omitted=1, sub_omitted=2), reasons=['plugin_root_unreadable'])
         self.assertFalse(out['complete'])
         self.assertEqual(out['incomplete_reasons'], ['main_file_cap', 'malformed_records',

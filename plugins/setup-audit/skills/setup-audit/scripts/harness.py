@@ -148,6 +148,26 @@ def _day(ts):
     return datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d')
 
 
+def _attribute(index, raw, path, event, tool_id):
+    """Exact toolUseID pairing first; otherwise the same file's hooks of that event that printed.
+
+    SessionStart injections carry the event name as toolUseID (observed 2026-09-29), so they never
+    pair. The fallback keeps only candidates that match a plugin hook; user and project hooks drop
+    out. One plugin left is matched, several (or an ambiguous command) are ambiguous. Never guesses.
+    """
+    command = raw['commands'].get((path, tool_id)) if tool_id else None
+    if command is not None:
+        return match_command(index, command)
+    results = [match_command(index, c) for c in sorted(raw.get('event_commands', {}).get((path, event), ()))]
+    results = [r for r in results if r[1] != 'unattributed']
+    plugins = {p for p, _ in results}
+    if any(a == 'ambiguous' for _, a in results) or len(plugins) > 1:
+        return None, 'ambiguous'
+    if plugins:
+        return plugins.pop(), 'matched'
+    return None, 'unattributed'
+
+
 def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage, window_days, pct, scan=None):
     """Build the harness_overhead snapshot section from in-memory transcript signals."""
     reasons = set(index_reasons)
@@ -161,7 +181,7 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
     per_session = defaultdict(lambda: defaultdict(int))  # source key -> session path -> chars
     records = defaultdict(int)
     for path, event, tool_id, chars in raw['injections']:
-        plugin, attribution = match_command(index, raw['commands'].get((path, tool_id)) if tool_id else None)
+        plugin, attribution = _attribute(index, raw, path, event, tool_id)
         key = (plugin, attribution, event)
         per_session[key][path] += chars
         records[key] += 1
@@ -175,7 +195,11 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
                             est_tokens_per_session_median=_int(median / 4)))
     sources.sort(key=lambda s: (-s['sessions'], s['plugin'] or '', s['attribution'], s['hook_event']))
 
-    listings = sorted(raw['listings'])
+    # SDK sessions list different skills than interactive ones; mixing them breaks the series.
+    # No or unknown entrypoint counts as non-SDK.
+    is_sdk = lambda p: raw.get('file_entrypoints', {}).get(p, '').startswith('sdk-')  # noqa: E731
+    listings = sorted(x for x in raw['listings'] if not is_sdk(x[3]))
+    sdk_excluded = sum(1 for x in raw['listings'] if is_sdk(x[3]))
     per_plugin = [dict(plugin=p['name'], skills=n) for p in extension_inventory.get('plugins', [])
                   if (n := sum(1 for c in p.get('components', []) if c.get('kind') == 'skills'))]
     if listings:
@@ -184,7 +208,8 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
         series = dict(sessions=len(listings),
                       first=dict(date=_day(first[0]), skill_count=first[1], chars=first[2]),
                       last=dict(date=_day(last[0]), skill_count=last[1], chars=last[2]),
-                      max=dict(skill_count=top[1], chars=top[2]), per_plugin_skills=per_plugin)
+                      max=dict(skill_count=top[1], chars=top[2]), sdk_sessions_excluded=sdk_excluded,
+                      per_plugin_skills=per_plugin)
     else:
         series = None
         reasons.add('not_observed')
