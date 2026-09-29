@@ -125,6 +125,18 @@ class HookIndex(FakeHome):
             self.assertNotIn('escaped', [e['command'] for e in index])
             self.assertEqual(reasons, ['hook_file_unreadable'], ref)
 
+    def test_unreadable_manifest_is_reported_and_default_hooks_still_indexed(self):
+        root, s = install(self, hooks=session_start('a'))
+        manifest = os.path.join(root, '.claude-plugin', 'plugin.json')
+        for content in ('{not json', '[1]'):
+            with open(manifest, 'w') as f:
+                f.write(content)
+            index, reasons = harness.hook_index(self.claude, [s])
+            self.assertEqual(([e['command'] for e in index], reasons), (['a'], ['manifest_unreadable']), content)
+        os.remove(manifest)  # a missing manifest is normal
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual(([e['command'] for e in index], reasons), (['a'], []))
+
     def test_manifest_path_to_default_hooks_file_is_indexed_once(self):
         _, s = install(self, hooks=session_start('a'), manifest={'name': 'demo', 'hooks': './hooks/hooks.json'})
         index, reasons = harness.hook_index(self.claude, [s])

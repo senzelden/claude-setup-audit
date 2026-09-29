@@ -83,7 +83,10 @@ def hook_index(claude, settings):
             version = str(row.get('version', 'unknown'))
             manifest_path = os.path.join(root, '.claude-plugin', 'plugin.json')
             default = os.path.join(root, 'hooks', 'hooks.json')
-            declared = (_json(manifest_path)[0] or {}).get('hooks')
+            manifest, why = _json(manifest_path)
+            if why == 'unreadable':  # a missing manifest is normal
+                reasons.add('manifest_unreadable')
+            declared = (manifest or {}).get('hooks')
             # Manifest hooks: an inline object, a path string, or a list of either.
             for item in declared if isinstance(declared, list) else [declared]:
                 if isinstance(item, dict):

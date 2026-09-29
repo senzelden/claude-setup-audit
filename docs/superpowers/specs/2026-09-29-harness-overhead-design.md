@@ -159,8 +159,8 @@ Rules:
   are skipped. Only file (relative to plugin root), line and pattern id are emitted.
 - **Completeness.** `complete: false` with reasons (`main_file_cap`, `subagent_file_cap`,
   `malformed_records`, `plugin_registry_unreadable`, `plugin_root_unreadable`,
-  `hook_file_unreadable`, `script_unresolved`, `script_truncated`, `transcripts_not_read`) when any
-  applies. The registry reason covers a missing or malformed `installed_plugins.json` or an enabled
+  `hook_file_unreadable`, `manifest_unreadable`, `script_unresolved`, `script_truncated`,
+  `transcripts_not_read`) when any applies. The registry reason covers a missing or malformed `installed_plugins.json` or an enabled
   plugin without rows; the hook-file reason covers a hooks file that is a symlink, escapes the root,
   is unreadable, not an object or above 1 MiB. Global scope reads no transcripts
   (`transcripts_not_read`), so the section then holds only static signals. No `skill_listing` records at all yields `skill_listing_series: null` with reason

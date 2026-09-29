@@ -109,7 +109,8 @@ class SnapshotContract(FakeHome):
             "model_spawning_hooks": [{"plugin": "a@m", "hook_event": "Stop", "file": "hooks/r.sh",
                                       "line": 1, "pattern": "claude_print"}]}
         contract.validate_snapshot(snap)
-        for reason in ("plugin_registry_unreadable", "hook_file_unreadable", "transcripts_not_read"):
+        for reason in ("plugin_registry_unreadable", "hook_file_unreadable", "manifest_unreadable",
+                       "transcripts_not_read"):
             accepted = copy.deepcopy(snap)
             accepted["harness_overhead"].update(complete=False, incomplete_reasons=[reason])
             contract.validate_snapshot(accepted)

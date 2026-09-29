@@ -72,6 +72,9 @@ roots containing spaces are not followed. `complete: false` lists `incomplete_re
   (`hooks` as a path or a list of paths and inline objects, resolved against the plugin root) is a
   symlink, escapes the plugin root, is missing (manifest paths), unreadable, not a JSON object, or
   larger than 1 MiB.
+- `manifest_unreadable`: a plugin's `.claude-plugin/plugin.json` exists but is unreadable, not
+  valid JSON, not an object or larger than 1 MiB, so manifest-declared hooks were not indexed (the
+  default `hooks/hooks.json` is still indexed). A missing manifest is normal and adds no reason.
 - `script_unresolved`: a hook script path was a symlink, outside the plugin root, missing or
   unreadable, so it was not scanned.
 - `script_truncated`: a hook script exceeded the scan size limit; only its start was scanned.

@@ -441,7 +441,7 @@
         "complete": {"type": "boolean"},
         "incomplete_reasons": {"type": "array", "items": {"enum": ["main_file_cap", "subagent_file_cap",
           "malformed_records", "plugin_registry_unreadable", "plugin_root_unreadable", "hook_file_unreadable",
-          "script_unresolved", "script_truncated", "transcripts_not_read", "not_observed"]}},
+          "manifest_unreadable", "script_unresolved", "script_truncated", "transcripts_not_read", "not_observed"]}},
         "injected_context": {
           "type": "object",
           "required": ["sessions_with_injection", "sources"],
