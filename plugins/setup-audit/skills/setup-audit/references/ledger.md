@@ -65,7 +65,17 @@ Escalating writes a new entry with `supersedes` set to the old one.
 - Each edit is exactly `{file, kind, backup}`, plus `pointer` for the two `json_*` kinds. For
   `json_array_append` the pointer names the appended element (for example `/permissions/deny/3`);
   for `json_set` it names the value that was set. `backup` is the path of the pre-edit copy and
-  must exist on disk, or is `null` when the file did not exist before the edit.
+  must exist on disk, or is `null` when the file did not exist before the edit. A `json_set`
+  with a `null` backup is refused unless deleting the value leaves only empty objects in the
+  file; otherwise a backup is required so removal can restore the previous value.
+- Markdown blocks and hook scripts need their markers first; see "Markers and edit kinds". Add no
+  blank-line padding outside the Markdown markers: removal deletes only the marked lines.
+- A hook script's registration is recorded as a `json_array_append` edit in the same entry, even
+  when the hooks array was new. Without it the script can never be removed.
+- `record` runs the removal plan on every new edit and refuses the entry unless each one is
+  `removable` (for example, an appended value that already existed in the array is refused as an
+  ambiguous duplicate).
+- The report file stem becomes the entry's `run` and must be at most 120 characters.
 
 ## Selectors
 
@@ -77,15 +87,24 @@ Escalating writes a new entry with `supersedes` set to the old one.
 | `metric` | one labeled report metric (name, basis, unit, source) compared between reports |
 
 Keywords: 1 to 5 per selector, each 1 to 40 characters, literal strings (no regular expressions),
-matched case-insensitively. Keywords are redacted before they are stored.
+matched case-insensitively. A keyword that the collector's redaction would change (it looks like a
+secret) is refused, because a redacted keyword would never match again. The pattern text is
+redacted before it is stored.
+
+A `global`-scope snapshot collects no per-project sessions, so `record` accepts only `metric`
+selectors with it. A relative `project` in the snapshot scope is made absolute against the
+current directory, both when recording and when comparing.
 
 Counts are marked `complete: false`, and the verdict becomes `unknown`, when:
 
-- history is missing or a line is malformed, or a row has no session id;
+- history is missing, a row in the window has no session id, or a line at or after the first row
+  inside the window is malformed, undated or not an object. `history.jsonl` is append-only and
+  chronological, so bad lines before the window cannot hide an in-window prompt and are ignored;
 - for facet selectors (`friction_details`, `friction_category`): any facet is orphaned (no
   matching session metadata) or undated, a facet's `friction_counts` is malformed, or no facets
-  exist. Sessions that have session metadata but no facet are not a gap; they are simply not
-  scanned by facet selectors.
+  exist. Facet files are not ordered by time, so a single orphaned or undated facet may belong to
+  the window and makes the counts incomplete. Sessions that have session metadata but no facet
+  are not a gap; they are simply not scanned by facet selectors.
 
 A metric selector is complete only when the report's metric coverage is complete.
 
@@ -135,8 +154,9 @@ Block-level HTML comments in CLAUDE.md files are stripped before injection into 
 `.claude/rules/` or memory files; markers there may cost a few tokens.
 
 `record` refuses a symlinked edited file: removal refuses symlinks, so such an edit could never be
-removed. It also refuses ambiguous or missing markers, a missing backup and an entry id that
-already exists.
+removed. It also refuses ambiguous or missing markers, a missing or unreadable backup, a hook
+script without a recorded registration, a duplicate appended value, and an entry id that already
+exists.
 
 ## Removal
 
@@ -157,7 +177,8 @@ Blocked reasons:
 - `registration_unrecorded`: a hook script whose registration is not itself a recorded
   `json_array_append` edit of the same entry.
 - `registration_remains`: a hook script is kept while any settings file named by the entry, or any
-  `settings*.json` in the script's `.claude` directory, still contains the script's file name.
+  `settings*.json` in the script's `.claude` directory, still contains the script's file name, or
+  while that directory cannot be listed.
 - `backup_missing`: a `json_set` whose backup cannot supply the previous value.
 - `changed_since_plan`: the file changed between plan and apply.
 - `mixed_edits`: more than one edit kind targets one file (only the two JSON kinds may share a file).
@@ -174,5 +195,5 @@ is `blocked`.
 
 ## Privacy
 
-The ledger holds counts, hashes, paths, ids and the redacted pattern and keywords. It never holds
+The ledger holds counts, hashes, paths, ids, the redacted pattern and the keywords. It never holds
 prompt text, friction text or configuration values.

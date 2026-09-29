@@ -10,7 +10,10 @@ All notable changes to this project are documented here. The format follows
 
 - Per-item learning ledger (`ledger.py`), post-fix selector counts in the collector (`--ledger`),
   `trend.ledger` verdicts and escalation/retirement proposals, and dry-run-first removal of
-  recorded edits.
+  recorded edits. `ledger.py record` refuses edits that removal could not undo (a hook script
+  without its recorded registration, a duplicate appended value, an unreadable backup, or a
+  `json_set` without a backup in a file that held other settings), keywords that look like
+  secrets, non-metric selectors under a `global` scope and report stems over 120 characters.
 
 ### Changed
 

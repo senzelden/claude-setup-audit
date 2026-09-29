@@ -213,9 +213,8 @@ report from the same report directory; never infer resolution just because a fin
 For learning findings, use comparable metric deltas as evidence for whether an applied fix helped.
 A delta alone does not establish that the fix caused the change. The processor reads the previous
 report leniently (only `version` 1 and finding ids are required) and lists what it ignored in `trend.ignored`.
-For each `trend.ledger` row with a `proposal`, write a finding `LRN-effectiveness:<entry>`:
-`escalate` proposes `next_mechanism`, `retire` proposes `ledger.py remove --entry <id>`.
-`unknown`/`too_early` rows are reported, never acted on. See `references/ledger.md`.
+Ledger verdicts (`trend.ledger`) exist only after finalizing, so `LRN-effectiveness` findings
+are added in Step 4.
 
 ## Step 4: Write Markdown, JSON and HTML reports
 
@@ -267,9 +266,18 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json"
 python3 ${CLAUDE_SKILL_DIR}/scripts/render_report.py "<report_dir>/<stem>.json"
 ```
 
-When a ledger exists or any LRN item may be applied, add
-`--ledger "<report_dir>/ledger.json" --snapshot <snapshot>` to the `process_report.py` command
-(the two flags go together). The ledger is written only with `--finalize`.
+When a ledger exists or any LRN item may be applied, use this order instead (the `--ledger` and
+`--snapshot` flags go together; the ledger is written only with `--finalize`):
+
+1. Finalize with the ledger:
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json" --finalize --ledger "<report_dir>/ledger.json" --snapshot <snapshot>`
+2. For each `trend.ledger` row with a `proposal`, add a finding `LRN-effectiveness:<entry>` to the
+   JSON and the Markdown: `escalate` proposes `next_mechanism`, `retire` proposes
+   `ledger.py remove --entry <id>`. `unknown`/`too_early` rows are reported, never acted on. See
+   `references/ledger.md`.
+3. If you added findings, re-run the step 1 command with the same flags. This run's ledger
+   observation is replaced, not duplicated.
+4. Render with `render_report.py` as above.
 
 This writes a private, self-contained sibling `<stem>.html`. If it fails, correct malformed input
 or report the failure; do not claim the HTML exists. The same temporary-directory fallback above
@@ -327,7 +335,10 @@ execute, follow the blocked-action guidance in Step 1 rather than manually editi
    Step 4) and `--snapshot` is the Step 1 snapshot (`$TMPDIR/setup-audit-snapshot.json`), which
    supplies the baseline window and scope. Afterwards add `ledger_entry` to the matching
    `applied` item. Escalations set `supersedes`. Do not
-   record non-LRN fixes.
+   record non-LRN fixes. Handle one approved fix at a time: finish its `next-id`, edit (with
+   markers), verification and `record` before starting the next, because `next-id` reads the
+   ledger and prints the same id until the previous entry is recorded. `record` refuses an edit
+   that `ledger.py remove` could not undo later.
 
 Offer to record declined items in `decisions.yaml` with a `review_after` date and the finding’s
 `evidence_hash` from finalized JSON, so the next run
