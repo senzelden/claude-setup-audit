@@ -7,6 +7,8 @@ import json
 import os
 import re
 import shlex
+from collections import defaultdict
+from datetime import datetime, timezone
 
 MAX_HOOK_FILE = 1024 * 1024
 
@@ -133,3 +135,76 @@ def scan_hooks(index):
                 found.add((e['plugin'], e['event'], os.path.relpath(path, root), line, pattern_id))
     rows = sorted(found, key=lambda r: (r[0], r[2], r[3] or 0, r[4], r[1]))
     return [dict(plugin=p, hook_event=ev, file=f, line=ln, pattern=pid) for p, ev, f, ln, pid in rows], sorted(reasons)
+
+
+ENTRYPOINTS = ('cli', 'sdk-py', 'sdk-cli')
+
+
+def _int(value):
+    return None if value is None else int(round(value))
+
+
+def _day(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d')
+
+
+def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage, window_days, pct, scan=None):
+    """Build the harness_overhead snapshot section from in-memory transcript signals."""
+    reasons = set(index_reasons)
+    if transcript_coverage['main_files'].get('omitted'):
+        reasons.add('main_file_cap')
+    if transcript_coverage['subagent_files'].get('omitted'):
+        reasons.add('subagent_file_cap')
+    if raw['malformed']:
+        reasons.add('malformed_records')
+
+    per_session = defaultdict(lambda: defaultdict(int))  # source key -> session path -> chars
+    records = defaultdict(int)
+    for path, event, tool_id, chars in raw['injections']:
+        plugin, attribution = match_command(index, raw['commands'].get((path, tool_id)) if tool_id else None)
+        key = (plugin, attribution, event)
+        per_session[key][path] += chars
+        records[key] += 1
+    sources = []
+    for (plugin, attribution, event), sessions in per_session.items():
+        values = list(sessions.values())
+        median = pct(values, 0.5)
+        sources.append(dict(plugin=plugin, attribution=attribution, hook_event=event, sessions=len(values),
+                            records=records[(plugin, attribution, event)],
+                            chars_per_session_median=_int(median), chars_per_session_p90=_int(pct(values, 0.9)),
+                            est_tokens_per_session_median=_int(median / 4)))
+    sources.sort(key=lambda s: (-s['sessions'], s['plugin'] or '', s['attribution'], s['hook_event']))
+
+    listings = sorted(raw['listings'])
+    per_plugin = [dict(plugin=p['name'], skills=n) for p in extension_inventory.get('plugins', [])
+                  if (n := sum(1 for c in p.get('components', []) if c.get('kind') == 'skills'))]
+    if listings:
+        first, last = listings[0], listings[-1]
+        top = max(listings, key=lambda x: (x[1], x[2]))
+        series = dict(sessions=len(listings),
+                      first=dict(date=_day(first[0]), skill_count=first[1], chars=first[2]),
+                      last=dict(date=_day(last[0]), skill_count=last[1], chars=last[2]),
+                      max=dict(skill_count=top[1], chars=top[2]), per_plugin_skills=per_plugin)
+    else:
+        series = None
+        reasons.add('not_observed')
+
+    entry = {k: 0 for k in ENTRYPOINTS + ('other',)}
+    for name, count in raw['entrypoints'].items():
+        entry[name if name in ENTRYPOINTS else 'other'] += count
+    sub = [v for v in raw['sub_tokens'].values() if v]
+    spend = dict(subagent_files_scanned=transcript_coverage['subagent_files'].get('scanned', 0),
+                 sessions_with_subagents=len(sub),
+                 subagent_tokens_per_session_median=_int(pct(sub, 0.5)),
+                 main_tokens_per_session_median=_int(pct([v for v in raw['main_tokens'].values() if v], 0.5)),
+                 entrypoints=entry)
+
+    spawning, scan_reasons = (scan or scan_hooks)(index)
+    reasons.update(scan_reasons)
+    return dict(window_days=window_days, sessions_scanned=raw['sessions'],
+                # not_observed is reported but is not a collection gap.
+                complete=not (reasons - {'not_observed'}),
+                incomplete_reasons=sorted(reasons),
+                injected_context=dict(sessions_with_injection=len({p for p, *_ in raw['injections']}),
+                                      sources=sources),
+                skill_listing_series=series, subagent_spend=spend, model_spawning_hooks=spawning)

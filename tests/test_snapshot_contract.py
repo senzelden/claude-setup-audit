@@ -74,6 +74,29 @@ class SnapshotContract(FakeHome):
         with self.assertRaises(contract.SnapshotError):
             contract.validate_snapshot(snap)
 
+    def test_harness_overhead_is_checked(self):
+        snap = self.snapshot()
+        snap["harness_overhead"] = {
+            "window_days": 30, "sessions_scanned": 2, "complete": True, "incomplete_reasons": [],
+            "injected_context": {"sessions_with_injection": 1, "sources": [{
+                "plugin": "a@m", "attribution": "matched", "hook_event": "SessionStart", "sessions": 1,
+                "records": 1, "chars_per_session_median": 40, "chars_per_session_p90": 40,
+                "est_tokens_per_session_median": 10}]},
+            "skill_listing_series": None,
+            "subagent_spend": {"subagent_files_scanned": 0, "sessions_with_subagents": 0,
+                               "subagent_tokens_per_session_median": None,
+                               "main_tokens_per_session_median": 100,
+                               "entrypoints": {"cli": 2, "sdk-py": 0, "sdk-cli": 0, "other": 0}},
+            "model_spawning_hooks": [{"plugin": "a@m", "hook_event": "Stop", "file": "hooks/r.sh",
+                                      "line": 1, "pattern": "claude_print"}]}
+        contract.validate_snapshot(snap)
+        for mutate in (lambda h: h.update(incomplete_reasons=["bogus"]),
+                       lambda h: h["subagent_spend"]["entrypoints"].update(cli=-1)):
+            altered = copy.deepcopy(snap)
+            mutate(altered["harness_overhead"])
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(altered)
+
     def test_cli_ledger_flag_writes_validated_signals(self):
         import ledger
         sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}

@@ -1,8 +1,10 @@
 """Harness overhead: hook index, attribution, static scan, assembly. Fake homes only."""
 import json
 import os
+from pathlib import Path
 import time
 import unittest
+import unittest.mock
 from test_collect import FakeHome, collect
 import harness
 
@@ -184,3 +186,107 @@ class TranscriptSignals(FakeHome):
         self.assertEqual(h['malformed'], 2)
         self.assertEqual(h['injections'][0][1:], ('Stop', None, len('{"k":"v"}')))
         self.assertEqual(dict(h['entrypoints']), {})
+
+    def test_missing_or_null_injection_content_is_not_observed(self):
+        self.put('-p/s1.jsonl', [attachment('hook_additional_context', toolUseID='t1', hookEvent='Stop'),
+                                 attachment('hook_additional_context', toolUseID='t2', hookEvent='Stop',
+                                            content=None)])
+        self.assertEqual(collect.collect_transcripts(days=30)['_harness']['injections'], [])
+
+    def test_non_string_entrypoint_counts_as_other(self):
+        self.put('-p/s1.jsonl', [assistant('m1', 1, entrypoint=7)])
+        self.put('-p/s2.jsonl', [assistant('m2', 1, entrypoint=None)])
+        self.assertEqual(dict(collect.collect_transcripts(days=30)['_harness']['entrypoints']), {'other': 1})
+
+
+def cover(main_omitted=0, sub_omitted=0, sub_scanned=0):
+    return {'main_files': {'omitted': main_omitted}, 'subagent_files': {'omitted': sub_omitted, 'scanned': sub_scanned}}
+
+
+def raw_signals(**over):
+    raw = {'sessions': 0, 'injections': [], 'commands': {}, 'listings': [], 'entrypoints': {},
+           'main_tokens': {}, 'sub_tokens': {}, 'malformed': 0}
+    raw.update(over)
+    return raw
+
+
+class Assemble(unittest.TestCase):
+    index = [{'plugin': 'a@m', 'command': 'run-a', 'event': 'SessionStart'},
+             {'plugin': 'b@m', 'command': 'dup', 'event': 'SessionStart'},
+             {'plugin': 'c@m', 'command': 'dup', 'event': 'SessionStart'}]
+
+    def build(self, raw, coverage=None, inventory=None, reasons=()):
+        return harness.assemble(raw, self.index, list(reasons), inventory or {'plugins': []},
+                                coverage or cover(), 30, collect.pct, scan=lambda index: ([], []))
+
+    def test_startup_and_compact_sum_to_one_session(self):
+        raw = raw_signals(sessions=1, injections=[('s1', 'SessionStart', 't1', 3000), ('s1', 'SessionStart', 't2', 1000)],
+                          commands={('s1', 't1'): 'run-a', ('s1', 't2'): 'run-a'})
+        src = self.build(raw)['injected_context']['sources']
+        self.assertEqual(src, [{'plugin': 'a@m', 'attribution': 'matched', 'hook_event': 'SessionStart',
+                                'sessions': 1, 'records': 2, 'chars_per_session_median': 4000,
+                                'chars_per_session_p90': 4000, 'est_tokens_per_session_median': 1000}])
+
+    def test_unpaired_injection_is_unattributed_and_ambiguous_is_kept_apart(self):
+        raw = raw_signals(sessions=2, injections=[('s1', 'Stop', None, 10), ('s2', 'SessionStart', 't', 20)],
+                          commands={('s2', 't'): 'dup'})
+        rows = {(r['attribution'], r['hook_event']): r for r in self.build(raw)['injected_context']['sources']}
+        self.assertEqual(set(rows), {('unattributed', 'Stop'), ('ambiguous', 'SessionStart')})
+        self.assertIsNone(rows[('ambiguous', 'SessionStart')]['plugin'])
+        self.assertEqual(self.build(raw)['injected_context']['sessions_with_injection'], 2)
+
+    def test_skill_listing_series_and_per_plugin_skills(self):
+        raw = raw_signals(listings=[(2000.0, 79, 29782), (1000.0, 12, 5837), (1500.0, 90, 20000)])
+        inv = {'plugins': [{'name': 'a@m', 'components': [{'kind': 'skills'}, {'kind': 'skills'}, {'kind': 'agents'}]},
+                           {'name': 'b@m', 'components': [{'kind': 'hooks'}]}]}
+        series = self.build(raw, inventory=inv)['skill_listing_series']
+        self.assertEqual(series['sessions'], 3)
+        self.assertEqual(series['first'], {'date': '1970-01-01', 'skill_count': 12, 'chars': 5837})
+        self.assertEqual(series['last']['skill_count'], 79)
+        self.assertEqual(series['max'], {'skill_count': 90, 'chars': 20000})
+        self.assertEqual(series['per_plugin_skills'], [{'plugin': 'a@m', 'skills': 2}])
+
+    def test_no_listings_is_null_and_not_observed(self):
+        out = self.build(raw_signals())
+        self.assertIsNone(out['skill_listing_series'])
+        self.assertEqual(out['incomplete_reasons'], ['not_observed'])
+        self.assertTrue(out['complete'])
+
+    def test_subagent_spend_and_entrypoints(self):
+        raw = raw_signals(entrypoints={'cli': 2, 'sdk-py': 1, 'weird': 1},
+                          main_tokens={('p', 's1'): 100, ('p', 's2'): 300}, sub_tokens={('p', 's1'): 50})
+        spend = self.build(raw, coverage=cover(sub_scanned=4))['subagent_spend']
+        self.assertEqual(spend, {'subagent_files_scanned': 4, 'sessions_with_subagents': 1,
+                                 'subagent_tokens_per_session_median': 50, 'main_tokens_per_session_median': 200,
+                                 'entrypoints': {'cli': 2, 'sdk-py': 1, 'sdk-cli': 0, 'other': 1}})
+
+    def test_caps_malformed_and_index_reasons_make_it_incomplete(self):
+        out = self.build(raw_signals(malformed=1, listings=[(1.0, 1, 1)]),
+                         coverage=cover(main_omitted=1, sub_omitted=2), reasons=['plugin_root_unreadable'])
+        self.assertFalse(out['complete'])
+        self.assertEqual(out['incomplete_reasons'], ['main_file_cap', 'malformed_records',
+                                                     'plugin_root_unreadable', 'subagent_file_cap'])
+
+
+class EndToEnd(FakeHome):
+    def test_snapshot_has_valid_private_harness_section(self):
+        secret = 'sk-ant-api03-' + 'A' * 40
+        _, s = install(self, hooks=session_start(f'echo {secret}'), files={'hooks/x.sh': f'TOKEN={secret}\n'})
+        self.write('.claude/settings.json', {'enabledPlugins': s['enabled_plugins']})
+        self.write('.claude/projects/-p/s1.jsonl', '\n'.join(json.dumps(r) for r in [
+            attachment('hook_success', toolUseID='t1', command=f'echo {secret}', hookEvent='SessionStart'),
+            attachment('hook_additional_context', toolUseID='t1', hookEvent='SessionStart', content=secret),
+            attachment('skill_listing', isInitial=True, skillCount=2, content=secret)]))
+        out = os.path.join(self.home, 'snap.json')
+        with unittest.mock.patch('sys.argv', ['collect.py', '--claude-dir', self.claude, '--out', out]), \
+                unittest.mock.patch.object(collect, '_write_snapshot',
+                                           lambda path, text: Path(path).write_text(text)):
+            collect.main()
+        text = Path(out).read_text()
+        self.assertNotIn(secret, text)
+        self.assertNotIn('echo', json.dumps(json.loads(text)['harness_overhead']))
+        section = json.loads(text)['harness_overhead']
+        self.assertEqual(section['injected_context']['sources'][0]['plugin'], 'demo@market')
+        self.assertEqual(section['skill_listing_series']['last']['skill_count'], 2)
+        sources = {c['source']: c for c in json.loads(text)['coverage']['sources']}
+        self.assertIn('harness_overhead', sources)

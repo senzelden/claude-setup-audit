@@ -394,6 +394,12 @@ def snapshot_coverage(snap, roots):
         for name, counts in snap[family]["coverage"].items():
             sources.append(source_coverage(f"{family}.{name}", scope,
                                           "partial" if counts.get("omitted") else "collected", **counts))
+    harness_section = snap.get("harness_overhead")
+    if harness_section:
+        reasons = harness_section["incomplete_reasons"]
+        sources.append(source_coverage("harness_overhead", scope,
+                                      "collected" if harness_section["complete"] else "partial",
+                                      **({"reason": ",".join(reasons)} if reasons else {})))
     sources.extend(snap.get("instructions", {}).get("sources", []))
     sources.extend(snap.get("extensions", {}).get("sources", []))
     pilot = snap.get("instruction_clarity")
@@ -653,8 +659,10 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
     a = record.get("attachment") if record.get("type") == "attachment" else None
     if is_top and isinstance(a, dict):
         tool_id = a.get("toolUseID") if isinstance(a.get("toolUseID"), str) else None
-        if a.get("type") == "hook_additional_context" and isinstance(a.get("hookEvent"), str):
-            content = a.get("content")
+        # Absent or null content is not an observed injection.
+        if (a.get("type") == "hook_additional_context" and isinstance(a.get("hookEvent"), str)
+                and a.get("content") is not None):
+            content = a["content"]
             size = len(content) if isinstance(content, str) else len(json.dumps(content, separators=(",", ":")))
             raw["injections"].append((path, a["hookEvent"], tool_id, size))
         elif a.get("type") == "hook_success" and tool_id and isinstance(a.get("command"), str):
@@ -763,8 +771,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                     if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
                         entry_seen = True
                         ep = record.get("entrypoint")
-                        if isinstance(ep, str):
-                            raw["entrypoints"][ep] += 1
+                        if ep is not None:
+                            raw["entrypoints"][ep if isinstance(ep, str) else "other"] += 1
                     if is_top and not listed and record.get("type") == "attachment":
                         listed = harness_listing(raw, record, timestamp)
                     if is_top and '"tool_result"' in line:
@@ -1493,7 +1501,7 @@ def main():
         "transcripts": collect_transcripts(a.days, project_filter=project_filter),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
-    harness_raw = snap["transcripts"].pop("_harness")  # consumed by harness.assemble (Task 5)
+    harness_raw = snap["transcripts"].pop("_harness")  # consumed by harness.assemble
     if a.ledger:
         snap["ledger_signals"] = collect_ledger_signals(
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
@@ -1505,6 +1513,9 @@ def main():
                                                        snap['managed_settings']['sources'], settings,
                                                        redact, hook_handler_entry)
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
+    snap["harness_overhead"] = harness.assemble(
+        harness_raw, hook_index, hook_index_reasons, snap["extensions"],
+        snap["transcripts"]["coverage"], a.days, pct)
     if a.clarity_pilot:
         snap["instruction_clarity"] = clarity.review(snap["instructions"], snap["extensions"])
     snap["coverage"] = snapshot_coverage(snap, roots)

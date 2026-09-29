@@ -409,6 +409,60 @@
           }
         }
       }
+    },
+    "harness_overhead": {
+      "type": "object",
+      "required": ["window_days", "sessions_scanned", "complete", "incomplete_reasons", "injected_context",
+                   "skill_listing_series", "subagent_spend", "model_spawning_hooks"],
+      "properties": {
+        "window_days": {"type": "integer", "minimum": 1},
+        "sessions_scanned": {"type": "integer", "minimum": 0},
+        "complete": {"type": "boolean"},
+        "incomplete_reasons": {"type": "array", "items": {"enum": ["main_file_cap", "subagent_file_cap",
+          "malformed_records", "plugin_root_unreadable", "script_unresolved", "script_truncated", "not_observed"]}},
+        "injected_context": {
+          "type": "object",
+          "required": ["sessions_with_injection", "sources"],
+          "properties": {
+            "sessions_with_injection": {"type": "integer", "minimum": 0},
+            "sources": {"type": "array", "items": {
+              "type": "object",
+              "required": ["plugin", "attribution", "hook_event", "sessions", "records",
+                           "chars_per_session_median", "chars_per_session_p90", "est_tokens_per_session_median"],
+              "properties": {
+                "plugin": {"type": ["string", "null"]},
+                "attribution": {"enum": ["matched", "ambiguous", "unattributed"]},
+                "hook_event": {"type": "string"},
+                "sessions": {"type": "integer", "minimum": 1},
+                "records": {"type": "integer", "minimum": 1},
+                "chars_per_session_median": {"type": "integer", "minimum": 0},
+                "chars_per_session_p90": {"type": "integer", "minimum": 0},
+                "est_tokens_per_session_median": {"type": "integer", "minimum": 0}
+              }}}
+          }
+        },
+        "skill_listing_series": {"type": ["object", "null"]},
+        "subagent_spend": {
+          "type": "object",
+          "required": ["subagent_files_scanned", "sessions_with_subagents", "subagent_tokens_per_session_median",
+                       "main_tokens_per_session_median", "entrypoints"],
+          "properties": {
+            "subagent_files_scanned": {"type": "integer", "minimum": 0},
+            "sessions_with_subagents": {"type": "integer", "minimum": 0},
+            "subagent_tokens_per_session_median": {"type": ["integer", "null"]},
+            "main_tokens_per_session_median": {"type": ["integer", "null"]},
+            "entrypoints": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "model_spawning_hooks": {"type": "array", "items": {
+          "type": "object",
+          "required": ["plugin", "hook_event", "file", "line", "pattern"],
+          "properties": {
+            "plugin": {"type": "string"}, "hook_event": {"type": "string"}, "file": {"type": "string"},
+            "line": {"type": ["integer", "null"]},
+            "pattern": {"enum": ["claude_print", "agent_sdk_py", "agent_sdk_js", "anthropic_client"]}
+          }}}
+      }
     }
   }
 }
