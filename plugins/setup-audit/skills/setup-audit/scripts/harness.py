@@ -14,12 +14,26 @@ MAX_HOOK_FILE = 1024 * 1024
 
 
 def _json(path):
+    """(object, None) when readable; (None, 'absent') or (None, 'unreadable') otherwise.
+
+    Unreadable covers OS errors, invalid JSON, a non-object and a file above MAX_HOOK_FILE.
+    """
+    if not os.path.lexists(path):
+        return None, 'absent'
     try:
         with open(path, encoding='utf-8', errors='replace') as f:
-            data = json.loads(f.read(MAX_HOOK_FILE + 1)[:MAX_HOOK_FILE])
-        return data if isinstance(data, dict) else None
+            text = f.read(MAX_HOOK_FILE + 1)
+        data = None if len(text) > MAX_HOOK_FILE else json.loads(text)
     except (OSError, ValueError):
-        return None
+        data = None
+    return (data, None) if isinstance(data, dict) else (None, 'unreadable')
+
+
+def _inside(path, root):
+    """Contained in root lexically and after resolving links, and not itself a symlink."""
+    path = os.path.abspath(path)
+    return (path.startswith(os.path.abspath(root) + os.sep) and not os.path.islink(path)
+            and os.path.realpath(path).startswith(os.path.realpath(root) + os.sep))
 
 
 def _entries(plugin, version, root, source, data):
@@ -38,15 +52,29 @@ def _entries(plugin, version, root, source, data):
     return out
 
 
+def _hook_file(name, version, root, path):
+    """Entries of one hooks file, or 'hook_file_unreadable' when it cannot be trusted or read."""
+    if not _inside(path, root):
+        return [], 'hook_file_unreadable'
+    data, _ = _json(path)
+    if data is None:
+        return [], 'hook_file_unreadable'
+    return _entries(name, version, root, path, data), None
+
+
 def hook_index(claude, settings):
     """Hook commands of enabled plugins, resolved through the registry installPath."""
     enabled = {k for s in settings for k, v in (s.get('enabled_plugins') or {}).items() if v is True}
-    registry = (_json(os.path.join(claude, 'plugins', 'installed_plugins.json')) or {}).get('plugins')
+    registry, _ = _json(os.path.join(claude, 'plugins', 'installed_plugins.json'))
+    registry = registry.get('plugins') if registry else None
     storage = os.path.realpath(os.path.join(claude, 'plugins'))
     index, reasons = [], set()
     for name in sorted(enabled):
         rows = registry.get(name) if isinstance(registry, dict) else None
-        for row in rows if isinstance(rows, list) else []:
+        if not isinstance(rows, list) or not rows:
+            reasons.add('plugin_registry_unreadable')
+            continue
+        for row in rows:
             root = row.get('installPath') if isinstance(row, dict) else None
             if (not isinstance(root, str) or not os.path.isabs(root)
                     or not os.path.realpath(root).startswith(storage + os.sep) or not os.path.isdir(root)):
@@ -54,12 +82,23 @@ def hook_index(claude, settings):
                 continue
             version = str(row.get('version', 'unknown'))
             manifest_path = os.path.join(root, '.claude-plugin', 'plugin.json')
-            inline = (_json(manifest_path) or {}).get('hooks')
-            if isinstance(inline, dict):
-                index += _entries(name, version, root, manifest_path, inline)
-            hooks_path = os.path.join(root, 'hooks', 'hooks.json')
-            if os.path.isfile(hooks_path) and not os.path.islink(hooks_path):
-                index += _entries(name, version, root, hooks_path, _json(hooks_path) or {})
+            default = os.path.join(root, 'hooks', 'hooks.json')
+            declared = (_json(manifest_path)[0] or {}).get('hooks')
+            # Manifest hooks: an inline object, a path string, or a list of either.
+            for item in declared if isinstance(declared, list) else [declared]:
+                if isinstance(item, dict):
+                    index += _entries(name, version, root, manifest_path, item)
+                elif isinstance(item, str):
+                    path = os.path.abspath(os.path.join(root, item))
+                    if path == os.path.abspath(default):
+                        continue  # the default file is indexed below, once
+                    entries, reason = _hook_file(name, version, root, path)
+                    index += entries
+                    reasons.update([reason] if reason else [])
+            if os.path.lexists(default):
+                entries, reason = _hook_file(name, version, root, default)
+                index += entries
+                reasons.update([reason] if reason else [])
     return index, sorted(reasons)
 
 

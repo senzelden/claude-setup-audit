@@ -460,7 +460,8 @@ def plugin_session_start_hooks(index):
             continue
         item = found.setdefault(e['plugin'], {'plugin': e['plugin'], 'version': e['version'], 'matchers': [],
                                               'root': e['root']})
-        item['matchers'].append(e['matcher'])
+        if e['matcher'] not in item['matchers']:  # several registry rows repeat the same hooks
+            item['matchers'].append(e['matcher'])
     out = []
     for item in found.values():
         root = item.pop('root')

@@ -59,6 +59,77 @@ class HookIndex(FakeHome):
         index, reasons = harness.hook_index(self.claude, [{'enabled_plugins': {'ext@market': True}}])
         self.assertEqual((index, reasons), ([], ['plugin_root_unreadable']))
 
+    def two_rows(self, hooks):
+        install(self, version='2', hooks=hooks)
+        _, s = install(self, version='1', hooks=hooks)
+        reg_path = os.path.join(self.claude, 'plugins', 'installed_plugins.json')
+        with open(reg_path) as f:
+            reg = json.load(f)
+        reg['plugins']['demo@market'].append(
+            {'scope': 'project', 'installPath': os.path.join(self.claude, 'plugins/cache/market/demo/2'),
+             'version': '2'})
+        self.write('.claude/plugins/installed_plugins.json', reg)
+        return s
+
+    def test_two_registry_rows_list_each_matcher_once(self):
+        s = self.two_rows(session_start('go'))
+        index, _ = harness.hook_index(self.claude, [s])
+        self.assertEqual(len(index), 2)
+        self.assertEqual([h['matchers'] for h in collect.plugin_session_start_hooks(index)], [['startup']])
+
+    def reasons(self, settings=None):
+        enabled = settings or [{'enabled_plugins': {'demo@market': True}}]
+        return harness.hook_index(self.claude, enabled)
+
+    def test_unreadable_registry_with_an_enabled_plugin(self):
+        reg = '.claude/plugins/installed_plugins.json'
+        self.assertEqual(self.reasons(), ([], ['plugin_registry_unreadable']))  # missing
+        for content in ('{not json', {'plugins': []}, {'plugins': {'other@m': []}},
+                        {'plugins': {'demo@market': []}}, {'plugins': {'demo@market': {'installPath': '/x'}}}):
+            self.write(reg, content)
+            self.assertEqual(self.reasons(), ([], ['plugin_registry_unreadable']), content)
+        os.remove(os.path.join(self.home, reg))
+        self.assertEqual(self.reasons([{'enabled_plugins': {'demo@market': False}}]), ([], []))
+
+    def test_unreadable_hooks_file(self):
+        root, s = install(self, hooks=session_start('a'))
+        hooks = os.path.join(root, 'hooks', 'hooks.json')
+        for content in ('{not json', '[1]', '{"hooks": {}}' + ' ' * harness.MAX_HOOK_FILE):
+            with open(hooks, 'w') as f:
+                f.write(content)
+            self.assertEqual(harness.hook_index(self.claude, [s]), ([], ['hook_file_unreadable']), content[:9])
+        os.remove(hooks)
+        self.assertEqual(harness.hook_index(self.claude, [s]), ([], []))  # absent is not a gap
+        os.symlink(self.write('elsewhere.json', {'hooks': session_start('a')}), hooks)
+        self.assertEqual(harness.hook_index(self.claude, [s]), ([], ['hook_file_unreadable']))
+
+    def test_manifest_hooks_path_string(self):
+        _, s = install(self, manifest={'name': 'demo', 'hooks': './extra/hooks.json'},
+                       files={'extra/hooks.json': json.dumps({'hooks': session_start('from-path')})})
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual(([e['command'] for e in index], reasons), (['from-path'], []))
+        self.assertTrue(index[0]['source'].endswith(os.path.join('extra', 'hooks.json')))
+
+    def test_manifest_hooks_list_with_path_and_inline_object(self):
+        _, s = install(self, manifest={'name': 'demo', 'hooks': ['extra.json', {'hooks': session_start('inline')}]},
+                       files={'extra.json': json.dumps({'hooks': session_start('from-path')})})
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual((sorted(e['command'] for e in index), reasons), (['from-path', 'inline'], []))
+
+    def test_manifest_hooks_path_escaping_or_missing_is_unreadable(self):
+        self.write('.claude/plugins/cache/market/outside.json', {'hooks': session_start('escaped')})
+        for ref in ('../../outside.json', 'missing.json', '/abs/hooks.json', ['ok.json', '../../outside.json']):
+            _, s = install(self, manifest={'name': 'demo', 'hooks': ref},
+                           files={'ok.json': json.dumps({'hooks': session_start('ok')})})
+            index, reasons = harness.hook_index(self.claude, [s])
+            self.assertNotIn('escaped', [e['command'] for e in index])
+            self.assertEqual(reasons, ['hook_file_unreadable'], ref)
+
+    def test_manifest_path_to_default_hooks_file_is_indexed_once(self):
+        _, s = install(self, hooks=session_start('a'), manifest={'name': 'demo', 'hooks': './hooks/hooks.json'})
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual(([e['command'] for e in index], reasons), (['a'], []))
+
     def test_match_command(self):
         index = [{'plugin': 'a@m', 'command': 'run'}, {'plugin': 'b@m', 'command': 'run'},
                  {'plugin': 'c@m', 'command': 'only-c'}]

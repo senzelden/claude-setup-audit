@@ -419,7 +419,8 @@
         "sessions_scanned": {"type": "integer", "minimum": 0},
         "complete": {"type": "boolean"},
         "incomplete_reasons": {"type": "array", "items": {"enum": ["main_file_cap", "subagent_file_cap",
-          "malformed_records", "plugin_root_unreadable", "script_unresolved", "script_truncated", "not_observed"]}},
+          "malformed_records", "plugin_registry_unreadable", "plugin_root_unreadable", "hook_file_unreadable",
+          "script_unresolved", "script_truncated", "not_observed"]}},
         "injected_context": {
           "type": "object",
           "required": ["sessions_with_injection", "sources"],
