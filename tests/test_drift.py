@@ -110,3 +110,112 @@ class DriftLog(FakeHome):
     def test_pathological_nesting_is_malformed(self):
         Path(self.log).write_text('[' * 100000 + '\n')
         self.assertEqual(drift_log.read(self.log), ([], 1))
+
+
+def snapshot(**over):
+    snap = {
+        'global': {'claude_md': {'lines': 50, 'est_tokens': 900},
+                   'settings': [{'path': '~/.claude/settings.json',
+                                 'permissions': {'risky': {'sudo': ['Bash(sudo ls)']}}}]},
+        'projects': {'~/code/app': {'claude_md_lines': 120, 'claude_md_tokens': 2000},
+                     '~/code/app/.worktrees/x': {'claude_md_lines': 999, 'is_worktree_copy': True}},
+        'transcripts': {'cache': {'hit_ratio': 0.95}},
+        'coverage': {'sources': [{'source': 'transcripts.main_files', 'status': 'collected'}]},
+        'harness_overhead': {'complete': True,
+                             'skill_listing_series': {'last': {'chars': 10000}},
+                             'injected_context': {'sources': [{'plugin': 'p@m', 'hook_event': 'SessionStart',
+                                                               'est_tokens_per_session_median': 800}]}},
+    }
+    snap.update(over)
+    return snap
+
+
+META = {'scope': 'all', 'project': None, 'window_days': 30}
+LIMITS = {'claude_md_max_lines': 200, 'cache_hit_min': 0.9, 'growth_min': 0.25}
+
+
+class Signals(unittest.TestCase):
+    def test_derive_all_signals(self):
+        signals, fps = drift.derive(snapshot(), '~/.claude/CLAUDE.md')
+        self.assertEqual(signals['claude_md'], {'~/.claude/CLAUDE.md': {'lines': 50, 'est_tokens': 900},
+                                                '~/code/app/CLAUDE.md': {'lines': 120, 'est_tokens': 2000}})
+        self.assertEqual(signals['cache_hit_ratio'], {'value': 0.95, 'complete': True})
+        fp = drift.fingerprint('~/.claude/settings.json', 'sudo', 'Bash(sudo ls)')
+        self.assertEqual(signals['broad_permissions'], {'count': 1, 'fingerprints': [fp]})
+        self.assertEqual(fps, {fp: '~/.claude/settings.json'})
+        self.assertEqual(signals['skill_listing_chars'], {'value': 10000, 'complete': True})
+        self.assertEqual(signals['injected_tokens'], {'value': 800, 'plugin': 'p@m', 'hook_event': 'SessionStart',
+                                                      'complete': True})
+
+    def test_missing_sources_are_null(self):
+        signals, _ = drift.derive({'global': {}, 'projects': {}, 'transcripts': {'cache': {'hit_ratio': None}}},
+                                  '~/.claude/CLAUDE.md')
+        self.assertEqual([signals[k] for k in ('claude_md', 'cache_hit_ratio', 'skill_listing_chars', 'injected_tokens')],
+                         [None, None, None, None])
+        self.assertEqual(signals['broad_permissions'], {'count': 0, 'fingerprints': []})
+
+    def test_partial_transcripts_mark_cache_incomplete(self):
+        snap = snapshot(coverage={'sources': [{'source': 'transcripts.main_files', 'status': 'partial'}]})
+        self.assertFalse(drift.derive(snap, 'g')[0]['cache_hit_ratio']['complete'])
+
+
+class Compare(unittest.TestCase):
+    def run_compare(self, snap, entries=(), meta=META):
+        signals, fps = drift.derive(snap, '~/.claude/CLAUDE.md')
+        return drift.compare(signals, fps, list(entries), meta, LIMITS)
+
+    def entry(self, snap, **meta):
+        return dict({'version': 1, 'at': '2026-09-28T00:00:00Z', **META, **meta},
+                    signals=drift.derive(snap, '~/.claude/CLAUDE.md')[0], crossings=[])
+
+    def test_first_run_is_a_baseline(self):
+        self.assertEqual(self.run_compare(snapshot()), [])
+
+    def test_above_max_and_below_min(self):
+        snap = snapshot(transcripts={'cache': {'hit_ratio': 0.61}})
+        snap['global']['claude_md']['lines'] = 250
+        self.assertEqual(self.run_compare(snap), [
+            {'signal': 'claude_md', 'kind': 'above_max', 'path': '~/.claude/CLAUDE.md', 'value': 250, 'threshold': 200},
+            {'signal': 'cache_hit_ratio', 'kind': 'below_min', 'value': 0.61, 'threshold': 0.9}])
+
+    def test_new_broad_permission_against_previous(self):
+        before = self.entry(snapshot())
+        now = snapshot()
+        now['global']['settings'][0]['permissions']['risky']['sudo'].append('Bash(sudo rm)')
+        crossings = self.run_compare(now, [before])
+        self.assertEqual(crossings, [{'signal': 'broad_permissions', 'kind': 'new',
+                                      'fingerprints': [drift.fingerprint('~/.claude/settings.json', 'sudo', 'Bash(sudo rm)')],
+                                      'paths': ['~/.claude/settings.json']}])
+
+    def test_growth_and_threshold_edges(self):
+        before = self.entry(snapshot())
+        now = snapshot()
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 12500  # exactly +25%
+        now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 999  # +24.9%
+        self.assertEqual(self.run_compare(now, [before]), [
+            {'signal': 'skill_listing_chars', 'kind': 'growth', 'value': 12500, 'previous': 10000,
+             'fraction': 0.25, 'threshold': 0.25}])
+
+    def test_injected_growth_needs_same_plugin_and_event(self):
+        before = self.entry(snapshot())
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0].update(plugin='other@m',
+                                                                         est_tokens_per_session_median=5000)
+        self.assertEqual(self.run_compare(now, [before]), [])
+
+    def test_other_scope_is_not_comparable(self):
+        before = self.entry(snapshot(), scope='project', project='/x')
+        now = snapshot()
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 50000
+        now['global']['settings'][0]['permissions']['risky']['sudo'].append('Bash(sudo rm)')
+        self.assertEqual(self.run_compare(now, [before]), [])
+
+    def test_comparable_skips_null_and_growth_from_zero(self):
+        zero = snapshot()
+        zero['harness_overhead']['skill_listing_series']['last']['chars'] = 0
+        null = snapshot(harness_overhead={'complete': True, 'skill_listing_series': None,
+                                          'injected_context': {'sources': []}})
+        entries = [self.entry(zero), self.entry(null)]
+        self.assertIsNone(drift.comparable(entries[1:], META, 'skill_listing_chars'))
+        self.assertEqual(drift.comparable(entries, META, 'skill_listing_chars'), {'value': 0, 'complete': True})
+        self.assertEqual(self.run_compare(snapshot(), entries), [])
