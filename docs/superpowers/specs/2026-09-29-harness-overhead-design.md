@@ -163,8 +163,9 @@ Rules:
   `transcripts_not_read`) when any applies. The registry reason covers a missing or malformed `installed_plugins.json` or an enabled
   plugin without rows; the hook-file reason covers a hooks file that is a symlink, escapes the root,
   is unreadable, not an object or above 1 MiB. Global scope reads no transcripts
-  (`transcripts_not_read`), so the section then holds only static signals. No `skill_listing` records at all yields `skill_listing_series: null` with reason
-  `not_observed`, which is reported but does not make the section incomplete.
+  (`transcripts_not_read`), so the section then holds only static signals. No non-SDK `skill_listing` record (none at all, or only SDK sessions) yields
+  `skill_listing_series: null` with reason `not_observed`, which is reported but does not make
+  the section incomplete.
 - **Privacy.** No content, command strings, script text, prompt text or hook output is stored.
   Plugin names, relative script paths, counts, sizes and dates only.
 
