@@ -80,6 +80,8 @@ class Format(unittest.TestCase):
         secretish = "sk-live-VALUE-SHOULD-NOT-APPEAR"
         bad = [
             dict(version=2, entries=[]),
+            dict(version=True, entries=[]),
+            dict(version=1.0, entries=[]),
             dict(version=1, entries=[], extra=1),
             dict(version=1, entries=[dict(entry(), extra=secretish)]),
             dict(version=1, entries=[entry(mechanism=secretish)]),
@@ -284,14 +286,23 @@ class Record(LedgerFiles):
     def test_supersedes_marks_old_entry(self):
         book = self.record()
         hook = self.put(".claude/hooks/check-tests.sh", "#!/bin/sh\n# setup-audit: L-20260928-2\nexit 0\n")
+        with open(self.settings, "w") as f:
+            json.dump({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": hook}]}]}}, f)
         book = self.record(book, self.spec(id="L-20260928-2", mechanism="hook", supersedes="L-20260928-1",
-                                           edits=[dict(file=hook, kind="hook_script", backup=None)]))
+                                           edits=[dict(file=hook, kind="hook_script", backup=None),
+                                                  dict(file=self.settings, kind="json_array_append",
+                                                       pointer="/hooks/Stop/0", backup=None)]))
         self.assertEqual([e["state"] for e in book["entries"]], ["superseded", "active"])
 
-    def test_pattern_and_keywords_are_redacted(self):
+    def test_pattern_is_redacted_and_secret_keywords_are_refused(self):
         secret = "ghp_" + "a" * 36
-        book = self.record(spec=self.spec(pattern="leaks " + secret, selector=dict(KW, any=[secret])))
+        book = self.record(spec=self.spec(pattern="leaks " + secret))
         self.assertNotIn(secret, json.dumps(book))
+        self.assertIn("[REDACTED]", book["entries"][0]["pattern"])
+        with self.assertRaises(ledger.LedgerError) as caught:
+            self.record(spec=self.spec(selector=dict(KW, any=["tests", secret])))
+        self.assertEqual(caught.exception.input, "spec")
+        self.assertNotIn(secret, str(caught.exception))
 
     def test_metric_baseline_from_report(self):
         sel = dict(type="metric", name="corrections_count_30d", basis="measured", unit="prompts", source="corrections.count")
@@ -350,6 +361,121 @@ class Record(LedgerFiles):
             with self.subTest(text=text[:40]), self.assertRaises(ledger.LedgerError) as caught:
                 self.record(spec=spec)
             self.assertEqual(caught.exception.input, "edited file")
+
+    def hook_edits(self, entry_id="L-20260928-1", registration=True):
+        hook = self.put(".claude/hooks/check.sh", "#!/bin/sh\n# setup-audit: %s\nexit 0\n" % entry_id)
+        with open(self.settings, "w") as f:
+            json.dump({"permissions": {"deny": ["Bash(rm -rf *)"]},
+                       "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+                           {"type": "command", "command": hook}]}]}}, f)
+        edits = [dict(file=hook, kind="hook_script", backup=None)]
+        if registration:
+            edits.append(dict(file=self.settings, kind="json_array_append", pointer="/hooks/PreToolUse/0",
+                              backup=None))
+        return edits
+
+    def refused(self, spec, label):
+        """record refuses the spec with a constant error naming `label`; the ledger file is unchanged."""
+        path = os.path.join(self.home, "audits", "ledger.json")
+        ledger.dump(ledger.empty(), path)
+        before = slurp(path)
+        files = {n: self.put(n + ".json", json.dumps(v))
+                 for n, v in (("snap", self.snapshot), ("rep", self.report), ("spec", spec))}
+        err = io.StringIO()
+        with mock.patch("collect.count_selector", return_value=dict(ZERO)), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaises(SystemExit) as caught:
+            ledger.main(["record", "--ledger", path, "--snapshot", files["snap"], "--report", files["rep"],
+                         "--spec", files["spec"], "--claude-dir", self.claude])
+        self.assertEqual(caught.exception.code, 1)
+        self.assertIn("The " + ledger.LABELS[label], err.getvalue())
+        self.assertEqual(slurp(path), before)
+
+    def test_every_edit_kind_records_when_removable(self):
+        backup = self.put("backups/settings.json.bak", json.dumps({"model": "sonnet"}))
+        cases = {
+            "markdown_block": lambda: [dict(file=self.md, kind="markdown_block", backup=None)],
+            "json_array_append": lambda: [dict(file=self.settings, kind="json_array_append",
+                                               pointer="/permissions/deny/0", backup=None)],
+            "json_set": lambda: [dict(file=self.settings, kind="json_set", pointer="/permissions/deny",
+                                      backup=backup)],
+            "json_set_new_file": lambda: (self.put(".claude/settings.local.json", '{"env": {"X": "1"}}'),
+                                          [dict(file=os.path.join(self.claude, "settings.local.json"),
+                                                kind="json_set", pointer="/env/X", backup=None)])[1],
+            "hook_script": lambda: self.hook_edits(),
+        }
+        for name, edits in cases.items():
+            with self.subTest(kind=name):
+                book = self.record(spec=self.spec(mechanism="setting", edits=edits()))
+                self.assertEqual(len(book["entries"]), 1)
+                rows = ledger.plan_removal(book, ["L-20260928-1"])
+                self.assertEqual({r["status"] for r in rows}, {"removable"})
+
+    def test_edits_that_could_not_be_removed_later_are_refused(self):
+        def duplicate():
+            with open(self.settings, "w") as f:
+                json.dump({"permissions": {"deny": ["Read(.env)", "Read(.env)"]}}, f)
+            return [dict(file=self.settings, kind="json_array_append", pointer="/permissions/deny/1", backup=None)]
+
+        def bad_backup():
+            backup = self.put("backups/settings.json.bak", "{not json")
+            return [dict(file=self.settings, kind="json_set", pointer="/permissions/deny", backup=backup)]
+
+        cases = [("edited file", duplicate), ("spec", lambda: self.hook_edits(registration=False)),
+                 ("backup", bad_backup)]
+        for label, edits in cases:
+            with self.subTest(label=label):
+                self.refused(self.spec(mechanism="setting", edits=edits()), label)
+
+    def test_json_set_without_backup_needs_an_otherwise_empty_file(self):
+        with open(self.settings, "w") as f:
+            json.dump({"model": "opus", "env": {"KEEP": "1"}}, f)
+        self.refused(self.spec(mechanism="setting", edits=[dict(file=self.settings, kind="json_set",
+                                                                pointer="/model", backup=None)]), "spec")
+        with open(self.settings, "w") as f:
+            json.dump({"env": {"X": "1"}, "permissions": {}}, f)
+        book = self.record(spec=self.spec(mechanism="setting", edits=[dict(
+            file=self.settings, kind="json_set", pointer="/env/X", backup=None)]))
+        self.assertEqual(book["entries"][0]["edits"][0]["backup"], None)
+
+    def test_non_metric_selector_refused_under_global_scope(self):
+        snapshot = dict(self.snapshot, collection_scope=dict(requested="global", project=None))
+        with self.assertRaises(ledger.LedgerError) as caught:
+            self.record(snapshot=snapshot)
+        self.assertEqual(caught.exception.input, "snapshot")
+        sel = dict(type="metric", name="corrections_count_30d", basis="measured", unit="prompts",
+                   source="corrections.count")
+        book = self.record(spec=self.spec(selector=sel), snapshot=snapshot)
+        self.assertEqual(book["entries"][0]["scope"]["scope"], "global")
+
+    def test_over_long_report_stem_refused_as_report(self):
+        with self.assertRaises(ledger.LedgerError) as caught, \
+                mock.patch("collect.count_selector", return_value=dict(ZERO)):
+            ledger.record(ledger.empty(), self.spec(), self.snapshot, self.report, "r" * 121, 1_790_000_000)
+        self.assertEqual(caught.exception.input, "report")
+        with mock.patch("collect.count_selector", return_value=dict(ZERO)):
+            ledger.record(ledger.empty(), self.spec(), self.snapshot, self.report, "r" * 120, 1_790_000_000)
+
+    def test_relative_project_scope_is_normalised(self):
+        snapshot = dict(self.snapshot, collection_scope=dict(requested="project", project="."))
+        first = os.path.join(self.home, "one")
+        second = os.path.join(self.home, "two")
+        os.makedirs(first)
+        os.makedirs(second)
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(first)
+        book = self.record(snapshot=snapshot)
+        stored = book["entries"][0]["scope"]
+        self.assertEqual(stored["project"], os.getcwd())
+        scope, projects = ledger.snapshot_scope(snapshot)
+        self.assertEqual((scope, projects), (stored, {stored["project"]}))
+        os.chdir(second)
+        signals = dict(snapshot, ledger_signals=dict(status="collected", entries={
+            "L-20260928-1": current(2, 20)}))
+        rows, _ = ledger.evaluate(book, signals, dict(version=1, generated="2026-10-30T00:00:00Z",
+                                                      window_days=30, metrics={}, findings=[], applied=[]), "r2")
+        self.assertEqual((rows[0]["verdict"], rows[0]["reason"]), ("unknown", "incomparable"))
 
     def cli(self, *args):
         return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True,
@@ -490,8 +616,8 @@ class Remove(LedgerFiles):
         self.assertEqual(book["entries"][0]["state"], "active")
 
     def test_hook_without_recorded_registration_is_blocked(self):
-        hook = self.put(".claude/hooks/check.sh", "#!/bin/sh\n# setup-audit: L-20260928-1\nexit 0\n")
-        book = self.recorded(self.spec(mechanism="hook", edits=[dict(file=hook, kind="hook_script", backup=None)]))
+        _, book = self.hook_book()
+        book["entries"][0]["edits"] = [e for e in book["entries"][0]["edits"] if e["kind"] == "hook_script"]
         rows = ledger.plan_removal(book, ["L-20260928-1"])
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("blocked", "registration_unrecorded"))
 
@@ -663,9 +789,11 @@ class Remove(LedgerFiles):
 
     def test_duplicate_appended_values_are_ambiguous_and_untouched(self):
         with open(self.settings, "w") as f:
-            json.dump({"permissions": {"deny": ["Read(.env)", "Read(.env)"]}}, f)
+            json.dump({"permissions": {"deny": ["Read(.env)"]}}, f)
         book = self.recorded(self.spec(mechanism="setting", edits=[
             dict(file=self.settings, kind="json_array_append", pointer="/permissions/deny/0", backup=None)]))
+        with open(self.settings, "w") as f:
+            json.dump({"permissions": {"deny": ["Read(.env)", "Read(.env)"]}}, f)
         before = slurp(self.settings)
         rows = ledger.plan_removal(book, ["L-20260928-1"])
         self.assertEqual((rows[0]["status"], rows[0]["reason"]), ("modified", "ambiguous_duplicate"))
@@ -698,6 +826,14 @@ class Remove(LedgerFiles):
         self.assertNotIn("Nothing was changed", err.getvalue())
         self.assertNotIn("setup-audit:begin", slurp(self.md))  # the edit did happen
         self.assertEqual(ledger.load(path), book)
+
+    def test_unlistable_claude_directory_keeps_the_script(self):
+        hook, book = self.hook_book()
+        with mock.patch("os.listdir", side_effect=OSError("denied")):
+            rows = ledger.plan_removal(book, ["L-20260928-1"])
+        self.assertEqual((rows[-1]["kind"], rows[-1]["status"], rows[-1]["reason"]),
+                         ("hook_script", "blocked", "registration_remains"))
+        self.assertTrue(os.path.exists(hook))
 
     def test_other_spellings_and_sibling_settings_keep_the_script(self):
         hook, book = self.hook_book()
@@ -833,11 +969,17 @@ class Docs(unittest.TestCase):
                      "references/ledger.md"):
             self.assertIn(text, skill)
 
+    def test_ledger_findings_are_written_after_finalize(self):
+        skill = self.read(self.SKILL, "SKILL.md")
+        finalize = skill.index("--finalize --ledger")
+        self.assertGreater(skill.index("For each `trend.ledger` row with a `proposal`"), finalize)
+        self.assertIn("one approved fix at a time", skill)
+
     def test_reference_matches_constants(self):
         ref = self.read(self.SKILL, "references", "ledger.md")
         for value in (str(ledger.MIN_SESSIONS), str(ledger.MIN_BASELINE), str(ledger.QUIET_DAYS),
                       *ledger.STATES, *ledger.KINDS, *ledger.SOURCES, "fetched 2026-09-28",
-                      "finding_id", "supersedes", "pointer"):
+                      "finding_id", "supersedes", "pointer", "Markers and edit kinds", "blank-line"):
             self.assertIn(value, ref)
         self.assertNotIn("retired", ref)
 

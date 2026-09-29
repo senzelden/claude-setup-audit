@@ -163,7 +163,7 @@ def validate_entry(item):
 
 def validate(book):
     require(isinstance(book, dict) and set(book) == {'version', 'entries'}, 'invalid ledger fields')
-    require(book['version'] == VERSION, 'unsupported ledger version')
+    require(type(book['version']) is int and book['version'] == VERSION, 'unsupported ledger version')
     require(isinstance(book['entries'], list), 'invalid ledger entries')
     seen = set()
     for item in book['entries']:
@@ -342,6 +342,21 @@ def tilde(path, home):
     return '~' + path[len(home):] if path == home or path.startswith(home + os.sep) else path
 
 
+def _empty_objects(node):
+    return isinstance(node, dict) and all(_empty_objects(v) for v in node.values())
+
+
+def _only_empty_objects_without(doc, parts):
+    """True when deleting the value at `parts` leaves nothing but (nested) empty objects: the file
+    plausibly did not exist before a json_set, so removal may delete the value without a backup."""
+    doc = copy.deepcopy(doc)
+    parent = resolve(doc, parts[:-1])
+    if not isinstance(parent, dict):
+        return False
+    del parent[parts[-1]]
+    return _empty_objects(doc)
+
+
 def fingerprint_edit(entry_id, edit, home):
     require(isinstance(edit, dict) and edit.get('kind') in KINDS, 'invalid edit kind', input='spec')
     json_kind = edit['kind'].startswith('json_')
@@ -367,6 +382,9 @@ def fingerprint_edit(entry_id, edit, home):
         if edit['kind'] == 'json_array_append':
             require(INDEX_RE.match(parts[-1]), 'pointer must name the appended element', input='spec')
         value = resolve(doc, parts)
+        if edit['kind'] == 'json_set' and edit['backup'] is None:
+            require(_only_empty_objects_without(doc, parts), 'json_set needs a backup unless the file held '
+                    'nothing else', input='spec')
         if edit['kind'] == 'json_array_append':
             require(isinstance(resolve(doc, parts[:-1]), list), 'pointer parent must be an array',
                     input='edited file')
@@ -384,13 +402,17 @@ def snapshot_scope(snapshot):
         scope = dict(scope=cs['requested'], project=cs.get('project'), window_days=snapshot['window_days'])
         validate_scope(scope)
         require((scope['scope'] == 'project') == (scope['project'] is not None), 'invalid scope')
-    except (KeyError, LedgerError):
+        if scope['project'] is not None:
+            # A relative project ('.') means a different repo from another working directory.
+            scope['project'] = os.path.abspath(os.path.expanduser(scope['project']))
+            validate_scope(scope)
+    except (KeyError, LedgerError, ValueError, TypeError):
         raise LedgerError('snapshot scope is missing', input='snapshot') from None
     if scope['scope'] == 'all':
         return scope, None
     if scope['scope'] == 'global':
         return scope, set()
-    return scope, {os.path.abspath(os.path.expanduser(scope['project']))}
+    return scope, {scope['project']}
 
 
 def metric_baseline(selector, report, start, end):
@@ -412,6 +434,7 @@ def metric_baseline(selector, report, start, end):
 
 def record(book, spec, snapshot, report, run, now):
     import collect  # lazy: collect imports ledger lazily too
+    require(_text(run, 120), 'report file name is too long to serve as a ledger run id', input='report')
     book = copy.deepcopy(validate(book))
     require(isinstance(spec, dict) and SPEC_FIELDS <= set(spec) <= SPEC_FIELDS | {'supersedes'},
             'invalid spec fields', input='spec')
@@ -441,8 +464,13 @@ def record(book, spec, snapshot, report, run, now):
     require(isinstance(spec['edits'], list) and spec['edits'], 'entry needs edits', input='spec')
     selector = copy.deepcopy(spec['selector'])
     if selector['type'] == 'keywords':
-        selector['any'] = [collect.redact(w) for w in selector['any']]
+        # Stored keywords are also what later runs count, so a redacted keyword would count nothing.
+        require(all(collect.redact(w) == w for w in selector['any']),
+                'keywords must not contain secret-like values', input='spec')
     scope, project_filter = snapshot_scope(snapshot)
+    require(selector['type'] == 'metric' or scope['scope'] != 'global',
+            'a global-scope snapshot has no sessions to count; use a metric selector or another scope',
+            input='snapshot')
     start = now - scope['window_days'] * 86400
     if selector['type'] == 'metric':
         baseline = metric_baseline(selector, report, start, now)
@@ -453,10 +481,26 @@ def record(book, spec, snapshot, report, run, now):
                  pattern=collect.redact(spec['pattern'])[:200], mechanism=spec['mechanism'], state='active',
                  supersedes=supersedes, selector=selector, scope=scope, baseline=baseline,
                  edits=[fingerprint_edit(spec['id'], e, collect.HOME) for e in spec['edits']], observations=[])
+    _require_removable(entry)
     if supersedes is not None:
         ids[supersedes]['state'] = 'superseded'
     book['entries'].append(entry)
     return validate(book)
+
+
+# Plan reasons that make a just-recorded edit unremovable, and the input to name when refusing.
+UNREMOVABLE = {'registration_unrecorded': 'spec', 'backup_missing': 'backup'}
+
+
+def _require_removable(entry):
+    """Refuse to record an edit that `remove` could not undo. A hook script whose only
+    registration is this entry's own recorded json_array_append already plans `removable`:
+    _still_registered ignores the elements the entry itself appended."""
+    for index in range(len(entry['edits'])):
+        row = plan_edit(entry, index)
+        reason = row['reason'] or row['status']  # a constant code, never file content
+        require(row['status'] == 'removable', 'the edit could not be removed later (%s)' % reason,
+                input=UNREMOVABLE.get(row['reason'], 'edited file'))
 
 
 ROW_COUNTS = ('matches', 'sessions_matched', 'sessions_scanned', 'value')
@@ -571,8 +615,8 @@ def _settings_candidates(entry, script):
     if os.path.basename(folder) == '.claude':
         try:
             names = sorted(n for n in os.listdir(folder) if n.startswith('settings') and n.endswith('.json'))
-        except OSError:
-            names = []
+        except OSError:  # an unlistable directory may hold a registration: fail closed
+            raise LedgerError('settings directory cannot be listed', input='edited file') from None
         paths.extend(os.path.join(folder, n) for n in names)
     return list(dict.fromkeys(paths))
 
@@ -583,7 +627,11 @@ def _still_registered(entry, script):
     false positive only keeps the script. The elements this entry's own json_array_append edits
     would remove are ignored; unreadable files fail closed."""
     name = os.path.basename(script)
-    for path in _settings_candidates(entry, script):
+    try:
+        candidates = _settings_candidates(entry, script)
+    except LedgerError:
+        return True
+    for path in candidates:
         if not os.path.lexists(path):
             continue
         try:
