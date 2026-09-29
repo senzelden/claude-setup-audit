@@ -131,5 +131,5 @@ def scan_hooks(index):
                 text = text[:MAX_SCRIPT]
             for line, pattern_id in _matches(text):
                 found.add((e['plugin'], e['event'], os.path.relpath(path, root), line, pattern_id))
-    rows = sorted(found, key=lambda r: (r[0], r[2], r[3] or 0, r[4]))
+    rows = sorted(found, key=lambda r: (r[0], r[2], r[3] or 0, r[4], r[1]))
     return [dict(plugin=p, hook_event=ev, file=f, line=ln, pattern=pid) for p, ev, f, ln, pid in rows], sorted(reasons)

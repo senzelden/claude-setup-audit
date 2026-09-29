@@ -114,3 +114,13 @@ class StaticScan(FakeHome):
         found, reasons = harness.scan_hooks(index)
         self.assertEqual(found, [])
         self.assertEqual(reasons, ['script_truncated', 'script_unresolved'])
+
+    def test_same_script_under_two_events_sorts_by_event(self):
+        cmd = 'sh ${CLAUDE_PLUGIN_ROOT}/hooks/r.sh'
+        found, _ = self.scan(
+            {'Stop': [{'hooks': [{'type': 'command', 'command': cmd}]}],
+             'SessionStart': [{'hooks': [{'type': 'command', 'command': cmd}]}]},
+            {'hooks/r.sh': 'claude -p x\n'})
+        self.assertEqual([(f['hook_event'], f['file'], f['line'], f['pattern']) for f in found],
+                         [('SessionStart', 'hooks/r.sh', 1, 'claude_print'),
+                          ('Stop', 'hooks/r.sh', 1, 'claude_print')])
