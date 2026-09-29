@@ -5,6 +5,8 @@ memory for matching and are never part of the returned snapshot section.
 """
 import json
 import os
+import re
+import shlex
 
 MAX_HOOK_FILE = 1024 * 1024
 
@@ -67,3 +69,67 @@ def match_command(index, command):
     if len(plugins) == 1:
         return plugins.pop(), 'matched'
     return None, ('ambiguous' if plugins else 'unattributed')
+
+
+MAX_SCRIPT = 64 * 1024
+# Word boundaries exclude names such as claude-setup or myclaude.
+PATTERNS = (
+    ('claude_print', re.compile(r'(?<![\w.-])claude(?![\w.-])[^\n|;&]*?\s(?:-p|--print)(?![\w-])')),
+    ('agent_sdk_py', re.compile(r'\bclaude_agent_sdk\b')),
+    ('agent_sdk_js', re.compile(r'@anthropic-ai/claude-agent-sdk')),
+    ('anthropic_client', re.compile(r'anthropic\.Anthropic\(|new Anthropic\(|api\.anthropic\.com')),
+)
+ROOT_VARS = ('${CLAUDE_PLUGIN_ROOT}', '$CLAUDE_PLUGIN_ROOT')
+
+
+def _matches(text):
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith(('#', '//')):
+            continue
+        for pattern_id, rx in PATTERNS:
+            if rx.search(line):
+                yield number, pattern_id
+
+
+def _script_paths(command, root):
+    expanded = command
+    for var in ROOT_VARS:
+        expanded = expanded.replace(var, root)
+    try:
+        tokens = shlex.split(expanded, comments=False)
+    except ValueError:
+        tokens = expanded.split()
+    for token in tokens:
+        for part in token.split(';'):
+            if part.startswith(root + os.sep) or part.startswith(root + '/..'):
+                yield part
+
+
+def scan_hooks(index):
+    """Flag hook commands and plugin-local scripts that invoke a model. Never runs anything."""
+    found, reasons = set(), set()
+    for e in index:
+        root = e['root']
+        for _, pattern_id in _matches(e['command']):
+            found.add((e['plugin'], e['event'], os.path.relpath(e['source'], root), None, pattern_id))
+        for raw in _script_paths(e['command'], root):
+            path = os.path.abspath(raw)
+            real_root = os.path.realpath(root)
+            if (not path.startswith(os.path.abspath(root) + os.sep) or os.path.islink(path)
+                    or not os.path.realpath(path).startswith(real_root + os.sep) or not os.path.isfile(path)):
+                reasons.add('script_unresolved')
+                continue
+            try:
+                with open(path, encoding='utf-8', errors='replace') as f:
+                    text = f.read(MAX_SCRIPT + 1)
+            except OSError:
+                reasons.add('script_unresolved')
+                continue
+            if len(text) > MAX_SCRIPT:
+                reasons.add('script_truncated')
+                text = text[:MAX_SCRIPT]
+            for line, pattern_id in _matches(text):
+                found.add((e['plugin'], e['event'], os.path.relpath(path, root), line, pattern_id))
+    rows = sorted(found, key=lambda r: (r[0], r[2], r[3] or 0, r[4]))
+    return [dict(plugin=p, hook_event=ev, file=f, line=ln, pattern=pid) for p, ev, f, ln, pid in rows], sorted(reasons)

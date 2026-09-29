@@ -10,7 +10,10 @@ import harness
 def install(t, name='demo', market='market', version='1', hooks=None, files=None, enabled=True, manifest=None):
     root = os.path.join(t.claude, 'plugins', 'cache', market, name, version)
     reg_path = os.path.join(t.claude, 'plugins', 'installed_plugins.json')
-    reg = json.load(open(reg_path)) if os.path.exists(reg_path) else {'version': 2, 'plugins': {}}
+    reg = {'version': 2, 'plugins': {}}
+    if os.path.exists(reg_path):
+        with open(reg_path) as f:
+            reg = json.load(f)
     reg['plugins'][f'{name}@{market}'] = [{'scope': 'user', 'installPath': root, 'version': version}]
     t.write('.claude/plugins/installed_plugins.json', reg)
     t.write(os.path.relpath(os.path.join(root, '.claude-plugin', 'plugin.json'), t.home),
@@ -64,3 +67,50 @@ class HookIndex(FakeHome):
     def test_near_miss_command_is_unattributed(self):
         index = [{'plugin': 'c@m', 'command': '"${CLAUDE_PLUGIN_ROOT}/x.sh" start'}]
         self.assertEqual(harness.match_command(index, '${CLAUDE_PLUGIN_ROOT}/x.sh start'), (None, 'unattributed'))
+
+
+class StaticScan(FakeHome):
+    def scan(self, hooks, files):
+        _, s = install(self, hooks=hooks, files=files)
+        index, _ = harness.hook_index(self.claude, [s])
+        return harness.scan_hooks(index)
+
+    def stop(self, command):
+        return {'Stop': [{'hooks': [{'type': 'command', 'command': command}]}]}
+
+    def test_each_pattern_in_a_referenced_script(self):
+        script = '#!/bin/sh\n# claude -p "commented out"\necho hi\nclaude -p "reflect" > out\n'
+        py = 'import os\nfrom claude_agent_sdk import query\n'
+        js = "import x from '@anthropic-ai/claude-agent-sdk'\nconst c = new Anthropic()\n"
+        found, reasons = self.scan(
+            {'Stop': [{'hooks': [{'type': 'command', 'command': 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/r.sh"'},
+                                 {'type': 'command', 'command': 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/r.py'},
+                                 {'type': 'command', 'command': 'node $CLAUDE_PLUGIN_ROOT/hooks/r.mjs'}]}]},
+            {'hooks/r.sh': script, 'hooks/r.py': py, 'hooks/r.mjs': js})
+        self.assertEqual(reasons, [])
+        self.assertEqual([(f['file'], f['line'], f['pattern']) for f in found], [
+            ('hooks/r.mjs', 1, 'agent_sdk_js'), ('hooks/r.mjs', 2, 'anthropic_client'),
+            ('hooks/r.py', 2, 'agent_sdk_py'), ('hooks/r.sh', 4, 'claude_print')])
+        self.assertTrue(all(f['plugin'] == 'demo@market' and f['hook_event'] == 'Stop' for f in found))
+
+    def test_pattern_in_the_command_itself(self):
+        found, _ = self.scan(self.stop('claude --print "summarize"'), {})
+        self.assertEqual([(f['file'], f['line'], f['pattern']) for f in found],
+                         [('hooks/hooks.json', None, 'claude_print')])
+
+    def test_similar_words_do_not_match(self):
+        found, _ = self.scan(self.stop('claude-setup -p x; myclaude --print'), {})
+        self.assertEqual(found, [])
+
+    def test_symlink_escape_missing_and_truncation(self):
+        outside = self.write('outside.sh', 'claude -p x\n')
+        root, s = install(self, hooks=self.stop('sh ${CLAUDE_PLUGIN_ROOT}/hooks/link.sh; '
+                                                 'sh ${CLAUDE_PLUGIN_ROOT}/hooks/../../../../outside.sh; '
+                                                 'sh ${CLAUDE_PLUGIN_ROOT}/hooks/missing.sh; '
+                                                 'sh ${CLAUDE_PLUGIN_ROOT}/hooks/big.sh'),
+                          files={'hooks/big.sh': 'x\n' * 40000 + 'claude -p late\n'})
+        os.symlink(outside, os.path.join(root, 'hooks', 'link.sh'))
+        index, _ = harness.hook_index(self.claude, [s])
+        found, reasons = harness.scan_hooks(index)
+        self.assertEqual(found, [])
+        self.assertEqual(reasons, ['script_truncated', 'script_unresolved'])
