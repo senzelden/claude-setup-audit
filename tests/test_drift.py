@@ -211,7 +211,7 @@ class Compare(unittest.TestCase):
         now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 999  # +24.9%
         self.assertEqual(self.run_compare(now, [before]), [
             {'signal': 'skill_listing_chars', 'kind': 'growth', 'value': 12500, 'previous': 10000,
-             'fraction': 0.25, 'threshold': 0.25}])
+             'since': '2026-09-28T00:00:00Z', 'fraction': 0.25, 'threshold': 0.25}])
 
     def test_injected_growth_needs_same_plugin_and_event(self):
         before = self.entry(snapshot())
@@ -233,6 +233,38 @@ class Compare(unittest.TestCase):
         now = snapshot()
         now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 5000
         self.assertEqual(self.run_compare(now, [before]), [])
+
+    def listing(self, chars, at, crossed=False):
+        snap = snapshot()
+        snap['harness_overhead']['skill_listing_series']['last']['chars'] = chars
+        e = self.entry(snap, at=at)
+        if crossed:
+            e['crossings'] = [{'signal': 'skill_listing_chars', 'kind': 'growth'}]
+        return e
+
+    def test_gradual_growth_crosses_against_the_anchor(self):
+        entries = [self.listing(10000, '2026-09-01T00:00:00Z'), self.listing(11000, '2026-09-08T00:00:00Z'),
+                   self.listing(12000, '2026-09-15T00:00:00Z')]  # every step below 25%
+        now = snapshot()
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 12600
+        self.assertEqual(self.run_compare(now, entries), [
+            {'signal': 'skill_listing_chars', 'kind': 'growth', 'value': 12600, 'previous': 10000,
+             'since': '2026-09-01T00:00:00Z', 'fraction': 0.26, 'threshold': 0.25}])
+
+    def test_growth_crossing_re_anchors(self):
+        entries = [self.listing(10000, '2026-09-01T00:00:00Z'),
+                   self.listing(12500, '2026-09-08T00:00:00Z', crossed=True)]
+        now = snapshot()
+        now['harness_overhead']['skill_listing_series']['last']['chars'] = 13000  # +4% since the crossing
+        self.assertEqual(self.run_compare(now, entries), [])
+
+    def test_injected_identity_change_restarts_the_anchor(self):
+        first = self.entry(snapshot(), at='2026-09-01T00:00:00Z')
+        other = snapshot()
+        other['harness_overhead']['injected_context']['sources'][0]['plugin'] = 'other@m'
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 5000
+        self.assertEqual(self.run_compare(now, [first, self.entry(other, at='2026-09-02T00:00:00Z')]), [])
 
     def test_other_scope_is_not_comparable(self):
         before = self.entry(snapshot(), scope='project', project='/x')
@@ -294,7 +326,7 @@ class CorruptLog(unittest.TestCase):
         now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 1000
         self.assertEqual(self.run_compare(now, [before]), [
             {'signal': 'injected_tokens', 'kind': 'growth', 'value': 1000, 'previous': 800,
-             'fraction': 0.25, 'threshold': 0.25}])
+             'since': '2026-09-28T00:00:00Z', 'fraction': 0.25, 'threshold': 0.25}])
 
     def test_incomplete_does_not_suppress_cache_crossing(self):
         snap = snapshot(transcripts={'cache': {'hit_ratio': 0.5}},

@@ -71,6 +71,33 @@ def _number(x):
     return type(x) in (int, float)
 
 
+def _identity(v):
+    return v.get('plugin'), v.get('hook_event'), v.get('attribution')
+
+
+def growth_anchor(entries, meta, name, current):
+    """The reference value for growth and its `at`: the value at the last growth crossing of this
+    signal, or else the earliest comparable run. For injected_tokens the walk stops at a run whose
+    plugin, hook event or attribution differs (older entries lack attribution), so a change of the
+    top source starts a new baseline. Only values above 0 can be a reference."""
+    anchor = (None, None)
+    for e in reversed(entries):
+        signals = e.get('signals')
+        if not all(e.get(k) == meta[k] for k in META_KEYS) or not isinstance(signals, dict) \
+                or not isinstance(signals.get(name), dict):
+            continue
+        value = signals[name]
+        if name == 'injected_tokens' and ('attribution' not in value or _identity(value) != _identity(current)):
+            break
+        if _number(value.get('value')) and value['value'] > 0:
+            anchor = (value['value'], e.get('at'))
+        crossings = e.get('crossings')
+        if isinstance(crossings, list) and any(isinstance(c, dict) and c.get('signal') == name
+                                               and c.get('kind') == 'growth' for c in crossings):
+            break
+    return anchor
+
+
 def compare(signals, fingerprint_paths, entries, meta, thresholds):
     crossings = []
     for path, v in sorted((signals['claude_md'] or {}).items()):
@@ -90,21 +117,16 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
             crossings.append({'signal': 'broad_permissions', 'kind': 'new', 'fingerprints': new,
                               'paths': sorted({fingerprint_paths[f] for f in new if fingerprint_paths.get(f)})})
     for name in ('skill_listing_chars', 'injected_tokens'):
-        current, previous = signals[name], comparable(entries, meta, name)
-        if not current or not previous:
+        current = signals[name]
+        if not current or not _number(current.get('value')):
             continue
-        if name == 'injected_tokens' and (
-                'attribution' not in previous  # older log entry: not comparable
-                or (current['plugin'], current['hook_event'], current['attribution']) != (
-                    previous.get('plugin'), previous.get('hook_event'), previous.get('attribution'))):
-            continue
-        before = previous.get('value')
-        if not _number(before) or not _number(current.get('value')) or before <= 0:
+        before, since = growth_anchor(entries, meta, name, current)
+        if before is None:
             continue
         fraction = (current['value'] - before) / before
         if fraction >= thresholds['growth_min']:
             crossings.append({'signal': name, 'kind': 'growth', 'value': current['value'], 'previous': before,
-                              'fraction': round(fraction, 3), 'threshold': thresholds['growth_min']})
+                              'since': since, 'fraction': round(fraction, 3), 'threshold': thresholds['growth_min']})
     return crossings
 
 
@@ -118,7 +140,8 @@ def summary_line(crossings, log_display):
         elif c['kind'] == 'new':
             parts.append('new broad permission in ' + ', '.join(c['paths'] or ['an unknown settings file']))
         else:
-            parts.append(f"{c['signal']} +{round(c['fraction'] * 100)}% ({c['value']})")
+            since = f" since {c['since'][:10]}" if isinstance(c.get('since'), str) else ''
+            parts.append(f"{c['signal']} +{round(c['fraction'] * 100)}%{since} ({c['value']})")
     head = f'setup-audit drift: {len(crossings)} crossed ('
     tail = f'); log {log_display}'
     middle = '; '.join(parts)

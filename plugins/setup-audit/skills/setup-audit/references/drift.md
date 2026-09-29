@@ -1,7 +1,7 @@
 # Drift mode
 
 An optional, model-free command that notices setup drift between full audits. It collects a
-snapshot, derives five signals, compares them with thresholds and the previous comparable run,
+snapshot, derives five signals, compares them with thresholds and earlier comparable runs,
 appends one line to a drift log, and prints one line only when something crossed. You run it or wire
 it into your own cron job or hook. The plugin never installs a hook, schedule or background process.
 The full audit reads the log read-only and cites crossings as dated evidence (see `checklist.md`).
@@ -25,8 +25,8 @@ is installed on your machine; fill it in yourself.
 | `claude_md` | lines and estimated tokens per CLAUDE.md (global and each project; worktree copies skipped) | a file's lines exceed the maximum (`above_max`) | 200 lines: "target under 200 lines per CLAUDE.md file", memory docs, fetched 2026-09-29 (`COST-claude-md-size`) |
 | `cache_hit_ratio` | `transcripts.cache.hit_ratio` | below the minimum (`below_min`) | 0.90: "above ~90% is healthy" (`COST-cache-health`) |
 | `broad_permissions` | count and fingerprints of `permissions.risky` rules | a fingerprint is absent from the previous comparable entry (`new`) | none |
-| `skill_listing_chars` | last `harness_overhead.skill_listing_series` size | grew by at least the fraction over the previous comparable entry (`growth`) | 0.25 (`--growth-min`), a recommendation, not a documented limit |
-| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule, only when its plugin, hook event and `attribution` match the previous entry's; entries logged without `attribution` are not comparable | 0.25 (`--growth-min`) |
+| `skill_listing_chars` | last `harness_overhead.skill_listing_series` size | grew by at least the fraction over its growth anchor (`growth`) | 0.25 (`--growth-min`), a recommendation, not a documented limit |
+| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule; the anchor only reaches back over runs whose plugin, hook event and `attribution` match the current ones (entries logged without `attribution` end the walk) | 0.25 (`--growth-min`) |
 
 A signal is `null` when its source is absent, and a null signal never crosses. The `complete` flag
 recorded per signal comes from the snapshot's coverage; it does not suppress a crossing, and the
@@ -34,20 +34,23 @@ audit weighs it.
 
 **Comparable entry:** the most recent earlier log entry with the same `scope`, `project` and
 `window_days` whose signal is not `null`. Without one, this run is the baseline for that signal: no
-`new` or `growth` crossing is evaluated. Growth is evaluated only when the previous value is above
-0. `above_max` and `below_min` need no previous entry.
+`new` or `growth` crossing is evaluated. `above_max` and `below_min` need no previous entry.
 
 Comparability keys on `scope`, `project` and `window_days` only. Changing `--roots` or `--claude-dir`
 while writing to the same log can raise `new` crossings for rules that already existed. `project` is
 logged in `~` form like the other paths.
 
-Growth is measured run to run against the previous comparable entry, so gradual creep below the
-threshold per run never crosses; more frequent runs make this worse. `skill_listing_chars` is taken
+**Growth anchor:** growth is measured against the value at the last `growth` crossing of that
+signal, or, before any crossing, the earliest comparable run; only a value above 0 can be the anchor.
+Slow creep therefore crosses once its total reaches the threshold, and the crossing resets the
+anchor, so the next alert needs another full step. A drop below the anchor does not move it.
+(User decision 2026-09-29; the first design compared run to run, which never caught gradual
+creep.) `skill_listing_chars` is taken
 from the most recent non-SDK session, so at scope `all` it can move with whichever project was used
 last.
 
 **Crossing kinds:** `above_max` (with `path`), `below_min`, `new` (with the new fingerprints and
-their settings file paths), `growth` (with `previous` and `fraction`).
+their settings file paths), `growth` (with `previous`, the anchor value, `since`, the anchor run's `at`, and `fraction`).
 
 **Fingerprint limits.** A fingerprint is the first 16 hex characters of the SHA-256 of settings file
 path, flag name and redacted rule. The collector keeps at most 6 risky rules per flag, each

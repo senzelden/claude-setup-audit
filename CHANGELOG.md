@@ -12,8 +12,9 @@ All notable changes to this project are documented here. The format follows
   skill listing series (non-SDK sessions), subagent spend compared with the same sessions' main
   spend, entrypoint shares and a scan for enabled plugin hooks that invoke a model; new check
   `COST-harness-overhead`. Unreadable registry or hook files and global scope mark it incomplete.
-- Opt-in drift mode: `scripts/drift.py` derives five signals, compares them with thresholds and the
-  previous comparable run, and appends to a drift log; the collector's `--drift-log` summarizes it
+- Opt-in drift mode: `scripts/drift.py` derives five signals, compares them with thresholds and earlier
+  comparable runs (growth against an anchor that resets at each growth crossing), and appends to a
+  drift log; the collector's `--drift-log` summarizes it
   into optional `drift_signals`. The plugin installs no hook or schedule. See
   `references/drift.md`.
 

@@ -68,7 +68,11 @@ Rules:
   signals) but do not suppress crossings; the audit weighs them.
 - **Broad permissions** are the snapshot's `permissions.risky` flags from every collected
   settings file. The rule text is used only to compute the fingerprint and is never written.
-- Growth compares against the previous comparable value only when that value is greater than 0.
+- Growth compares against an anchor, not the previous run (user decision 2026-09-29, after the final
+  review showed run-to-run comparison never catches gradual creep): the value at the last `growth`
+  crossing of that signal among comparable entries, or else the earliest comparable entry; only
+  values greater than 0 qualify. For `injected_tokens` the walk back stops at an entry whose plugin,
+  hook event or attribution differs. Growth crossings carry `previous` (the anchor) and `since`.
 
 ## Log
 
