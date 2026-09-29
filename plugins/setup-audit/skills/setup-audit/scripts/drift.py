@@ -143,7 +143,12 @@ def summary_line(crossings, log_display):
             since = f" since {c['since'][:10]}" if isinstance(c.get('since'), str) else ''
             parts.append(f"{c['signal']} +{round(c['fraction'] * 100)}%{since} ({c['value']})")
     head = f'setup-audit drift: {len(crossings)} crossed ('
-    tail = f'); log {log_display}'
+    prefix = '); log '
+    # Keep the suffix by shortening the path itself (its tail identifies the file), leaving room for some detail.
+    path_room = max(300 - len(head) - len(prefix) - 60, 3)
+    if len(log_display) > path_room:
+        log_display = '...' + log_display[len(log_display) - (path_room - 3):]
+    tail = prefix + log_display
     middle = '; '.join(parts)
     room = 300 - len(head) - len(tail)
     if len(middle) > room:

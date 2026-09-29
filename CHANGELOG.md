@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The drift session-start summary now shortens an overlong log path (keeping its tail) instead of
+  dropping the `; log <path>` suffix.
 - Snapshot schema types drift `last_value` as a number and describes `skill_listing_series`
   (additive, still v1); the bundled validator supports the `number` type.
 

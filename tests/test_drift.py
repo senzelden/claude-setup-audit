@@ -428,6 +428,16 @@ class DriftCli(FakeHome):
         self.assertNotIn('\n', line)
         self.assertTrue(line.endswith('; log ' + log))
 
+    def test_overlong_log_path_is_shortened_not_dropped(self):
+        crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': '/p/CLAUDE.md',
+                      'value': 999, 'threshold': 200}]
+        log = '/' + 'd' * 290 + '/audits/drift.jsonl'
+        line = drift.summary_line(crossings, log)
+        self.assertLessEqual(len(line), 300)
+        self.assertIn('; log ...', line)
+        self.assertTrue(line.endswith('/audits/drift.jsonl'))
+        self.assertIn('/p/CLAUDE.md', line)
+
     def test_newline_in_displayed_path_stays_one_line(self):
         crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': '/p/a\nb\rc/CLAUDE.md',
                       'value': 999, 'threshold': 200}]
