@@ -4,6 +4,7 @@ Fake homes only; never the real ~/.claude.
 """
 import unittest
 from test_collect import FakeHome, collect
+import config_checks
 
 
 class RuleShapes(unittest.TestCase):
@@ -61,3 +62,95 @@ class RuleShapesInSummary(FakeHome):
                          {'allow': {'star-joined-to-program': ['Bash(ls*)']},
                           'deny': {'colon-star-literal': ['Bash(git:* push)']}})
         self.assertEqual(collect.summarize_settings(clean)['permissions']['rule_shape_issues'], {})
+
+
+def hook_issues(event, matcher=None, **handler):
+    handler.setdefault('type', 'command')
+    handler.setdefault('command', 'true')
+    return config_checks.handler_issues(event, matcher, handler)[0]
+
+
+class HookHandlerChecks(unittest.TestCase):
+    def test_every_documented_event_is_known_without_a_matcher(self):
+        for event in config_checks.HOOK_EVENTS:
+            with self.subTest(event=event):
+                self.assertEqual(hook_issues(event), [])
+        self.assertEqual(config_checks.TOOL_EVENTS, {'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+                                                     'PermissionRequest', 'PermissionDenied'})
+
+    def test_documented_problems_are_flagged(self):
+        cases = [
+            (('pretooluse', 'Bash'), ['unknown_event']),
+            (('Stop', 'Bash'), ['matcher_ignored']),
+            (('UserPromptSubmit', '.*'), ['matcher_ignored']),
+            (('PreToolUse', '*.py'), ['invalid_regex']),
+            (('PreToolUse', 'Edit|Write)'), ['invalid_regex']),
+            (('PreToolUse', '[Edit'), ['invalid_regex']),
+            (('PreToolUse', 'mcp__memory'), ['mcp_server_only_matcher']),
+            (('PreToolUse', 'Bash|mcp__brave-search'), ['mcp_server_only_matcher']),
+            (('StopFailure', 'rate_limit, overloaded'), ['narrow_event_regex_path']),
+            (('PreToolUse', ['Bash']), ['matcher_not_string']),
+        ]
+        for (event, matcher), expected in cases:
+            with self.subTest(event=event, matcher=matcher):
+                self.assertEqual(hook_issues(event, matcher), expected)
+
+    def test_valid_matchers_are_not_flagged(self):
+        for event, matcher in (
+                ('PreToolUse', 'Edit|Write'), ('PreToolUse', 'Edit, Write'), ('PreToolUse', '^Notebook'),
+                ('PreToolUse', '^Edit$'), ('PreToolUse', 'mcp__memory__.*'), ('PreToolUse', 'mcp__.*__write.*'),
+                ('PreToolUse', 'mcp__memory__create_entities'), ('SubagentStart', 'code-reviewer'),
+                ('SubagentStart', '^my-plugin:reviewer$'), ('PreModelSwitch', '.*opus.*'),
+                ('Notification', 'permission_prompt'), ('SessionStart', 'mcp__memory'),
+                ('StopFailure', 'rate_limit|overloaded'), ('FileChanged', '.envrc|.env'),
+                ('FileChanged', r'^\.env'), ('PreToolUse', '(?<tool>Bash)'), ('PreToolUse', r'\p{L}+'),
+                ('Stop', '*'), ('Stop', ''), ('Stop', None)):
+            with self.subTest(event=event, matcher=matcher):
+                self.assertEqual(hook_issues(event, matcher), [])
+
+    def test_if_on_non_tool_events_never_runs(self):
+        self.assertEqual(hook_issues('Stop', **{'if': 'Bash(git *)'}), ['if_never_runs'])
+        self.assertEqual(hook_issues('PermissionDenied', 'Bash', **{'if': 'Bash(git *)'}), [])
+
+    def test_handler_fields(self):
+        check = config_checks.handler_issues
+        full = {'type': 'command', 'command': 'x', 'args': [], 'async': True, 'asyncRewake': False,
+                'shell': 'bash', 'timeout': 5, 'statusMessage': 's', 'once': True, 'if': 'Bash(x)'}
+        self.assertEqual(check('PreToolUse', 'Bash', full), ([], []))
+        self.assertEqual(check('PreToolUse', 'Bash', {'type': 'command', 'command': 'x', 'url': 'u'}),
+                         (['unknown_fields'], ['url']))
+        self.assertEqual(check('PreToolUse', 'Bash', {'type': 'http', 'url': 'u', 'async': True}),
+                         (['unknown_fields'], ['async']))
+        self.assertEqual(check('Stop', None, {'type': 'prompt', 'prompt': 'p', 'model': 'm'}), ([], []))
+        self.assertEqual(check('Stop', None, {'type': 'script', 'command': 'x'}), (['unknown_type'], []))
+        self.assertEqual(check('Stop', None, {'command': 'x'}), ([], []))
+        self.assertEqual(check('Stop', 'Bash', {'type': 'command', 'command': 'x', 'colour': 'r'}),
+                         (['matcher_ignored', 'unknown_fields'], ['colour']))
+
+    def test_fingerprint(self):
+        fp = config_checks.handler_fingerprint
+        same = {fp('PreToolUse', None, {'command': 'a', 'type': 'command'}),
+                fp('PreToolUse', '*', {'type': 'command', 'command': 'a'}),
+                fp('PreToolUse', '', {'command': 'a'})}
+        self.assertEqual(len(same), 1)
+        self.assertRegex(same.pop(), r'^[0-9a-f]{16}$')
+        self.assertNotEqual(fp('PreToolUse', 'Bash', {'command': 'a', 'timeout': 5}),
+                            fp('PreToolUse', 'Bash', {'command': 'a'}))
+        self.assertNotEqual(fp('PostToolUse', 'Bash', {'command': 'a'}), fp('PreToolUse', 'Bash', {'command': 'a'}))
+
+
+class HookFieldsInSummary(FakeHome):
+    def test_handler_entries_carry_checks(self):
+        path = self.write('.claude/settings.json', {'hooks': {
+            'Stop': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'x', 'colour': 'r'}]}],
+            'PreToolUse': [{'matcher': '[', 'hooks': [{'type': 'command', 'command': 'ok.sh'}]}],
+            'SessionStart': [{'hooks': [{'type': 'command', 'command': '${CLAUDE_PLUGIN_ROOT}/s.sh'}]}]}})
+        handlers = {h['event']: h for h in collect.summarize_settings(path)['hook_handlers']}
+        self.assertEqual(handlers['Stop']['issues'], ['matcher_ignored', 'unknown_fields'])
+        self.assertEqual(handlers['Stop']['unknown_fields'], ['colour'])
+        self.assertEqual(handlers['PreToolUse']['issues'], ['invalid_regex'])
+        self.assertNotIn('issues', handlers['SessionStart'])
+        self.assertNotIn('unknown_fields', handlers['SessionStart'])
+        self.assertTrue(handlers['SessionStart']['plugin_relative'])
+        self.assertNotIn('plugin_relative', handlers['Stop'])
+        self.assertRegex(handlers['Stop']['fingerprint'], r'^[0-9a-f]{16}$')

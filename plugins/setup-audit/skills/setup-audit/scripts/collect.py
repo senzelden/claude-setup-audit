@@ -31,6 +31,7 @@ import inventory
 import extensions
 import harness
 import clarity
+import config_checks
 import drift_log
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
@@ -322,6 +323,7 @@ def hook_handler_entry(event, matcher, x):
 
     header_keys/allowed_env_vars (http only) are the fields that decide whether a secret can leak
     into the request: names only, matching the env_keys/envrc_info convention elsewhere.
+    Every entry also carries a fingerprint; issues, unknown_fields and plugin_relative appear only when set.
     """
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
@@ -333,7 +335,16 @@ def hook_handler_entry(event, matcher, x):
         target, extra = x.get("prompt", ""), {}
     else:
         target, extra = x.get("command", ""), {}
-    return {"event": event, "matcher": matcher, "type": kind, "target": redact(target)[:200], **extra}
+    issues, unknown = config_checks.handler_issues(event, matcher, x)
+    entry = {"event": event, "matcher": matcher, "type": kind, "target": redact(target)[:200], **extra,
+             "fingerprint": config_checks.handler_fingerprint(event, matcher, x)}
+    if issues:
+        entry["issues"] = issues
+    if unknown:
+        entry["unknown_fields"] = unknown
+    if "CLAUDE_PLUGIN_" in json.dumps(x, default=str):
+        entry["plugin_relative"] = True
+    return entry
 
 
 def summarize_settings(path, data=None, managed=False):
