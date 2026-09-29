@@ -124,3 +124,63 @@ class StaticScan(FakeHome):
         self.assertEqual([(f['hook_event'], f['file'], f['line'], f['pattern']) for f in found],
                          [('SessionStart', 'hooks/r.sh', 1, 'claude_print'),
                           ('Stop', 'hooks/r.sh', 1, 'claude_print')])
+
+
+def now_iso(offset=0):
+    return collect.datetime.fromtimestamp(time.time() + offset, collect.timezone.utc).isoformat()
+
+
+def attachment(kind, **fields):
+    return {'type': 'attachment', 'timestamp': now_iso(), 'attachment': dict(type=kind, **fields)}
+
+
+def assistant(msg_id, tokens, sidechain=False, entrypoint='cli'):
+    return {'type': 'assistant', 'timestamp': now_iso(), 'isSidechain': sidechain, 'entrypoint': entrypoint,
+            'message': {'id': msg_id, 'usage': {'input_tokens': tokens, 'cache_creation_input_tokens': 0,
+                                                'cache_read_input_tokens': 0, 'output_tokens': 0}}}
+
+
+class TranscriptSignals(FakeHome):
+    def put(self, rel, records, extra=''):
+        self.write('.claude/projects/' + rel, '\n'.join(json.dumps(r) for r in records) + extra)
+
+    def test_attachments_entrypoints_and_tokens(self):
+        self.put('-p/s1.jsonl', [
+            attachment('hook_success', toolUseID='t1', command='run', hookEvent='SessionStart'),
+            attachment('hook_additional_context', toolUseID='t1', hookEvent='SessionStart', content='x' * 40),
+            attachment('skill_listing', isInitial=True, skillCount=12, content='y' * 100),
+            attachment('skill_listing', isInitial=False, skillCount=99, content='z'),
+            assistant('m1', 10, entrypoint='sdk-py'), assistant('m2', 5, sidechain=True)])
+        self.put('-p/s1/subagents/a.jsonl', [assistant('s1', 7), assistant('s2', 3)])
+        old = attachment('hook_additional_context', toolUseID='t9', hookEvent='SessionStart', content='old')
+        old['timestamp'] = now_iso(-40 * 86400)
+        self.put('-p/s2.jsonl', [old])
+        h = collect.collect_transcripts(days=30)['_harness']
+        main = os.path.join(self.claude, 'projects', '-p', 's1.jsonl')
+        self.assertEqual(h['sessions'], 1)
+        self.assertEqual(h['injections'], [(main, 'SessionStart', 't1', 40)])
+        self.assertEqual(h['commands'], {(main, 't1'): 'run'})
+        self.assertEqual([(c, n) for _, c, n in h['listings']], [(12, 100)])
+        self.assertEqual(dict(h['entrypoints']), {'sdk-py': 1})
+        self.assertEqual(h['main_tokens'], {('-p', 's1'): 10})
+        self.assertEqual(h['sub_tokens'], {('-p', 's1'): 10})
+
+    def test_duplicate_message_ids_counted_once(self):
+        self.put('-p/s1.jsonl', [assistant('m1', 10), assistant('m1', 10)])
+        self.put('-p/s1/subagents/a.jsonl', [assistant('s1', 7), assistant('s1', 7)])
+        h = collect.collect_transcripts(days=30)['_harness']
+        self.assertEqual((h['main_tokens'], h['sub_tokens']), ({('-p', 's1'): 10}, {('-p', 's1'): 7}))
+
+    def test_bad_skill_listing_fields_are_ignored(self):
+        self.put('-p/s1.jsonl', [attachment('skill_listing', isInitial=True, skillCount='12', content='y'),
+                                 attachment('skill_listing', isInitial=True, skillCount=3, content=None)])
+        self.assertEqual([(c, n) for _, c, n in collect.collect_transcripts(days=30)['_harness']['listings']],
+                         [(3, 0)])
+
+    def test_malformed_lines_and_non_string_content(self):
+        self.put('-p/s1.jsonl', [attachment('hook_additional_context', toolUseID=None, hookEvent='Stop',
+                                            content={'k': 'v'}), [1, 2]], extra='\n{not json')
+        h = collect.collect_transcripts(days=30)['_harness']
+        self.assertEqual(h['malformed'], 2)
+        self.assertEqual(h['injections'][0][1:], ('Stop', None, len('{"k":"v"}')))
+        self.assertEqual(dict(h['entrypoints']), {})

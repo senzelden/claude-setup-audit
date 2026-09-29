@@ -648,6 +648,44 @@ def _coverage():
     return dict(eligible=0, scanned=0, omitted=0, unknown_date=0)
 
 
+def harness_record(raw, record, path, session_key, is_top, seen_ids):
+    """Accumulate hook attachments and token totals for harness_overhead (in-memory only)."""
+    a = record.get("attachment") if record.get("type") == "attachment" else None
+    if is_top and isinstance(a, dict):
+        tool_id = a.get("toolUseID") if isinstance(a.get("toolUseID"), str) else None
+        if a.get("type") == "hook_additional_context" and isinstance(a.get("hookEvent"), str):
+            content = a.get("content")
+            size = len(content) if isinstance(content, str) else len(json.dumps(content, separators=(",", ":")))
+            raw["injections"].append((path, a["hookEvent"], tool_id, size))
+        elif a.get("type") == "hook_success" and tool_id and isinstance(a.get("command"), str):
+            raw["commands"][(path, tool_id)] = a["command"]
+    if record.get("type") == "assistant" and (not is_top or not record.get("isSidechain")):
+        msg = record.get("message") if isinstance(record.get("message"), dict) else {}
+        usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
+        if usage is None:
+            return
+        # Streamed chunks share a message id; records without an id are never deduplicated.
+        if msg.get("id") is not None:
+            if msg["id"] in seen_ids:
+                return
+            seen_ids.add(msg["id"])
+        total = sum(v for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
+                                "output_tokens") if type(v := usage.get(k)) is int)
+        raw["main_tokens" if is_top else "sub_tokens"][session_key] += total
+
+
+def harness_listing(raw, record, timestamp):
+    """First initial skill_listing of a main session; returns True once one is recorded."""
+    a = record.get("attachment")
+    if not isinstance(a, dict) or a.get("type") != "skill_listing" or a.get("isInitial") is not True:
+        return False
+    if type(a.get("skillCount")) is not int:
+        return False
+    content = a.get("content")
+    raw["listings"].append((timestamp, a["skillCount"], len(content) if isinstance(content, str) else 0))
+    return True
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -682,10 +720,18 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
+    raw = {"sessions": 0, "injections": [], "commands": {}, "listings": [], "entrypoints": Counter(),
+           "main_tokens": defaultdict(int), "sub_tokens": defaultdict(int), "malformed": 0}
     for path in top + sub:
         need_baseline = is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
         pending = {}  # Bash tool_use id -> start time, for test commands
+        if is_top:
+            session_key = (proj_key, os.path.splitext(os.path.basename(path))[0])
+        else:  # projects/<project>/<session>/subagents/<agent>.jsonl
+            session_dir = os.path.dirname(os.path.dirname(path))
+            session_key = (os.path.basename(os.path.dirname(session_dir)), os.path.basename(session_dir))
+        seen_ids, in_window, listed, entry_seen = set(), False, False, False
         last_t = last_model = last_msg_id = None
         compacted = False
         try:
@@ -698,8 +744,9 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                     try:
                         record = json.loads(line)
                     except ValueError:
-                        record = {}
+                        record = None
                     if not isinstance(record, dict):
+                        raw["malformed"] += bool(line.strip())
                         record = {}
                     timestamp = _dated(record.get("timestamp"))
                     if timestamp is None or not cutoff <= timestamp <= now:
@@ -709,6 +756,17 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                         if record.get("type") == "assistant" and not record.get("isSidechain"):
                             need_baseline = False
                         continue
+                    if is_top and not in_window:
+                        in_window = True
+                        raw["sessions"] += 1
+                    harness_record(raw, record, path, session_key, is_top, seen_ids)
+                    if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
+                        entry_seen = True
+                        ep = record.get("entrypoint")
+                        if isinstance(ep, str):
+                            raw["entrypoints"][ep] += 1
+                    if is_top and not listed and record.get("type") == "attachment":
+                        listed = harness_listing(raw, record, timestamp)
                     if is_top and '"tool_result"' in line:
                         if ENV_ERROR_RE.search(line):
                             env_hits[proj_key] += 1
@@ -836,6 +894,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         # Start of the Bash call to its result; includes any permission-prompt wait, so an upper bound.
         "test_run_seconds_by_project": {p: {"runs": len(v), "median": pct(v, 0.5), "p90": pct(v, 0.9)}
                                         for p, v in test_durations.items() if v},
+        "_harness": raw,
     }
 
 
@@ -1434,6 +1493,7 @@ def main():
         "transcripts": collect_transcripts(a.days, project_filter=project_filter),
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
+    harness_raw = snap["transcripts"].pop("_harness")  # consumed by harness.assemble (Task 5)
     if a.ledger:
         snap["ledger_signals"] = collect_ledger_signals(
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
