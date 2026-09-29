@@ -29,6 +29,7 @@ import time
 from collections import Counter, defaultdict
 import inventory
 import extensions
+import harness
 import clarity
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
@@ -426,7 +427,6 @@ def collect_global():
     gmd = os.path.join(CLAUDE, "CLAUDE.md")
     if os.path.exists(gmd):
         out["claude_md"] = {"est_tokens": est_tokens(gmd), "lines": line_count(gmd)}
-    out["plugin_session_start_hooks"] = plugin_session_start_hooks(out.get("settings", []))
     for kind in ("skills", "agents", "commands"):
         base = os.path.join(CLAUDE, kind)
         if os.path.isdir(base):
@@ -442,31 +442,26 @@ def collect_global():
     return out
 
 
-def plugin_session_start_hooks(settings):
-    """Enabled plugins that inject context on every session start, with a size estimate."""
-    enabled = {k for s in settings for k, v in (s.get("enabled_plugins") or {}).items() if v}
-    found = []
-    # The cache keeps old versions around; only the newest copy of each plugin is live.
-    newest = {}
-    for hooks_json in glob.glob(os.path.join(CLAUDE, "plugins", "cache", "*", "*", "*", "hooks", "hooks.json")):
-        key = tuple(hooks_json.split(os.sep)[-5:-3])
-        if key not in newest or os.path.getmtime(hooks_json) > os.path.getmtime(newest[key]):
-            newest[key] = hooks_json
-    for hooks_json in newest.values():
-        parts = hooks_json.split(os.sep)
-        marketplace, plugin, version = parts[-5], parts[-4], parts[-3]
-        if f"{plugin}@{marketplace}" not in enabled:
+def plugin_session_start_hooks(index):
+    """Enabled plugins with SessionStart hooks, with a file-size fallback estimate.
+
+    Measured injection comes from transcripts (harness_overhead.injected_context); this estimate
+    is only the fallback when no session in the window recorded injected context.
+    """
+    found = {}
+    for e in index:
+        if e['event'] != 'SessionStart':
             continue
-        hooks = (load_json(hooks_json) or {}).get("hooks", {})
-        if "SessionStart" not in hooks:
-            continue
-        plugin_root = os.path.dirname(os.path.dirname(hooks_json))
+        item = found.setdefault(e['plugin'], {'plugin': e['plugin'], 'version': e['version'], 'matchers': [],
+                                              'root': e['root']})
+        item['matchers'].append(e['matcher'])
+    out = []
+    for item in found.values():
+        root = item.pop('root')
         # Rough payload size: files the plugin's session-start hook script is likely to inject.
-        injected = sum(os.path.getsize(p) for p in glob.glob(os.path.join(plugin_root, "skills", "using-*", "SKILL.md")))
-        found.append({"plugin": f"{plugin}@{marketplace}", "version": version,
-                      "matchers": [h.get("matcher") for h in hooks["SessionStart"]],
-                      "est_injected_tokens": injected // 4 or None})
-    return found
+        injected = sum(os.path.getsize(p) for p in glob.glob(os.path.join(root, "skills", "using-*", "SKILL.md")))
+        out.append(dict(item, est_injected_tokens=injected // 4 or None, basis='file_size_estimate'))
+    return sorted(out, key=lambda x: x['plugin'])
 
 
 def discover_projects(with_context=False):
@@ -1444,6 +1439,8 @@ def main():
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
+    hook_index, hook_index_reasons = harness.hook_index(CLAUDE, settings)
+    snap["global"]["plugin_session_start_hooks"] = plugin_session_start_hooks(hook_index)
     snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
                                                        snap['managed_settings']['sources'], settings,
                                                        redact, hook_handler_entry)
