@@ -92,6 +92,58 @@ class SnapshotContract(FakeHome):
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
 
+    def test_number_type_is_finite_int_or_float_but_not_bool(self):
+        schema = {"type": "number"}
+        root = {"$defs": {}}
+        for ok in (0, 3, 0.93, -1.5):
+            contract._check(ok, schema, root)
+        for bad in (True, False, "1", None, float("nan"), float("inf"), [1]):
+            with self.assertRaises(contract.SnapshotError, msg=repr(bad)):
+                contract._check(bad, schema, root)
+
+    def test_drift_last_value_is_number_or_null(self):
+        snap = self.snapshot()
+        sig = {"last_value": 0.93, "crossings": 0, "first_crossing_at": None, "last_crossing_at": None,
+               "scopes": ["all"]}
+        snap["drift_signals"] = {"status": "collected", "path": "~/d.jsonl", "entries": 1, "malformed": 0,
+                                 "first_at": None, "last_at": None, "signals": {"cache_hit_ratio": sig}}
+        for ok in (0.93, 7, None):
+            accepted = copy.deepcopy(snap)
+            accepted["drift_signals"]["signals"]["cache_hit_ratio"]["last_value"] = ok
+            contract.validate_snapshot(accepted)
+        for bad in (True, "0.9", [1]):
+            altered = copy.deepcopy(snap)
+            altered["drift_signals"]["signals"]["cache_hit_ratio"]["last_value"] = bad
+            with self.assertRaises(contract.SnapshotError, msg=repr(bad)):
+                contract.validate_snapshot(altered)
+
+    def test_skill_listing_series_shape_is_checked(self):
+        snap = self.snapshot()
+        snap["harness_overhead"] = {
+            "window_days": 30, "sessions_scanned": 2, "complete": True, "incomplete_reasons": [],
+            "injected_context": {"sessions_with_injection": 0, "sources": []},
+            "skill_listing_series": {
+                "sessions": 2, "first": {"date": "2026-09-01", "skill_count": 3, "chars": 900},
+                "last": {"date": "2026-09-02", "skill_count": 4, "chars": 1200},
+                "max": {"skill_count": 4, "chars": 1200}, "sdk_sessions_excluded": 0,
+                "per_plugin_skills": [{"plugin": "a@m", "skills": 2}]},
+            "subagent_spend": {"subagent_files_scanned": 0, "sessions_with_subagents": 0,
+                               "subagent_tokens_per_session_median": None,
+                               "main_tokens_per_session_median": 100,
+                               "main_tokens_median_in_subagent_sessions": None,
+                               "entrypoints": {"cli": 2, "sdk-py": 0, "sdk-cli": 0, "other": 0}},
+            "model_spawning_hooks": []}
+        contract.validate_snapshot(snap)
+        for mutate in (lambda h: h["skill_listing_series"].update(sessions="2"),
+                       lambda h: h["skill_listing_series"].update(sdk_sessions_excluded=-1),
+                       lambda h: h["skill_listing_series"].pop("last"),
+                       lambda h: h["skill_listing_series"]["first"].update(chars=True),
+                       lambda h: h["skill_listing_series"]["per_plugin_skills"][0].update(skills="1")):
+            altered = copy.deepcopy(snap)
+            mutate(altered["harness_overhead"])
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(altered)
+
     def test_harness_overhead_is_checked(self):
         snap = self.snapshot()
         snap["harness_overhead"] = {

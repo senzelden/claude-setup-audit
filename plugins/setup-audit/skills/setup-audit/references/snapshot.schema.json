@@ -3,6 +3,15 @@
   "title": "Setup Audit snapshot v1",
   "description": "Stable envelope and coverage/provenance contract. Family payloads allow additive fields; see snapshot-format.md.",
   "$defs": {
+    "skill_listing_point": {
+      "type": "object",
+      "required": ["date", "skill_count", "chars"],
+      "properties": {
+        "date": {"type": "string"},
+        "skill_count": {"type": "integer"},
+        "chars": {"type": "integer", "minimum": 0}
+      }
+    },
     "source": {
       "type": "object",
       "required": [
@@ -424,6 +433,7 @@
           "type": "object",
           "required": ["last_value", "crossings", "first_crossing_at", "last_crossing_at", "scopes"],
           "properties": {
+            "last_value": {"type": ["number", "null"]},
             "crossings": {"type": "integer", "minimum": 0},
             "first_crossing_at": {"type": ["string", "null"]},
             "last_crossing_at": {"type": ["string", "null"]},
@@ -463,7 +473,18 @@
               }}}
           }
         },
-        "skill_listing_series": {"type": ["object", "null"]},
+        "skill_listing_series": {"type": ["object", "null"], "properties": {
+          "sessions": {"type": "integer", "minimum": 1},
+          "first": {"$ref": "#/$defs/skill_listing_point"},
+          "last": {"$ref": "#/$defs/skill_listing_point"},
+          "max": {"type": "object", "properties": {
+            "skill_count": {"type": "integer"}, "chars": {"type": "integer", "minimum": 0}},
+            "required": ["skill_count", "chars"]},
+          "sdk_sessions_excluded": {"type": "integer", "minimum": 0},
+          "per_plugin_skills": {"type": "array", "items": {
+            "type": "object", "required": ["plugin", "skills"],
+            "properties": {"plugin": {"type": "string"}, "skills": {"type": "integer", "minimum": 0}}}}},
+          "required": ["sessions", "first", "last", "max", "sdk_sessions_excluded", "per_plugin_skills"]},
         "subagent_spend": {
           "type": "object",
           "required": ["subagent_files_scanned", "sessions_with_subagents", "subagent_tokens_per_session_median",

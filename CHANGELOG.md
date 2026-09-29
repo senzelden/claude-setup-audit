@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `manifest_unreadable` harness reason when a plugin's `plugin.json` exists but cannot be read.
+
+### Changed
+
+- Snapshot schema types drift `last_value` as a number and describes `skill_listing_series`
+  (additive, still v1); the bundled validator supports the `number` type.
+
 ## [0.9.0] - 2026-09-29
 
 ### Added

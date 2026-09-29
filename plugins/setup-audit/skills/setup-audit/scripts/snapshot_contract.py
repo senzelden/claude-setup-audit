@@ -45,7 +45,8 @@ def _check(value, schema, root, path='$'):
         _check(value, root['$defs'][ref[8:]], root, path)
     types = {'object': isinstance(value, dict), 'array': isinstance(value, list),
              'string': isinstance(value, str), 'null': value is None,
-             'integer': type(value) is int, 'boolean': type(value) is bool}
+             'integer': type(value) is int, 'boolean': type(value) is bool,
+             'number': type(value) is int or (type(value) is float and math.isfinite(value))}
     expected = schema.get('type')
     if expected is not None:
         allowed = expected if isinstance(expected, list) else [expected]
