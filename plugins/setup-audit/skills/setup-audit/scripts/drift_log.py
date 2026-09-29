@@ -3,6 +3,7 @@
 Entries hold counts, sizes, ratios, paths, dates and fingerprints, never rule or prompt text.
 """
 import json
+import math
 import os
 
 VERSION = 1
@@ -79,7 +80,7 @@ def read(path):
 
 
 def _num(v):
-    return v if type(v) in (int, float) else None
+    return v if type(v) is int or (type(v) is float and math.isfinite(v)) else None
 
 
 def _last_value(name, signal):

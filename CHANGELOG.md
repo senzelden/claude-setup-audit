@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A hand-edited drift log holding `NaN` or `Infinity` no longer makes the snapshot fail validation;
+  non-finite values are treated as absent.
+
 ### Added
 
 - `manifest_unreadable` harness reason when a plugin's `plugin.json` exists but cannot be read.
