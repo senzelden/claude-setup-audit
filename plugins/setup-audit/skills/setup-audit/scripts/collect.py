@@ -1454,22 +1454,22 @@ def collect_ledger_signals(path, days, project_filter):
     return {"status": "collected", "entries": entries}
 
 
-def main():
-    global CLAUDE
-    ap = argparse.ArgumentParser()
+def add_collection_args(ap):
+    """Arguments shared by collect.py and drift.py."""
     ap.add_argument("--roots", nargs="*", default=[],
                     help="extra directories to scan in addition to projects discovered from Claude Code's own records")
     ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--out")
-    ap.add_argument("--clarity-pilot", action="store_true", help="opt-in instruction clarity review candidates")
     ap.add_argument("--claude-dir", help="Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
     ap.add_argument("--scope", choices=["global", "project", "all"], default="all",
                     help="global: settings/hooks/memory/global usage stats only, no per-project file scanning; "
                          "project: only --project's files and usage/history entries; all: every discovered "
                          "project plus --roots (default)")
     ap.add_argument("--project", help="project root to audit; required with --scope project")
-    ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
-    a = ap.parse_args()
+
+
+def apply_collection_args(ap, a):
+    """Validate the shared arguments (argparse usage errors) and point CLAUDE at --claude-dir."""
+    global CLAUDE
     if a.days < 1:
         ap.error('--days must be positive')
     if a.claude_dir:
@@ -1480,6 +1480,10 @@ def main():
         ap.error("--project is only used with --scope project (use --roots to add a directory under --scope all)")
     if a.roots and a.scope != "all":
         ap.error("--roots is only used with --scope all")
+
+
+def build_snapshot(a):
+    """Collect, sanitize and validate a snapshot for parsed arguments; return the JSON-native dict."""
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
     contexts = []
     if a.scope == "global":
@@ -1512,7 +1516,7 @@ def main():
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
     harness_raw = snap["transcripts"].pop("_harness")  # consumed by harness.assemble
-    if a.ledger:
+    if getattr(a, "ledger", None):
         snap["ledger_signals"] = collect_ledger_signals(
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
@@ -1527,7 +1531,7 @@ def main():
         harness_raw, hook_index, hook_index_reasons, snap["extensions"],
         snap["transcripts"]["coverage"], a.days, pct,
         transcripts_read=project_filter != set())  # global scope reads no transcripts
-    if a.clarity_pilot:
+    if getattr(a, "clarity_pilot", False):
         snap["instruction_clarity"] = clarity.review(snap["instructions"], snap["extensions"])
     snap["coverage"] = snapshot_coverage(snap, roots)
     # Join readiness with hook config and transcript evidence (worktree transcripts count for their repo).
@@ -1556,7 +1560,20 @@ def main():
     # default=... is a fallback for anything sanitize() left as a non-JSON-native object; redact
     # it too on the way out, since sanitize() can't see into a value it can't recurse into.
     text = json.dumps(sanitize(snap), indent=1, default=lambda o: redact(str(o)), allow_nan=False)
-    validate_snapshot(json.loads(text))
+    snap = json.loads(text)
+    validate_snapshot(snap)
+    return snap
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    add_collection_args(ap)
+    ap.add_argument("--out")
+    ap.add_argument("--clarity-pilot", action="store_true", help="opt-in instruction clarity review candidates")
+    ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
+    a = ap.parse_args()
+    apply_collection_args(ap, a)
+    text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
     if a.out:
         _write_snapshot(a.out, text)
         print(f"wrote {a.out} ({len(text)//4} est. tokens)")
