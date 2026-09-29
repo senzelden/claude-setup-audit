@@ -23,7 +23,7 @@ the collector's `--drift-log` summary validates against the snapshot schema.
 1. Signals: CLAUDE.md size, cache hit ratio, new broad permission rules, skill-listing size and
    median injected tokens per session.
 2. Output: always append one log line; print one short line only when a threshold is crossed; exit
-   0 on success regardless of crossings, non-zero only on errors.
+   0 on success regardless of crossings, non-zero only on errors (2 usage, 1 runtime).
 3. Audit link: collector flag `--drift-log PATH` summarizes the log into the snapshot, read-only.
 4. Default scope `all` (about 7 s on the author's machine; fits cron or an asynchronous hook, not a
    blocking SessionStart hook), overridable with `--scope`.
@@ -52,7 +52,7 @@ Derived from the snapshot `build_snapshot` returns. Each signal is `null` when i
 
 | Signal | Value | Crosses when | Default threshold (flag) |
 |---|---|---|---|
-| `claude_md` | `{path: {"lines": int, "est_tokens": int}}` for the global CLAUDE.md and each collected project's CLAUDE.md files (paths as the snapshot prints them) | any file's lines exceed the maximum | 200 lines (`--claude-md-max-lines`), the memory docs' target already used by `COST-claude-md-size`; re-fetch and date it |
+| `claude_md` | `{path: {"lines": int, "est_tokens": int}}` for the global CLAUDE.md and each collected project's CLAUDE.md files (paths as the snapshot prints them; worktree copies, which the snapshot marks `is_worktree_copy`, are skipped as duplicates) | any file's lines exceed the maximum | 200 lines (`--claude-md-max-lines`), the memory docs' target already used by `COST-claude-md-size`; re-fetch and date it |
 | `cache_hit_ratio` | `transcripts.cache.hit_ratio` | the ratio is below the minimum | 0.90 (`--cache-hit-min`), the "healthy above ~90%" line of `COST-cache-health` |
 | `broad_permissions` | `{"count": int, "fingerprints": [str]}`: one fingerprint per (settings file path, risky flag name, redacted rule), the first 16 hex characters of its SHA-256 | a fingerprint absent from the previous comparable entry appears | — (`new` kind) |
 | `skill_listing_chars` | `harness_overhead.skill_listing_series.last.chars` | it grew by at least the fraction over the previous comparable entry | 0.25 (`--growth-min`) |
@@ -110,8 +110,9 @@ validated the same way.
 - No crossing: print nothing, exit 0.
 - Crossings: print one line to stdout, at most 300 characters:
   `setup-audit drift: <n> crossed (<signal detail>; ...); log <path>`. Exit 0.
-- Error (invalid arguments, log path refused, unwritable log, collection failure): message to
-  stderr, exit 1, and no log line is written.
+- Invalid arguments: argparse usage error, exit 2 (the convention `collect.py` already follows).
+- Error (log path refused, unreadable or unwritable log, collection failure): one message to stderr
+  without data values, exit 1, and no log line is written.
 
 ## Audit link
 
