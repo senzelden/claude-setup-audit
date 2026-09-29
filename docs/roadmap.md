@@ -56,6 +56,20 @@ Hosted validation passed all eight jobs at `b93e179`:
 Hosted validation passed all eight jobs at `a480dba`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/36528215135).
 
+## Shipped in 0.9.0: harness overhead and drift mode
+
+- [x] Self-modifying harness overhead: per-session injected tokens from transcripts, the skill
+  listing series, subagent spend against the same sessions, entrypoint shares, a scan for enabled
+  plugin hooks that invoke a model, and `COST-harness-overhead`. Skill growth comes from
+  transcript `skill_listing` records, not the ledger.
+- [x] Opt-in script-only drift mode (`references/drift.md`): a deterministic command the user runs
+  or wires into their own cron job or hook; it appends to a drift log and prints one line only
+  when a threshold is crossed. The plugin never installs a hook or schedule, and the audit reads
+  the log read-only through `--drift-log`.
+
+Hosted validation passed all eight jobs at `48d9d5d`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/36622544147).
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
@@ -89,16 +103,6 @@ Hosted validation passed all eight jobs at `a480dba`:
 - **Quality:** tune dead-reference, environment and cache-breaker heuristics; broaden the
   clarity corpus before considering default activation or automatic rewrites; measure collector
   performance before optimizing.
-- **Self-modifying harness overhead:** implemented on `feature/harness-overhead` (unreleased):
-  per-session injected tokens from transcripts, subagent spend, entrypoint shares, a model-invoking
-  hook scan and `COST-harness-overhead`. Skill growth comes from transcript `skill_listing`
-  records, not the ledger.
-- **Opt-in script-only drift mode:** implemented on `feature/drift-mode` (unreleased; see
-  `references/drift.md`). Original scope: a documented deterministic mode that runs only the
-  collector with thresholds (CLAUDE.md size, cache hit ratio, new broad permissions) and
-  appends to a drift log. The user runs it or wires it into their own hook; the plugin never
-  installs a background hook. Model analysis stays on demand; approval stays required for any
-  change.
 
 ## Distribution follow-up
 

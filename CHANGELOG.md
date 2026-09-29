@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-29
+
 ### Added
 
 - Measured harness overhead in the snapshot (`harness_overhead`): hook-injected context per plugin,
@@ -27,6 +29,19 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - `candidate_skills` counted every `.md` under a plugin's `skills/`.
+
+### Validation and limits
+
+- 389 local regression tests pass, with 92% coverage of the bundled scripts. Hosted validation
+  passed all eight jobs at `48d9d5d`, including Linux/macOS on Python 3.11/3.13/3.14, the
+  coverage floor and strict plugin validation. No paid model evaluations were run for this release.
+- Harness overhead limits: SessionStart context is attributed by a same-session, same-event
+  fallback because its transcript record carries the event name instead of a tool-use id; an
+  unparseable `plugin.json` is not flagged; the skill-listing series schema is untyped.
+- Drift mode limits: growth is measured against an anchor that resets at each growth crossing;
+  `above_max` and `below_min` repeat on every run while over the threshold; comparability ignores
+  `--roots` and `--claude-dir`; a log path longer than about 270 characters is cut from the
+  300-character alert line; `drift_signals` leaves `last_value` untyped.
 
 ## [0.8.0] - 2026-09-29
 
@@ -450,7 +465,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.5.0...v0.6.0
