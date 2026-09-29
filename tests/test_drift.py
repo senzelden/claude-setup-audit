@@ -241,6 +241,15 @@ class CorruptLog(unittest.TestCase):
             self.assertEqual(self.run_compare(now, [entry]), [])
         self.assertEqual(self.run_compare(now, [{'signals': 7, **META}]), [])
 
+    def test_non_list_fingerprints_are_not_comparable(self):
+        now = snapshot()  # one risky rule
+        bad = self.corrupt(broad_permissions={'count': 1, 'fingerprints': 3})
+        self.assertEqual(self.run_compare(now, [bad]), [])
+        good = self.entry(snapshot())
+        self.assertEqual(self.run_compare(now, [good, bad]), [])
+        now['global']['settings'][0]['permissions']['risky']['sudo'].append('Bash(sudo rm)')
+        self.assertEqual([c['kind'] for c in self.run_compare(now, [good, bad])], ['new'])
+
     def test_corrupt_latest_falls_back_to_earlier_dict(self):
         good = self.entry(snapshot())
         bad = self.corrupt(skill_listing_chars=5)

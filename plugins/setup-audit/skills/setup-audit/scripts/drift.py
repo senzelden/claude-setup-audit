@@ -51,12 +51,12 @@ def derive(snap, global_claude_md):
     return signals, fps
 
 
-def comparable(entries, meta, name):
+def comparable(entries, meta, name, valid=None):
     """The signal from the most recent entry with the same scope, project and window, if a dict."""
     for e in reversed(entries):
         signals = e.get('signals')
         if all(e.get(k) == meta[k] for k in META_KEYS) and isinstance(signals, dict) \
-                and isinstance(signals.get(name), dict):
+                and isinstance(signals.get(name), dict) and (valid is None or valid(signals[name])):
             return signals[name]
     return None
 
@@ -75,10 +75,10 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
     if cache and _number(cache.get('value')) and cache['value'] < thresholds['cache_hit_min']:
         crossings.append({'signal': 'cache_hit_ratio', 'kind': 'below_min', 'value': cache['value'],
                           'threshold': thresholds['cache_hit_min']})
-    previous = comparable(entries, meta, 'broad_permissions')
+    previous = comparable(entries, meta, 'broad_permissions',
+                          valid=lambda v: isinstance(v.get('fingerprints'), list))
     if previous is not None:
-        before_fps = previous.get('fingerprints')
-        before_fps = {f for f in before_fps if isinstance(f, str)} if isinstance(before_fps, list) else set()
+        before_fps = {f for f in previous['fingerprints'] if isinstance(f, str)}
         new = sorted(set(signals['broad_permissions']['fingerprints']) - before_fps)
         if new:
             crossings.append({'signal': 'broad_permissions', 'kind': 'new', 'fingerprints': new,
