@@ -80,6 +80,11 @@ the collector snapshot.
   the first answer. Compare the median across projects
   (`context_baseline_by_project_median`, ≥3 sessions each). A project well above the user's median
   points at its CLAUDE.md, rules, MCP servers or plugins. Report tokens × sessions per month.
+- **Drift log** (`drift_signals`, measured, only when the snapshot has it): cite each signal's
+  crossings with their dates as evidence under `COST-claude-md-size`, `COST-cache-health`,
+  `SEC-risky-allow`, and `COST-harness-overhead` / `COST-startup-hooks`. A crossing alone is never a
+  proposal. The current snapshot value outranks a logged one. `status: invalid` means the log could
+  not be read. See `drift.md`.
 - **COST-model-default** (`global.settings[].model`, `model_settings`, `usage.stats_lifetime_by_model`):
   a top-tier 1M-context model as the default for mostly mechanical work. Options: `opusplan`, a
   cheaper default with per-task switching, or `CLAUDE_CODE_SUBAGENT_MODEL` for subagents. Quote

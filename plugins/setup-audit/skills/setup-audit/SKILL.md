@@ -89,6 +89,13 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py --days 30 --scope <scope> [--proj
 When `<report_dir>/ledger.json` exists, append `--ledger "<report_dir>/ledger.json"`. The
 collector only counts; it never writes the ledger. See `references/ledger.md`.
 
+When `<claude config dir>/audits/drift.jsonl` exists, append
+`--drift-log "<claude config dir>/audits/drift.jsonl"`. That is the drift writer's default log,
+and it does not move with `report_dir`; if the user runs `drift.py --log` elsewhere, pass that path
+instead. The collector accepts only paths inside the Claude audits directory or a temp directory
+and records anything else as status `invalid`. The audit never writes the drift log. See
+`references/drift.md`.
+
 **If this command — or Bash itself — fails to run at all** (permission denied, a sandbox/seccomp
 error, or any other failure before the collector produces output), tell the user up front, once,
 that the collector couldn't run (quote the error after redacting secret values) and that findings below come from reading

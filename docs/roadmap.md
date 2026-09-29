@@ -93,7 +93,8 @@ Hosted validation passed all eight jobs at `a480dba`:
   per-session injected tokens from transcripts, subagent spend, entrypoint shares, a model-invoking
   hook scan and `COST-harness-overhead`. Skill growth comes from transcript `skill_listing`
   records, not the ledger.
-- **Opt-in script-only drift mode:** a documented deterministic mode that runs only the
+- **Opt-in script-only drift mode:** implemented on `feature/drift-mode` (unreleased; see
+  `references/drift.md`). Original scope: a documented deterministic mode that runs only the
   collector with thresholds (CLAUDE.md size, cache hit ratio, new broad permissions) and
   appends to a drift log. The user runs it or wires it into their own hook; the plugin never
   installs a background hook. Model analysis stays on demand; approval stays required for any

@@ -123,6 +123,20 @@ Deliberate choices can be recorded in `~/.claude/audits/decisions.yaml` with a `
 date and an evidence fingerprint. Unchanged evidence stays suppressed until that date; changed
 or unverified evidence remains visible. Report comparisons label incomplete or mismatched coverage.
 
+## Drift mode (optional)
+
+A model-free command you run yourself, or wire into your own cron job or hook, to notice drift
+between audits: CLAUDE.md size, cache hit ratio, new broad permission rules, skill-listing size and
+injected context. It appends to a log and prints one line only when a threshold is crossed. The
+plugin never installs a hook or schedule.
+
+```bash
+python3 <plugin dir>/skills/setup-audit/scripts/drift.py --scope global
+```
+
+The next audit reads the log read-only and cites crossings as evidence. Details:
+[drift.md](plugins/setup-audit/skills/setup-audit/references/drift.md).
+
 ## Agent readiness
 
 An opt-in track (`focus=readiness`, most useful with `scope=project`). It checks repo properties

@@ -13,8 +13,14 @@ All notable changes to this project are documented here. The format follows
   spend, entrypoint shares and a scan for enabled plugin hooks that invoke a model; new check
   `COST-harness-overhead`. Unreadable registry or hook files and global scope mark it incomplete.
 
+- Opt-in drift mode: `scripts/drift.py` derives five signals, compares them with thresholds and the
+  previous comparable run, and appends to a drift log; the collector's `--drift-log` summarizes it
+  into optional `drift_signals`. The plugin installs no hook or schedule. See
+  `references/drift.md`.
+
 ### Changed
 
+- The collector's snapshot building moved into `build_snapshot` (internal split, no behavior change).
 - The startup-hook estimate resolves plugins through the registry and all settings layers, and
   `COST-startup-hooks` prefers the measured values.
 

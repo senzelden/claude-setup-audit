@@ -94,6 +94,13 @@ incomplete when any facet is orphaned (no matching session metadata) or undated,
 may belong to the window. Sessions with metadata but no facet are not a gap. Incomplete counts
 give an `unknown` verdict. See `ledger.md`.
 
+## Drift log summary
+
+`drift_signals` (from `collect.py --drift-log`) summarizes the drift log across every scope:
+`collected`, or `invalid` when the path is refused (outside the Claude audits directory and temp
+directories) or unreadable. An absent file counts as empty. Malformed lines are counted, not
+summarized. It is history, not a current measurement. See `drift.md`.
+
 ## Instruction and working-directory inventory
 
 `instructions` records bounded excerpts, selected frontmatter as text, source scope, and unknown

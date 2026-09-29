@@ -18,6 +18,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
   post-fix `matches`, `sessions_matched`, `sessions_scanned`, `complete`, `from`, `to`, `selector_sha`.
   Counts only; additive within snapshot v1.
+- `drift_signals` (only with `--drift-log`): `status` `collected`/`invalid`, `path`, entry and
+  malformed counts, first and last dates, and per signal `last_value`, crossing count, first and
+  last crossing dates and `scopes`. Counts, dates and scalars only; additive within snapshot v1.
 - `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (`file_size_estimate`).
