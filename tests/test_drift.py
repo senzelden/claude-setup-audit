@@ -24,6 +24,8 @@ def parsed(*argv):
 
 
 class BuildSnapshot(FakeHome):
+    # After the refactor main() serializes build_snapshot(), so this proves determinism and output plumbing,
+    # not pre-refactor equivalence (checked manually 2026-09-29: byte-identical apart from `generated`).
     def test_build_snapshot_matches_main_output(self):
         self.write('.claude/CLAUDE.md', 'one\ntwo\n')
         self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(sudo ls)']}})
@@ -64,6 +66,20 @@ class DriftLog(FakeHome):
         audits = os.path.join(self.claude, 'audits')
         drift_log.append(os.path.join(audits, 'drift.jsonl'), self.entry(), {os.path.realpath(audits)}, audits)
         self.assertEqual(stat.S_IMODE(os.stat(audits).st_mode), 0o700)
+
+    def test_makedirs_race_with_existing_audits_dir_is_not_an_error(self):
+        audits = os.path.join(self.claude, 'audits')
+        os.makedirs(audits)
+        real_isdir = os.path.isdir
+        # the loser of a first-run race sees no directory once, then it exists
+        calls = []
+
+        def isdir(path):
+            calls.append(path)
+            return len(calls) > 1 and real_isdir(path)
+        with mock.patch('os.path.isdir', isdir):
+            drift_log.append(os.path.join(audits, 'drift.jsonl'), self.entry(), {os.path.realpath(audits)}, audits)
+        self.assertEqual(len(drift_log.read(os.path.join(audits, 'drift.jsonl'))[0]), 1)
 
     def test_outside_allowed_and_symlink_are_refused(self):
         with self.assertRaises(drift_log.DriftLogError):
@@ -124,6 +140,7 @@ def snapshot(**over):
         'harness_overhead': {'complete': True,
                              'skill_listing_series': {'last': {'chars': 10000}},
                              'injected_context': {'sources': [{'plugin': 'p@m', 'hook_event': 'SessionStart',
+                                                               'attribution': 'hook.sh',
                                                                'est_tokens_per_session_median': 800}]}},
     }
     snap.update(over)
@@ -145,7 +162,7 @@ class Signals(unittest.TestCase):
         self.assertEqual(fps, {fp: '~/.claude/settings.json'})
         self.assertEqual(signals['skill_listing_chars'], {'value': 10000, 'complete': True})
         self.assertEqual(signals['injected_tokens'], {'value': 800, 'plugin': 'p@m', 'hook_event': 'SessionStart',
-                                                      'complete': True})
+                                                      'attribution': 'hook.sh', 'complete': True})
 
     def test_missing_sources_are_null(self):
         signals, _ = drift.derive({'global': {}, 'projects': {}, 'transcripts': {'cache': {'hit_ratio': None}}},
@@ -201,6 +218,20 @@ class Compare(unittest.TestCase):
         now = snapshot()
         now['harness_overhead']['injected_context']['sources'][0].update(plugin='other@m',
                                                                          est_tokens_per_session_median=5000)
+        self.assertEqual(self.run_compare(now, [before]), [])
+
+    def test_injected_growth_needs_same_attribution(self):
+        before = self.entry(snapshot())
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0].update(attribution='other-script.sh',
+                                                                         est_tokens_per_session_median=5000)
+        self.assertEqual(self.run_compare(now, [before]), [])
+
+    def test_injected_growth_skips_entries_without_attribution(self):
+        before = self.entry(snapshot())
+        del before['signals']['injected_tokens']['attribution']
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 5000
         self.assertEqual(self.run_compare(now, [before]), [])
 
     def test_other_scope_is_not_comparable(self):
@@ -293,6 +324,22 @@ class DriftCli(FakeHome):
         entries, malformed = drift_log.read(log)
         self.assertEqual((len(entries), malformed), (2, 0))
         self.assertEqual(entries[1]['crossings'][0]['kind'], 'above_max')
+
+    def test_home_prefix_needs_a_separator(self):
+        self.assertEqual(drift.home_relative('/home/a/x', '/home/a'), '~/x')
+        self.assertEqual(drift.home_relative('/home/a', '/home/a'), '~')
+        self.assertEqual(drift.home_relative('/home/ab/x', '/home/a'), '/home/ab/x')
+
+    def test_project_is_logged_home_relative_and_still_comparable(self):
+        proj = os.path.join(self.home, 'proj')
+        os.makedirs(proj)
+        self.write('proj/CLAUDE.md', 'x\n' * 250)
+        with mock.patch.object(collect, 'HOME', self.home):
+            self.run_drift('--scope', 'project', '--project', proj)
+            _, out, _, log = self.run_drift('--scope', 'project', '--project', proj)
+        entries, _ = drift_log.read(log)
+        self.assertEqual([e['project'] for e in entries], ['~/proj', '~/proj'])
+        self.assertNotIn(self.home, json.dumps(entries))
 
     def test_new_permission_on_second_run(self):
         self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(sudo ls)']}})

@@ -26,7 +26,7 @@ is installed on your machine; fill it in yourself.
 | `cache_hit_ratio` | `transcripts.cache.hit_ratio` | below the minimum (`below_min`) | 0.90: "above ~90% is healthy" (`COST-cache-health`) |
 | `broad_permissions` | count and fingerprints of `permissions.risky` rules | a fingerprint is absent from the previous comparable entry (`new`) | none |
 | `skill_listing_chars` | last `harness_overhead.skill_listing_series` size | grew by at least the fraction over the previous comparable entry (`growth`) | 0.25 (`--growth-min`), a recommendation, not a documented limit |
-| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule, only when its plugin and hook event match the previous entry's | 0.25 (`--growth-min`) |
+| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule, only when its plugin, hook event and `attribution` match the previous entry's; entries logged without `attribution` are not comparable | 0.25 (`--growth-min`) |
 
 A signal is `null` when its source is absent, and a null signal never crosses. The `complete` flag
 recorded per signal comes from the snapshot's coverage; it does not suppress a crossing, and the
@@ -36,6 +36,15 @@ audit weighs it.
 `window_days` whose signal is not `null`. Without one, this run is the baseline for that signal: no
 `new` or `growth` crossing is evaluated. Growth is evaluated only when the previous value is above
 0. `above_max` and `below_min` need no previous entry.
+
+Comparability keys on `scope`, `project` and `window_days` only. Changing `--roots` or `--claude-dir`
+while writing to the same log can raise `new` crossings for rules that already existed. `project` is
+logged in `~` form like the other paths.
+
+Growth is measured run to run against the previous comparable entry, so gradual creep below the
+threshold per run never crosses; more frequent runs make this worse. `skill_listing_chars` is taken
+from the most recent non-SDK session, so at scope `all` it can move with whichever project was used
+last.
 
 **Crossing kinds:** `above_max` (with `path`), `below_min`, `new` (with the new fingerprints and
 their settings file paths), `growth` (with `previous` and `fraction`).
@@ -50,7 +59,7 @@ merge. Settings from worktree copies count, so a worktree appearing can raise `n
 
 Default path `~/.claude/audits/drift.jsonl` (`<CLAUDE config dir>/audits/drift.jsonl`, following
 `$CLAUDE_CONFIG_DIR` or `--claude-dir`). It does not move when you change the audit's `report_dir`.
-One JSON object per line, appended only; there is no rotation in v1 (an entry is about 1 KB):
+One JSON object per line, appended only; there is no rotation in v1 (an entry is about 0.5-1 KB; a measured minimal one is ~480 B):
 
 ```json
 {"version": 1, "at": "2026-09-29T10:00:00Z", "scope": "all", "project": null, "window_days": 30,
@@ -59,7 +68,7 @@ One JSON object per line, appended only; there is no rotation in v1 (an entry is
              "broad_permissions": {"count": 1, "fingerprints": ["3f1c0a9b7e2d4c55"]},
              "skill_listing_chars": {"value": 29782, "complete": false},
              "injected_tokens": {"value": 885, "plugin": "superpowers@claude-plugins-official",
-                                 "hook_event": "SessionStart", "complete": false}},
+                                 "hook_event": "SessionStart", "attribution": "matched", "complete": false}},
  "crossings": [{"signal": "cache_hit_ratio", "kind": "below_min", "value": 0.61, "threshold": 0.9}]}
 ```
 
@@ -79,7 +88,7 @@ prompt text or configuration values.
 
 - No crossing: prints nothing, exit 0 (the log line is still appended).
 - Crossings: one stdout line, at most 300 characters, `setup-audit drift: <n> crossed (<detail>;
-  ...); log <path>`. Long detail is shortened with `...`; the `; log <path>` suffix is kept. Exit 0.
+  ...); log <path>`. Long detail is shortened with `...`; the `; log <path>` suffix is kept unless the log path itself is longer than about 270 characters, where the hard 300-character cap applies. Exit 0.
 - Invalid arguments: usage error, exit 2.
 - Errors: one message to stderr without data values, exit 1, and no log line is written. This covers
   a refused, unreadable or unwritable log, and a collection failure, which prints
@@ -89,7 +98,7 @@ prompt text or configuration values.
 
 Measured on the author's machine on 2026-09-29: about 7 seconds at scope `all`, near-instant at
 scope `global`. Scope `global` has no transcript signals, so `cache_hit_ratio` is `null`. Seven
-seconds fits cron, or an asynchronous hook on an event off the startup path. Claude's first
+seconds fits cron (the recommended default cadence), or an asynchronous hook on an event off the startup path. Claude's first
 response waits for `SessionStart` hooks to finish (hooks docs, fetched 2026-09-29).
 
 ## Wiring (yours to add)
@@ -106,8 +115,10 @@ Hook entry in `~/.claude/settings.json` (project settings can hold hooks too). T
 (fetched 2026-09-29) say `"async": true` on a command hook runs it in the background without
 blocking and without enforcing `timeout`; that in non-interactive mode (`-p`) async hooks still
 running at teardown are killed; and that `SessionEnd` hooks share a 1.5-second budget by default,
-too short for a 7-second run. The example uses `Stop`, which fires after each response, so it
-appends one log line per response; cron is the better fit for a steady cadence.
+too short for a 7-second run. The example uses `Stop`, which fires after every response. Each response then costs a ~7 s
+collection at scope `all` and appends one line of about 0.5 KB, and parallel sessions can run it
+concurrently. The log is read whole on each run; a measured 200k-line (~96 MB) log took ~1 s to
+read. Cron is the better fit for a steady cadence.
 
 ```json
 {"hooks": {"Stop": [{"hooks": [

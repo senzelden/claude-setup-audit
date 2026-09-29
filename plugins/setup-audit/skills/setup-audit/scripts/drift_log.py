@@ -33,7 +33,7 @@ def append(path, entry, allowed_dirs, audits_dir):
         if not os.path.isdir(directory):
             if os.path.abspath(directory) != os.path.abspath(audits_dir):
                 raise DriftLogError('drift log directory does not exist')
-            os.makedirs(directory, mode=0o700)
+            os.makedirs(directory, mode=0o700, exist_ok=True)  # concurrent first runs race
             os.chmod(directory, 0o700)  # makedirs mode is subject to umask
         fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0), 0o600)
         try:

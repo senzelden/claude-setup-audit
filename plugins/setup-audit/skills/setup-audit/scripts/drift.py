@@ -51,6 +51,7 @@ def derive(snap, global_claude_md):
                                                         'complete': bool(h.get('complete'))},
         'injected_tokens': None if not top else {'value': top['est_tokens_per_session_median'],
                                                  'plugin': top['plugin'], 'hook_event': top['hook_event'],
+                                                 'attribution': top['attribution'],
                                                  'complete': bool(h.get('complete'))},
     }
     return signals, fps
@@ -92,8 +93,10 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
         current, previous = signals[name], comparable(entries, meta, name)
         if not current or not previous:
             continue
-        if name == 'injected_tokens' and (current['plugin'], current['hook_event']) != (
-                previous.get('plugin'), previous.get('hook_event')):
+        if name == 'injected_tokens' and (
+                'attribution' not in previous  # older log entry: not comparable
+                or (current['plugin'], current['hook_event'], current['attribution']) != (
+                    previous.get('plugin'), previous.get('hook_event'), previous.get('attribution'))):
             continue
         before = previous.get('value')
         if not _number(before) or not _number(current.get('value')) or before <= 0:
@@ -130,6 +133,13 @@ def _one_line(text):
     return text.replace('\r', '?').replace('\n', '?')
 
 
+def home_relative(p, home):
+    """p with a leading home directory shown as ~ (whole path components only)."""
+    if p == home or p.startswith(home + os.sep):
+        p = '~' + p[len(home):]
+    return _one_line(p)
+
+
 def _fraction(text, low, high, name):
     value = float(text)
     if not low < value <= high:
@@ -163,11 +173,10 @@ def main(argv=None):
         return 1
 
     def display(p):
-        p = p.replace(collect.HOME, '~', 1) if p.startswith(collect.HOME) else p
-        return _one_line(p)
+        return home_relative(p, collect.HOME)
 
     meta = {'scope': a.scope,
-            'project': os.path.abspath(os.path.expanduser(a.project)) if a.project else None,
+            'project': display(os.path.abspath(os.path.expanduser(a.project))) if a.project else None,
             'window_days': a.days}
     signals, fps = derive(snap, display(os.path.join(collect.CLAUDE, 'CLAUDE.md')))
     crossings = compare(signals, fps, entries, meta, {'claude_md_max_lines': a.claude_md_max_lines,

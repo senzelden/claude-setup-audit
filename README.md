@@ -134,6 +134,8 @@ plugin never installs a hook or schedule.
 python3 <plugin dir>/skills/setup-audit/scripts/drift.py --scope global
 ```
 
+Scope `global` reads no transcripts, so three of the five signals are null; the default scope `all` covers all five.
+
 The next audit reads the log read-only and cites crossings as evidence. Details:
 [drift.md](plugins/setup-audit/skills/setup-audit/references/drift.md).
 
