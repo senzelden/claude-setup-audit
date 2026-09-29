@@ -1,15 +1,7 @@
 # Roadmap
 
-Updated 2026-09-28. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
+Updated 2026-09-29. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
-
-## Unreleased
-
-- [x] Per-item learning ledger: applied learning fixes are recorded with the targeted pattern,
-  a pre-fix baseline and the edits made; later runs count post-fix recurrence, propose
-  escalation or removal, and can remove recorded edits after a dry run. v1 limits: no backfill
-  of earlier fixes, no regular-expression selectors, no tool-error source, and hooks are never
-  proposed for retirement.
 
 ## Shipped in 0.5.0
 
@@ -52,6 +44,17 @@ both were corrected in follow-up commits before inclusion in 0.6.0.
 
 Hosted validation passed all eight jobs at `b93e179`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/36478432072).
+
+## Shipped in 0.8.0: per-item learning ledger
+
+- [x] Per-item learning ledger: applied learning fixes are recorded with the targeted pattern,
+  a pre-fix baseline and the edits made; later runs count post-fix recurrence, propose
+  escalation or removal, and can remove recorded edits after a dry run. v1 limits: no backfill
+  of earlier fixes, no regular-expression selectors, no tool-error source, and hooks are never
+  proposed for retirement.
+
+Hosted validation passed all eight jobs at `a480dba`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/36528215135).
 
 ## Next candidates, separately scoped
 

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-29
+
 ### Added
 
 - Per-item learning ledger (`ledger.py`), post-fix selector counts in the collector (`--ledger`),
@@ -18,6 +20,16 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - File-safety helpers moved to `safe_write.py`.
+
+### Validation and limits
+
+- 294 local regression tests pass, with 91% coverage of the bundled scripts. Hosted validation
+  passed all eight jobs at `a480dba`, including Linux/macOS on Python 3.11/3.13/3.14, the
+  coverage floor and strict plugin validation. No paid model evaluations were run for this release.
+- v1 ledger limits: no backfill of earlier fixes, no regular-expression selectors, no tool-error
+  source, and hooks are never proposed for retirement. A malformed history line inside the window
+  of an out-of-order `history.jsonl` is not detected, and one orphaned or undated facet marks
+  facet selectors incomplete.
 
 ## [0.7.0] - 2026-09-28
 
@@ -416,7 +428,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.4.0...v0.5.0
