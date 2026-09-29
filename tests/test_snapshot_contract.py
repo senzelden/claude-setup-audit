@@ -74,6 +74,31 @@ class SnapshotContract(FakeHome):
         with self.assertRaises(contract.SnapshotError):
             contract.validate_snapshot(snap)
 
+    def test_cli_ledger_flag_writes_validated_signals(self):
+        import ledger
+        sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
+        entry = dict(id="L-20260901-1", applied_at="2026-09-01T00:00:00Z", run="r", finding_id="LRN-x",
+                     pattern="p", mechanism="rule", state="active", supersedes=None, selector=sel,
+                     scope=dict(scope="all", project=None, window_days=30),
+                     baseline={"from": "2026-08-01T00:00:00Z", "to": "2026-09-01T00:00:00Z", "matches": 3,
+                               "sessions_matched": 3, "sessions_scanned": 9, "complete": True},
+                     edits=[dict(file="~/x.md", kind="markdown_block", sha256="a" * 64, backup=None)],
+                     observations=[])
+        path = os.path.join(self.claude, "audits", "ledger.json")
+        ledger.dump(dict(version=1, entries=[entry]), path)
+        out = os.path.join(self.home, "snap.json")
+        argv = ["collect.py", "--scope", "global", "--ledger", path, "--out", out]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(collect, "managed_directory", return_value=self.home), \
+                mock.patch.object(collect.subprocess, "run", side_effect=OSError("fixture CLI unavailable")):
+            collect.main()
+        with open(out) as f:
+            snapshot = json.load(f)
+        self.assertEqual(contract.validate_snapshot(snapshot), "v1")
+        signals = snapshot["ledger_signals"]
+        self.assertEqual(signals["status"], "collected")
+        self.assertEqual(signals["entries"]["L-20260901-1"]["selector_sha"], ledger.selector_hash(sel))
+
     def test_additive_fields_and_legacy_policy(self):
         snapshot = self.snapshot()
         snapshot['future_optional'] = {'value': 1}

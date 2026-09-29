@@ -1260,22 +1260,28 @@ def collect_corrections(days, project_filter=None):
 
 
 def _history_rows(since, until, project_filter, counts):
-    """Yield (session_id or None, prompt) for in-bounds, in-scope history rows."""
+    """Yield (session_id or None, prompt) for in-bounds, in-scope history rows.
+
+    history.jsonl is append-only and chronological, so a malformed, undated or non-object line
+    before the first row inside the window cannot hide an in-window prompt and is ignored; one at
+    or after it marks the counts incomplete."""
     path = os.path.join(CLAUDE, "history.jsonl")
     if not os.path.exists(path):
         counts["complete"] = False
         return
+    started = False
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
                 d = json.loads(line)
             except ValueError:
-                counts["complete"] = False
-                continue
+                d = None
             ts = d.get("timestamp") if isinstance(d, dict) else None
             if type(ts) not in (int, float):
-                counts["complete"] = False
+                if started:
+                    counts["complete"] = False
                 continue
+            started = started or ts / 1000 >= since
             if not since <= ts / 1000 <= until:
                 continue
             if project_filter is not None and os.path.expanduser(d.get("project") or "") not in project_filter:

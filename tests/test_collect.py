@@ -909,6 +909,23 @@ class LedgerCounting(FakeHome):
         self.assertFalse(c["complete"])
         self.assertEqual((c["matches"], c["sessions_scanned"]), (1, 1))
 
+    def test_bad_lines_before_the_window_are_ignored_but_not_inside_it(self):
+        sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
+        old = self.row("no tests", -500, "s0")
+        inside = [self.row("no tests", -10, "s1"), self.row("no tests", -5, "s2")]
+        bad = ["{broken\n", json.dumps({"display": "x", "timestamp": "soon"}) + "\n", "[1, 2]\n"]
+        for line in bad:
+            with self.subTest(line=line):
+                self.write(".claude/history.jsonl", json.dumps(old) + "\n" + line
+                           + "".join(json.dumps(r) + "\n" for r in inside))
+                c = collect.count_selector(sel, self.NOW - 100, self.NOW, None)
+                self.assertEqual(c, {"matches": 2, "sessions_matched": 2, "sessions_scanned": 2, "complete": True})
+                self.write(".claude/history.jsonl", json.dumps(old) + "\n" + json.dumps(inside[0]) + "\n" + line
+                           + json.dumps(inside[1]) + "\n")
+                c = collect.count_selector(sel, self.NOW - 100, self.NOW, None)
+                self.assertFalse(c["complete"])
+                self.assertEqual(c["matches"], 2)
+
     def test_absent_history_is_incomplete(self):
         sel = {"type": "keywords", "source": "corrections", "any": ["tests"]}
         c = collect.count_selector(sel, 0, self.NOW, None)
