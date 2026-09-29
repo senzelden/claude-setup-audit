@@ -116,8 +116,18 @@ def summary_line(crossings, log_display):
             parts.append('new broad permission in ' + ', '.join(c['paths'] or ['an unknown settings file']))
         else:
             parts.append(f"{c['signal']} +{round(c['fraction'] * 100)}% ({c['value']})")
-    line = f"setup-audit drift: {len(crossings)} crossed ({'; '.join(parts)}); log {log_display}"
+    head = f'setup-audit drift: {len(crossings)} crossed ('
+    tail = f'); log {log_display}'
+    middle = '; '.join(parts)
+    room = 300 - len(head) - len(tail)
+    if len(middle) > room:
+        middle = middle[:max(room - 3, 0)] + '...'
+    line = _one_line(head + middle + tail)
     return line if len(line) <= 300 else line[:297] + '...'
+
+
+def _one_line(text):
+    return text.replace('\r', '?').replace('\n', '?')
 
 
 def _fraction(text, low, high, name):
@@ -153,7 +163,8 @@ def main(argv=None):
         return 1
 
     def display(p):
-        return p.replace(collect.HOME, '~', 1) if p.startswith(collect.HOME) else p
+        p = p.replace(collect.HOME, '~', 1) if p.startswith(collect.HOME) else p
+        return _one_line(p)
 
     meta = {'scope': a.scope,
             'project': os.path.abspath(os.path.expanduser(a.project)) if a.project else None,

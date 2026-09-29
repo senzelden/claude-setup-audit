@@ -328,11 +328,45 @@ class DriftCli(FakeHome):
         canary = 'DRIFT-CANARY-9c1e'
         self.write('.claude/settings.json', {'permissions': {'allow': [f'Bash(sudo {canary})']}})
         self.write('.claude/CLAUDE.md', f'{canary}\n' * 3)
-        _, _, _, log = self.run_drift()
+        _, out, err, log = self.run_drift()
         self.assertNotIn(canary, Path(log).read_text())
+        self.assertNotIn(canary, out + err)
+        entries, _ = drift_log.read(log)
+        self.assertGreaterEqual(entries[0]['signals']['broad_permissions']['count'], 1)
 
     def test_default_log_lives_in_audits(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(drift.main(['--claude-dir', self.claude, '--scope', 'global']), 0)
         path = os.path.join(self.claude, 'audits', 'drift.jsonl')
         self.assertEqual(len(drift_log.read(path)[0]), 1)
+
+    def test_summary_line_keeps_log_suffix_when_truncated(self):
+        crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': f'/p/{i}/CLAUDE.md' + 'x' * 30,
+                      'value': 999, 'threshold': 200} for i in range(20)]
+        log = '~/.claude/audits/' + 'd' * 60 + '/drift.jsonl'
+        line = drift.summary_line(crossings, log)
+        self.assertLessEqual(len(line), 300)
+        self.assertNotIn('\n', line)
+        self.assertTrue(line.endswith('; log ' + log))
+
+    def test_newline_in_displayed_path_stays_one_line(self):
+        crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': '/p/a\nb\rc/CLAUDE.md',
+                      'value': 999, 'threshold': 200}]
+        line = drift.summary_line(crossings, '/tmp/x\ny.jsonl')
+        self.assertFalse(set(line) & {'\n', '\r'})
+
+    def test_default_log_follows_claude_config_dir(self):
+        import importlib
+        cfg = os.path.join(self.home, 'cfg')
+        os.makedirs(cfg)
+        saved = (collect.HOME, collect.CLAUDE)
+        try:
+            with mock.patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': cfg}):
+                importlib.reload(collect)
+            collect.HOME = self.home
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(drift.main(['--scope', 'global']), 0)
+        finally:
+            importlib.reload(collect)
+            collect.HOME, collect.CLAUDE = saved
+        self.assertEqual(len(drift_log.read(os.path.join(cfg, 'audits', 'drift.jsonl'))[0]), 1)
