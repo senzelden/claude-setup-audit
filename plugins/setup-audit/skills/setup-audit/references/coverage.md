@@ -38,6 +38,30 @@ work beyond the instruction/worktree and MCP/plugin inventories below (including
 overrides) stays explicitly unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
 
+## Harness overhead
+
+`harness_overhead` is coverage source `harness_overhead` (`collected` or `partial`). Its fields
+come from undocumented transcript attachment records (`hook_additional_context`, `hook_success`,
+`skill_listing`), observed 2026-09-29; they may change without notice, and absence means not
+observed, not zero. A hook injection with missing or null content is not counted; a non-string
+entrypoint counts as `other`. Estimated tokens are round(median chars / 4). Attribution is an exact
+command-string match against enabled plugins resolved through the registry `installPath` (all
+settings layers); no match is `unattributed`, several are `ambiguous`. `complete: false` lists
+`incomplete_reasons`:
+
+- `main_file_cap`, `subagent_file_cap`: the transcript file cap was hit, so later files are unread.
+- `malformed_records`: some transcript lines could not be parsed.
+- `plugin_root_unreadable`: an enabled plugin's registry `installPath` was missing, outside plugin
+  storage or not a directory, so its hooks are unscanned.
+- `script_unresolved`: a hook script path was a symlink, outside the plugin root, missing or
+  unreadable, so it was not scanned.
+- `script_truncated`: a hook script exceeded the scan size limit; only its start was scanned.
+- `not_observed`: no `skill_listing` records were seen (`skill_listing_series` is null); reported
+  but does not make the section incomplete.
+
+Nothing stored is transcript content, hook command text or script text: only counts, sizes, dates,
+plugin names, relative script paths and pattern ids.
+
 ## Learning ledger counts
 
 `ledger_signals` (from `collect.py --ledger`) counts post-fix matches per active, non-metric

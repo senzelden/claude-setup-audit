@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Measured harness overhead in the snapshot (`harness_overhead`): hook-injected context per plugin,
+  skill listing series, subagent spend, entrypoint shares and a scan for enabled plugin hooks that
+  invoke a model; new check `COST-harness-overhead`.
+
+### Changed
+
+- The startup-hook estimate resolves plugins through the registry and all settings layers, and
+  `COST-startup-hooks` prefers the measured values.
+
+### Fixed
+
+- `candidate_skills` counted every `.md` under a plugin's `skills/`.
+
 ## [0.8.0] - 2026-09-29
 
 ### Added

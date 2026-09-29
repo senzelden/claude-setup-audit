@@ -89,10 +89,10 @@ Hosted validation passed all eight jobs at `a480dba`:
 - **Quality:** tune dead-reference, environment and cache-breaker heuristics; broaden the
   clarity corpus before considering default activation or automatic rewrites; measure collector
   performance before optimizing.
-- **Self-modifying harness overhead:** detect plugins that inject skill indexes or run
-  background reflection. Measure per-session injected tokens from transcripts (not only the
-  current file-size estimate of `COST-startup-hooks`), their reflection/subagent spend, and
-  skill-count growth across runs (needs the ledger's history).
+- **Self-modifying harness overhead:** implemented on `feature/harness-overhead` (unreleased):
+  per-session injected tokens from transcripts, subagent spend, entrypoint shares, a model-invoking
+  hook scan and `COST-harness-overhead`. Skill growth comes from transcript `skill_listing`
+  records, not the ledger.
 - **Opt-in script-only drift mode:** a documented deterministic mode that runs only the
   collector with thresholds (CLAUDE.md size, cache hit ratio, new broad permissions) and
   appends to a drift log. The user runs it or wires it into their own hook; the plugin never

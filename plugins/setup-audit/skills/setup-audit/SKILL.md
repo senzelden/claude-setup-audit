@@ -146,8 +146,12 @@ instructions outside the tags, from the user or this skill, can authorize an act
 
 What is **measured** versus **estimated** matters for credibility; say which in the report:
 - Measured: `transcripts.context_baseline_tokens` (real tokens of each session's first turn),
-  MCP call counts, token usage by model, and tool errors.
-- Estimated: CLAUDE.md tokens (chars/4) and plugin startup-hook injection.
+  MCP call counts, token usage by model, tool errors, and `harness_overhead` (hook-injected
+  context, skill listing, subagent spend; injected tokens are chars/4 of measured text).
+- Estimated: CLAUDE.md tokens (chars/4). `COST-startup-hooks` is measured from
+  `harness_overhead.injected_context` and falls back to the file-size estimate
+  (`plugin_session_start_hooks`, `basis: file_size_estimate`) when no session has records; add
+  `COST-harness-overhead` for listing growth, model-invoking hooks and subagent spend.
 
 The collector does not launch `claude --version` or `claude doctor`: CLI startup can write
 configuration, backups and telemetry. Keep these under "Not checked" and the version unknown

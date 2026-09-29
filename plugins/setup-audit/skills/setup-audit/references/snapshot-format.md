@@ -18,6 +18,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
   post-fix `matches`, `sessions_matched`, `sessions_scanned`, `complete`, `from`, `to`, `selector_sha`.
   Counts only; additive within snapshot v1.
+- `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
+  pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
+  `basis` (`file_size_estimate`).
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.
 - Pre-versioned snapshots remain queryable with a stderr warning: they have no validated
   contract. Do not silently label them v1 or infer complete coverage; recollect when needed.

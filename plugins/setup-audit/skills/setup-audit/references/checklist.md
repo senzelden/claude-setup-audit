@@ -102,8 +102,27 @@ the collector snapshot.
   `skillListingBudgetFraction` and `skillListingMaxDescChars` against current settings and docs
   before claiming listing overflow. Collected excerpts do not establish the effective budget or
   description folding. Recommend trimming only when actual listing pressure is established.
-- **COST-startup-hooks** (`plugin_session_start_hooks`, estimated): text injected on every
-  start/clear/compact.
+- **COST-startup-hooks** (`harness_overhead.injected_context`, measured; fallback
+  `global.plugin_session_start_hooks`, `basis: file_size_estimate`): context injected by hooks per
+  session. Use the measured source rows when any session in the window has them, and say which
+  basis you used. Evidence: plugin (or `ambiguous`/`unattributed`), event, sessions and median
+  estimated tokens per session (chars/4). SessionStart re-fires on `startup`, `resume`, `clear`,
+  `compact` and `fork` (https://code.claude.com/docs/en/hooks.md, fetched 2026-09-29), and its
+  `additionalContext` is added to context before the first prompt.
+- **COST-harness-overhead** (`harness_overhead`, measured and static): judge together
+  - skill listing growth (`skill_listing_series` first -> last, and `last.chars` against the
+    documented listing budget: 1% of the model's context window, raised by
+    `skillListingBudgetFraction` or `SLASH_COMMAND_TOOL_CHAR_BUDGET`, each entry capped at 1,536
+    characters by `skillListingMaxDescChars`; https://code.claude.com/docs/en/skills.md, fetched
+    2026-09-29), with `per_plugin_skills` naming the largest contributors;
+  - `model_spawning_hooks`: an enabled plugin hook that runs `claude -p`, the Agent SDK or the
+    Anthropic API spends tokens outside the session; cite file, line and pattern id;
+  - `subagent_spend`: subagent median tokens per session against the main-session median.
+  `entrypoints` are shares only: never call SDK sessions "reflection" or attribute them to a plugin
+  or hook. Treat `complete: false` and its `incomplete_reasons` as limits on every claim. Record
+  metrics `skills.listing_count` (unit `skills`), `skills.listing_chars` (unit `chars`) and
+  `hooks.injected_tokens_per_session_median` (unit `tokens`, basis `estimated`), all with
+  `source: harness_overhead.<field>`, so the next audit gets deltas.
 - **COST-subagents** (`usage.subagent_session_share`, Agent tool counts): many small agents
   re-reading context, or a top-tier model on mechanical agents.
 - **COST-tool-errors** (`avg_tool_errors_per_session`, `tool_error_categories`): every failed call
