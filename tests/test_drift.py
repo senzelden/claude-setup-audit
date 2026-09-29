@@ -59,6 +59,8 @@ class DriftLog(FakeHome):
         self.assertEqual(([e['at'] for e in entries], malformed), (['2026-09-29T10:00:00Z', '2026-09-30T10:00:00Z'], 0))
 
     def test_audits_dir_is_created_private(self):
+        old_umask = os.umask(0o277)
+        self.addCleanup(os.umask, old_umask)
         audits = os.path.join(self.claude, 'audits')
         drift_log.append(os.path.join(audits, 'drift.jsonl'), self.entry(), {os.path.realpath(audits)}, audits)
         self.assertEqual(stat.S_IMODE(os.stat(audits).st_mode), 0o700)
@@ -92,3 +94,19 @@ class DriftLog(FakeHome):
 
     def test_missing_log_is_empty(self):
         self.assertEqual(drift_log.read(self.log), ([], 0))
+
+    def test_log_path_that_is_a_directory_raises_drift_log_error(self):
+        os.mkdir(self.log)
+        with self.assertRaises(drift_log.DriftLogError) as cm:
+            drift_log.append(self.log, self.entry(), self.allowed, os.path.join(self.claude, 'audits'))
+        self.assertNotIn(self.home, str(cm.exception))
+        self.assertEqual(os.listdir(self.log), [])
+
+    def test_short_write_raises_drift_log_error(self):
+        with mock.patch('drift_log.os.write', return_value=1):
+            with self.assertRaises(drift_log.DriftLogError):
+                drift_log.append(self.log, self.entry(), self.allowed, os.path.join(self.claude, 'audits'))
+
+    def test_pathological_nesting_is_malformed(self):
+        Path(self.log).write_text('[' * 100000 + '\n')
+        self.assertEqual(drift_log.read(self.log), ([], 1))

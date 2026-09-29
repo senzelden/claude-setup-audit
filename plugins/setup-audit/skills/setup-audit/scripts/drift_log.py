@@ -28,21 +28,26 @@ def append(path, entry, allowed_dirs, audits_dir):
     """Append one entry as a single line; create the file 0600 (and the audits dir 0700)."""
     path = check_path(path, allowed_dirs)
     directory = os.path.dirname(path)
-    if not os.path.isdir(directory):
-        if os.path.abspath(directory) != os.path.abspath(audits_dir):
-            raise DriftLogError('drift log directory does not exist')
-        os.makedirs(directory, mode=0o700)
-        os.chmod(directory, 0o700)  # makedirs mode is subject to umask
     line = json.dumps(entry, separators=(',', ':'), allow_nan=False) + '\n'
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0), 0o600)
     try:
-        size = os.fstat(fd).st_size
-        if size and os.pread(fd, 1, size - 1) != b'\n':
-            line = '\n' + line  # isolate an interrupted earlier line
-        os.write(fd, line.encode())
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        if not os.path.isdir(directory):
+            if os.path.abspath(directory) != os.path.abspath(audits_dir):
+                raise DriftLogError('drift log directory does not exist')
+            os.makedirs(directory, mode=0o700)
+            os.chmod(directory, 0o700)  # makedirs mode is subject to umask
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        try:
+            size = os.fstat(fd).st_size
+            if size and os.pread(fd, 1, size - 1) != b'\n':
+                line = '\n' + line  # isolate an interrupted earlier line
+            data = line.encode()
+            if os.write(fd, data) != len(data):
+                raise DriftLogError('drift log cannot be written')
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        raise DriftLogError('drift log cannot be written') from None
 
 
 def read(path):
@@ -63,7 +68,7 @@ def read(path):
             continue
         try:
             obj = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             malformed += 1
             continue
         if isinstance(obj, dict) and obj.get('version') == VERSION and isinstance(obj.get('signals'), dict):
