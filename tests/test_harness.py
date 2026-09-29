@@ -133,7 +133,16 @@ class HookIndex(FakeHome):
                 f.write(content)
             index, reasons = harness.hook_index(self.claude, [s])
             self.assertEqual(([e['command'] for e in index], reasons), (['a'], ['manifest_unreadable']), content)
-        os.remove(manifest)  # a missing manifest is normal
+        os.remove(manifest)
+        with open(manifest, 'w') as f:  # above the 1 MiB read limit
+            f.write('{"name": "demo"}' + ' ' * harness.MAX_HOOK_FILE)
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual(([e['command'] for e in index], reasons), (['a'], ['manifest_unreadable']))
+        os.remove(manifest)
+        os.mkdir(manifest)  # an OS error on open
+        index, reasons = harness.hook_index(self.claude, [s])
+        self.assertEqual(([e['command'] for e in index], reasons), (['a'], ['manifest_unreadable']))
+        os.rmdir(manifest)  # a missing manifest is normal
         index, reasons = harness.hook_index(self.claude, [s])
         self.assertEqual(([e['command'] for e in index], reasons), (['a'], []))
 
