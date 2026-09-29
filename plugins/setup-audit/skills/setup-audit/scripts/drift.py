@@ -3,7 +3,12 @@
 
 Silent unless a threshold is crossed. Never installs a hook or schedule; see references/drift.md.
 """
+import argparse
 import hashlib
+import os
+import sys
+from datetime import datetime, timezone
+import collect
 import drift_log
 
 SIGNALS = drift_log.SIGNALS
@@ -98,3 +103,75 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
             crossings.append({'signal': name, 'kind': 'growth', 'value': current['value'], 'previous': before,
                               'fraction': round(fraction, 3), 'threshold': thresholds['growth_min']})
     return crossings
+
+
+def summary_line(crossings, log_display):
+    parts = []
+    for c in crossings:
+        if c['kind'] == 'above_max':
+            parts.append(f"{c['path']} {c['value']} lines > {c['threshold']}")
+        elif c['kind'] == 'below_min':
+            parts.append(f"cache_hit_ratio {c['value']} < {c['threshold']}")
+        elif c['kind'] == 'new':
+            parts.append('new broad permission in ' + ', '.join(c['paths'] or ['an unknown settings file']))
+        else:
+            parts.append(f"{c['signal']} +{round(c['fraction'] * 100)}% ({c['value']})")
+    line = f"setup-audit drift: {len(crossings)} crossed ({'; '.join(parts)}); log {log_display}"
+    return line if len(line) <= 300 else line[:297] + '...'
+
+
+def _fraction(text, low, high, name):
+    value = float(text)
+    if not low < value <= high:
+        raise argparse.ArgumentTypeError(f'{name} must be in ({low}, {high}]')
+    return value
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    collect.add_collection_args(ap)
+    ap.add_argument('--log', help='drift log (default: <claude dir>/audits/drift.jsonl)')
+    ap.add_argument('--claude-md-max-lines', type=int, default=200)
+    ap.add_argument('--cache-hit-min', type=lambda t: _fraction(t, 0, 1, '--cache-hit-min'), default=0.9)
+    ap.add_argument('--growth-min', type=lambda t: _fraction(t, 0, 100, '--growth-min'), default=0.25)
+    a = ap.parse_args(argv)
+    if a.claude_md_max_lines < 1:
+        ap.error('--claude-md-max-lines must be positive')
+    collect.apply_collection_args(ap, a)
+    audits = os.path.join(collect.CLAUDE, 'audits')
+    allowed = collect._out_allowed_dirs()
+    try:
+        path = drift_log.check_path(a.log or os.path.join(audits, 'drift.jsonl'), allowed)
+        entries, _ = drift_log.read(path)
+    except drift_log.DriftLogError as e:
+        print(f'setup-audit drift: {e}', file=sys.stderr)
+        return 1
+    try:
+        snap = collect.build_snapshot(a)
+    except Exception as e:  # never echo data from the failure
+        print(f'setup-audit drift: collection failed ({type(e).__name__})', file=sys.stderr)
+        return 1
+
+    def display(p):
+        return p.replace(collect.HOME, '~', 1) if p.startswith(collect.HOME) else p
+
+    meta = {'scope': a.scope,
+            'project': os.path.abspath(os.path.expanduser(a.project)) if a.project else None,
+            'window_days': a.days}
+    signals, fps = derive(snap, display(os.path.join(collect.CLAUDE, 'CLAUDE.md')))
+    crossings = compare(signals, fps, entries, meta, {'claude_md_max_lines': a.claude_md_max_lines,
+                                                      'cache_hit_min': a.cache_hit_min, 'growth_min': a.growth_min})
+    entry = {'version': drift_log.VERSION, 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+             **meta, 'signals': signals, 'crossings': crossings}
+    try:
+        drift_log.append(path, entry, allowed, audits)
+    except drift_log.DriftLogError as e:
+        print(f'setup-audit drift: {e}', file=sys.stderr)
+        return 1
+    if crossings:
+        print(summary_line(crossings, display(path)))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

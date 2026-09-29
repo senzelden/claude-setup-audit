@@ -270,3 +270,69 @@ class CorruptLog(unittest.TestCase):
                         coverage={'sources': [{'source': 'transcripts.main_files', 'status': 'partial'}]})
         crossings = self.run_compare(snap)
         self.assertEqual([(c['signal'], c['kind']) for c in crossings], [('cache_hit_ratio', 'below_min')])
+
+
+class DriftCli(FakeHome):
+    def run_drift(self, *extra):
+        out, err = io.StringIO(), io.StringIO()
+        log = os.path.join(self.home, 'drift.jsonl')
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = drift.main(['--claude-dir', self.claude, '--scope', 'global', '--log', log, *extra])
+        return code, out.getvalue(), err.getvalue(), log
+
+    def test_silent_without_crossings_and_one_line_with(self):
+        self.write('.claude/CLAUDE.md', 'short\n')
+        code, out, _, log = self.run_drift()
+        self.assertEqual((code, out), (0, ''))
+        self.write('.claude/CLAUDE.md', 'x\n' * 250)
+        code, out, _, _ = self.run_drift()
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count('\n'), 1)
+        self.assertTrue(out.startswith('setup-audit drift: 1 crossed ('))
+        self.assertLessEqual(len(out.strip()), 300)
+        entries, malformed = drift_log.read(log)
+        self.assertEqual((len(entries), malformed), (2, 0))
+        self.assertEqual(entries[1]['crossings'][0]['kind'], 'above_max')
+
+    def test_new_permission_on_second_run(self):
+        self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(sudo ls)']}})
+        self.assertEqual(self.run_drift()[1], '')
+        self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(sudo ls)', 'Bash(sudo cat *)']}})
+        out = self.run_drift()[1]
+        self.assertIn('new broad permission in ~/.claude/settings.json', out)
+
+    def test_refused_log_exits_1_without_writing(self):
+        with mock.patch.object(collect, 'build_snapshot') as build:
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = drift.main(['--claude-dir', self.claude, '--log', '/etc/drift.jsonl'])
+        self.assertEqual((code, out.getvalue()), (1, ''))
+        self.assertIn('setup-audit drift:', err.getvalue())
+        build.assert_not_called()
+        self.assertFalse(os.path.exists('/etc/drift.jsonl'))
+
+    def test_collection_failure_exits_1_without_writing(self):
+        with mock.patch.object(collect, 'build_snapshot', side_effect=RuntimeError('SECRET-DETAIL')):
+            code, out, err, log = self.run_drift()
+        self.assertEqual((code, out), (1, ''))
+        self.assertNotIn('SECRET-DETAIL', err)
+        self.assertFalse(os.path.exists(log))
+
+    def test_usage_errors_exit_2(self):
+        for argv in (['--growth-min', '0'], ['--cache-hit-min', '1.5'], ['--claude-md-max-lines', '0']):
+            with self.assertRaises(SystemExit) as ctx, contextlib.redirect_stderr(io.StringIO()):
+                drift.main(['--claude-dir', self.claude, *argv])
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_log_holds_no_rule_or_claude_md_text(self):
+        canary = 'DRIFT-CANARY-9c1e'
+        self.write('.claude/settings.json', {'permissions': {'allow': [f'Bash(sudo {canary})']}})
+        self.write('.claude/CLAUDE.md', f'{canary}\n' * 3)
+        _, _, _, log = self.run_drift()
+        self.assertNotIn(canary, Path(log).read_text())
+
+    def test_default_log_lives_in_audits(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(drift.main(['--claude-dir', self.claude, '--scope', 'global']), 0)
+        path = os.path.join(self.claude, 'audits', 'drift.jsonl')
+        self.assertEqual(len(drift_log.read(path)[0]), 1)
