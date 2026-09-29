@@ -108,6 +108,18 @@ class DriftLog(FakeHome):
         Path(self.log).write_text('\n'.join([json.dumps(self.entry(version=2)), '[1]', '{bad', '']) + '\n')
         self.assertEqual(drift_log.read(self.log), ([], 3))
 
+    def test_non_finite_numbers_in_a_hand_edited_log_are_not_values(self):
+        line = ('{"version": 1, "at": "2026-09-29T10:00:00Z", "scope": "all", "signals": '
+                '{"cache_hit_ratio": {"value": NaN}, "skill_listing_chars": {"value": Infinity},'
+                ' "injected_tokens": {"value": -Infinity}, "broad_permissions": {"count": 2}}}')
+        Path(self.log).write_text(line + '\n')
+        entries, malformed = drift_log.read(self.log)
+        summary = drift_log.summarize(entries, malformed, '~/d.jsonl')
+        self.assertEqual({k: v['last_value'] for k, v in summary['signals'].items()},
+                         {'cache_hit_ratio': None, 'skill_listing_chars': None, 'injected_tokens': None,
+                          'broad_permissions': 2})
+        json.dumps(summary, allow_nan=False)
+
     def test_missing_log_is_empty(self):
         self.assertEqual(drift_log.read(self.log), ([], 0))
 
@@ -437,6 +449,14 @@ class DriftCli(FakeHome):
         self.assertIn('; log ...', line)
         self.assertTrue(line.endswith('/audits/drift.jsonl'))
         self.assertIn('/p/CLAUDE.md', line)
+
+    def test_log_path_that_fits_is_printed_in_full(self):
+        crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': '/p/CLAUDE.md',
+                      'value': 999, 'threshold': 200}]
+        log = '/' + 'd' * 228 + '.jsonl'
+        line = drift.summary_line(crossings, log)
+        self.assertLessEqual(len(line), 300)
+        self.assertTrue(line.endswith('; log ' + log))
 
     def test_newline_in_displayed_path_stays_one_line(self):
         crossings = [{'signal': 'claude_md', 'kind': 'above_max', 'path': '/p/a\nb\rc/CLAUDE.md',
