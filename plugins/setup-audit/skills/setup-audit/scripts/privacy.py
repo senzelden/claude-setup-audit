@@ -44,6 +44,8 @@ def _label_class(label):
     segments = label_segments(label)
     if any(s in QUALIFIERS for s in segments):
         return None
+    if label == 'pass':  # bare lowercase label (not a flag): English prose such as "one pass: ..."
+        return None
     words = [s for s in segments if not s.isdigit()]
     if words and _is_password_word(words[-1]):
         return 'password'

@@ -35,7 +35,7 @@ TRUE_POSITIVES = [
      'fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024', 'X-Amz-Signature=', 3.824),
     (f'docker run -e AWS_SECRET_ACCESS_KEY={AWS} app', AWS, 'AWS_SECRET_ACCESS_KEY=', 4.663),
 ]
-MUST_NOT_FLAG = [  # N1-N31
+MUST_NOT_FLAG = [  # N1-N34
     'git checkout 3f1c0a9b7e2d4c55a1b2c3d4e5f60718293a4b5c',
     'commit_sha=3f1c0a9b7e2d4c55a1b2c3d4e5f60718293a4b5c',
     'session_id=550e8400-e29b-41d4-a716-446655440000',
@@ -67,6 +67,9 @@ MUST_NOT_FLAG = [  # N1-N31
     'export AUTH_PROVIDER=GoogleOAuth2Provider',
     'publicKey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE',
     'sortKey=createdAtTimestamp2',
+    'the user wants a general UI/UX pass: tighten spacing',  # N32-N34 added 2026-09-30
+    '0.2.0 went up in one pass: release notes',
+    '[Fix pass: rename helpers]',
 ]
 
 
@@ -101,6 +104,14 @@ class ContextualDetection(unittest.TestCase):
         self.assertTrue(privacy.contextual_secret('--pass', 'hunter22x'))
         self.assertFalse(privacy.contextual_secret('--passWithNoTests', 'somevalue'))
         self.assertFalse(privacy.contextual_secret('--password', '--host'))
+
+    def test_bare_lowercase_pass_label_is_prose_but_compounds_flags_and_caps_are_passwords(self):
+        for text, label in [('DB_PASS=hunter22x', 'DB_PASS='), ('db-pass=hunter22x', 'db-pass='),
+                            ('PASS=hunter22x', 'PASS='), ('mysql --pass hunter22x', '--pass ')]:
+            with self.subTest(text=text):
+                out = collect.redact(text)
+                self.assertNotIn('hunter22x', out)
+                self.assertIn(label + privacy.CONTEXT_TOKEN, out)
 
     def test_measured_entropies(self):
         for text, secret, _, expected in TRUE_POSITIVES:

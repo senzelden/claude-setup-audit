@@ -206,7 +206,10 @@ value swallow the inner label and T10 fails). A hit replaces only the value with
 
 - **Password class:** the **last** non-numeric segment is in {`password`, `passwd`, `pwd`,
   `passphrase`, `pass`} or ends in `password`/`passwd` (e.g. `PGPASSWORD`). (Amended 2026-09-30: with
-  "any segment", `--passWithNoTests --coverage` was redacted in the default full mode.)
+  "any segment", `--passWithNoTests --coverage` was redacted in the default full mode.) **Exception
+  (added 2026-09-30):** a bare, lowercase, single-segment *label* `pass` is not a password label,
+  because English prose uses it (`one pass: release notes`); a real-data smoke found all 3 contextual
+  hits were this shape. `DB_PASS=`, `db-pass=`, `PASS=` and the flag `--pass` stay password class.
 - **Secret class:** any segment in {`key`, `secret`, `token`, `auth`, `credential`, `credentials`,
   `creds`, `signature`, `sig`, `cookie`, `session`, `pat`, `apikey`}, or a segment ending in `key`,
   `secret` or `token`.
@@ -291,6 +294,9 @@ Must-not-flag. `redact(x) == x` (`SECRET_RE` leaves them too):
 | N29 | `export AUTH_PROVIDER=GoogleOAuth2Provider` | qualifier `provider` (added 2026-09-30) |
 | N30 | `publicKey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE` | qualifier `public` (added 2026-09-30) |
 | N31 | `sortKey=createdAtTimestamp2` | qualifier `sort` (added 2026-09-30) |
+| N32 | `the user wants a general UI/UX pass: tighten spacing` | bare lowercase label `pass` is prose (added 2026-09-30) |
+| N33 | `0.2.0 went up in one pass: release notes` | bare lowercase label `pass` is prose (added 2026-09-30) |
+| N34 | `[Fix pass: rename helpers]` | bare lowercase label `pass` is prose (added 2026-09-30) |
 
 Accepted over-redaction, asserted so that the behaviour is deliberate: A1
 `cache_key=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08` is redacted (a
