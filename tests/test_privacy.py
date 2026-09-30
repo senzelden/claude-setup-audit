@@ -7,6 +7,7 @@ import json
 import os
 import unittest
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from test_collect import FakeHome, collect  # also puts the plugin scripts directory on sys.path
@@ -221,12 +222,18 @@ def args(**kw):
     return argparse.Namespace(**{**base, **kw})
 
 
-class CollectorMode(FakeHome):
+class PatchedHome(FakeHome):
+    """Fake home whose managed-settings directory is inside it (never /etc/claude-code). It defines no
+    tests, so subclasses do not re-run each other's tests."""
+
     def setUp(self):
         super().setUp()
         p = mock.patch.object(collect, 'managed_directory', lambda: os.path.join(self.home, 'managed'))
         p.start()
         self.addCleanup(p.stop)
+
+
+class CollectorMode(PatchedHome):
 
     def test_full_mode_records_privacy_full(self):
         snap = collect.build_snapshot(args())
@@ -288,6 +295,174 @@ class CollectorMode(FakeHome):
         ns = ap.parse_args(['--claude-dir', self.claude])
         self.assertFalse(hasattr(ns, 'metadata_only'))
         self.assertEqual(collect.build_snapshot(ns)['coverage']['privacy']['mode'], 'full')
+
+
+def settings_with(tag, hooks=True):
+    """A settings file whose every masked location carries a canary made from `tag`."""
+    body = {
+        'model': 'opus', f'modelSettings': {'opus': {'note': f'zcmodelsetting{tag}'}},
+        'statusLine': {'type': 'command', 'command': f'zcstatusline{tag}'},
+        'sandbox': {'enabled': True, 'network': {'allowedDomains': [f'zcsandboxvalue{tag}.example.com']}},
+        'permissions': {'allow': [f'Bash(sudo zcriskyrule{tag})'], 'deny': [f'Bash(zcdenyrule{tag})']}}
+    if hooks:
+        body['hooks'] = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'command', 'command': f'echo zchookcmd{tag}'},
+            {'type': 'command', 'command': f'/nonexistent/zcmissingscript{tag}.sh'},
+            {'type': 'http', 'url': f'https://hooks.example.com/zchttppath{tag}', 'headers': {'X-Token': '$TOK'}},
+            {'type': 'prompt', 'prompt': f'zcprompthook{tag}'},
+            {'type': 'mcp_tool', 'server': f'srv{tag}', 'tool': 'check'}]}]}
+    return body
+
+
+SETTINGS_TAGS = ('', 'managed', 'project', 'local')  # global, managed, project, session-local candidate
+CANARIES = tuple(f'{name}{tag}' for tag in SETTINGS_TAGS
+                 for name in ('zcmodelsetting', 'zcstatusline', 'zcsandboxvalue', 'zcriskyrule', 'zcdenyrule',
+                              'zchookcmd', 'zcmissingscript', 'zchttppath', 'zcprompthook')) + (
+    'zcfirstprompt', 'zcfrictionmost', 'zcfriction', 'zccorrection', 'zcmemorydesc', 'zcclaudemd', 'zcrulebody',
+    'zcskilldesc', 'zcskillwhen', 'zcskilltools', 'zcskillbody', 'zclastupdate', 'zcpluginskill',
+    'zcpluginwhen', 'zcplugincmd', 'zcpluginhttp', 'zcpluginprompt', 'zcpluginhookfm', 'zcskillhooks')
+
+
+def leaves(obj, path=()):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from leaves(v, path + (k,))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from leaves(v, path + (i,))
+    else:
+        yield path, obj
+
+
+def shape(obj):
+    """Keys and list lengths of `obj`, with every leaf value erased."""
+    if isinstance(obj, dict):
+        return {k: shape(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [shape(v) for v in obj]
+    return None
+
+
+def pattern_of(path):
+    return '.'.join('*' if isinstance(p, int) else p for p in path)
+
+
+class EndToEnd(PatchedHome):
+    """Full mode carries every canary; metadata-only mode carries none. Only `snapshots()` mutates state."""
+
+    def plant(self):
+        when = datetime.now(timezone.utc) - timedelta(days=1)
+        stamp = when.strftime('%Y-%m-%dT%H:%M:%SZ')
+        app = os.path.join(self.home, 'code', 'app')
+        self.write('code/app/CLAUDE.md', 'Project notes zcclaudemd\n')
+        self.write('.claude/CLAUDE.md', 'Global zcclaudemd\n')
+        self.write('.claude/rules/r.md', 'Rule zcrulebody\n')
+        self.write('.claude/skills/s/SKILL.md', '---\nname: s\ndescription: zcskilldesc\nwhen_to_use: zcskillwhen\n'
+                   'allowed-tools: Bash(zcskilltools)\nhooks: zcskillhooks\n---\nBody zcskillbody\n')
+        self.write('.claude/.last-update-result.json', {'status': 'failed', 'error': 'zclastupdate'})
+        for i, (sid, prompt, detail) in enumerate((('s1', 'zcfirstprompt', 'zcfriction'),
+                                                   ('s2', 'other', 'zcfrictionmost'))):
+            self.write(f'.claude/usage-data/session-meta/{sid}.json', {
+                'session_id': sid, 'start_time': stamp, 'project_path': app, 'first_prompt': f'please {prompt}',
+                'tool_counts': {'Bash': 2}, 'output_tokens': 10 + 100 * (1 - i)})
+            self.write(f'.claude/usage-data/facets/{sid}.json', {
+                'session_id': sid, 'friction_counts': {'buggy_code': 1 + i}, 'friction_detail': f'{detail} happened',
+                'outcome': 'achieved'})
+        self.write('.claude/history.jsonl', json.dumps({
+            'display': 'no, zccorrection', 'project': app, 'timestamp': int(when.timestamp() * 1000),
+            'sessionId': 's1'}) + '\n')
+        self.write('.claude/projects/-code-app/memory/note.md', '---\ndescription: zcmemorydesc\n---\n')
+        self.write('.claude/projects/-code-app/memory/MEMORY.md', '- note\n')
+        root = os.path.join(self.claude, 'plugins', 'cache', 'm', 'p', '1.0.0')
+
+        def plugin_file(*parts):
+            return os.path.relpath(os.path.join(root, *parts), self.home)
+
+        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {'p@m': [
+            {'scope': 'user', 'installPath': root, 'version': '1.0.0'}]}})
+        self.write(plugin_file('.claude-plugin', 'plugin.json'), {'name': 'p'})
+        self.write(plugin_file('skills', 'x', 'SKILL.md'), '---\nname: x\ndescription: zcpluginskill\n'
+                   'when_to_use: zcpluginwhen\nhooks: zcpluginhookfm\n---\nzcpluginskill\n')
+        self.write(plugin_file('hooks', 'hooks.json'), {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'command', 'command': 'echo zcplugincmd'},
+            {'type': 'http', 'url': 'https://hooks.example.com/zcpluginhttp'},
+            {'type': 'prompt', 'prompt': 'zcpluginprompt'}]}]}})
+        self.write('.claude/settings.json', {**settings_with(''), 'enabledPlugins': {'p@m': True},
+                   'permissions': {**settings_with('')['permissions'],
+                                   'allow': ['Bash(sudo zcriskyrule)',
+                                             f'Bash(export AWS_SECRET_ACCESS_KEY={AWS} && aws s3 ls)']}})
+        self.write('managed/managed-settings.json', settings_with('managed'))
+        self.write('code/app/.claude/settings.json', settings_with('project'))
+        self.write('code/app/.claude/settings.local.json', settings_with('local'))
+
+    def snapshots(self):
+        self.plant()
+        app = os.path.join(self.home, 'code', 'app')
+        return (collect.build_snapshot(args(roots=[app])),
+                collect.build_snapshot(args(roots=[app], metadata_only=True)))
+
+    def test_full_mode_carries_every_canary(self):  # proves the fixture reaches every masked location
+        full, _ = self.snapshots()
+        text = json.dumps(full)
+        self.assertEqual([c for c in CANARIES if c not in text], [])
+        for section in (full['global']['settings'], full['managed_settings']['settings'],
+                        next(iter(full['projects'].values()))['settings'], full['instructions']['settings_candidates']):
+            self.assertTrue(section)
+
+    def test_metadata_mode_carries_no_canary_and_no_secret(self):
+        full, meta = self.snapshots()
+        text = json.dumps(meta)
+        self.assertEqual([c for c in CANARIES if c in text], [])
+        self.assertNotIn(AWS, text + json.dumps(full))
+
+    def test_metadata_mode_keeps_structure(self):
+        full, meta = self.snapshots()
+        # Same dict keys, list lengths, kept paths and kept values everywhere except `coverage`, which
+        # records the mode itself.
+        full, meta = ({k: v for k, v in snap.items() if k != 'coverage'} for snap in (full, meta))
+        self.assertEqual(shape(full), shape(meta))
+        self.assertEqual(self.kept(full), self.kept(meta))
+        self.assertTrue(self.kept(meta))
+
+    @staticmethod
+    def kept(snap):
+        return sorted((pattern_of(p), v) for p, v in leaves(snap) if isinstance(v, str)
+                      and any(privacy.path_matches(p, k) for k in privacy.KEPT_STRING_FIELDS))
+
+    def test_every_string_leaf_is_classified(self):
+        _, meta = self.snapshots()
+        unclassified = sorted({pattern_of(path) for path, v in leaves(meta) if isinstance(v, str)
+                               and not privacy.MARKER_RE.match(v)
+                               and not any(privacy.path_matches(path, pat) for pat in privacy.KEPT_STRING_FIELDS)})
+        self.assertEqual(unclassified, [], 'classify these in the spec inventory, then mask or keep them')
+
+    def test_context_token_only_where_planted(self):
+        full, _ = self.snapshots()
+        hits = [v for _, v in leaves(full) if isinstance(v, str) and privacy.CONTEXT_TOKEN in v]
+        self.assertTrue(hits)
+        self.assertTrue(all('AWS_SECRET_ACCESS_KEY=' in v for v in hits), 'contextual false positive')
+
+    def test_every_handler_type_target_is_masked(self):
+        full, meta = self.snapshots()
+        types = lambda snap: {h['type']: h['target'] for h in snap['global']['settings'][0]['hook_handlers']}  # noqa: E731
+        self.assertEqual(set(types(full)), {'command', 'http', 'prompt', 'mcp_tool'})
+        self.assertEqual({t: privacy.MARKER_RE.match(v) is not None for t, v in types(meta).items()},
+                         {t: True for t in types(full)})
+
+
+class PathMatching(unittest.TestCase):
+    def test_star_matches_one_key_or_index(self):
+        self.assertTrue(privacy.path_matches(('a', 3, 'b'), ('a', '*', 'b')))
+        self.assertFalse(privacy.path_matches(('a', 'b'), ('a', '*', 'b')))
+        self.assertFalse(privacy.path_matches(('a', 'b', 'c'), ('a', '*')))
+
+    def test_literals_never_match_list_indices(self):
+        self.assertFalse(privacy.path_matches(('a', 0), ('a', '0')))
+
+    def test_double_star_matches_any_remainder(self):
+        self.assertTrue(privacy.path_matches(('a', 1, 'b', 'c'), ('a', '**')))
+        self.assertTrue(privacy.path_matches(('a',), ('a', '**')))
+        self.assertFalse(privacy.path_matches(('b', 'c'), ('a', '**')))
 
 
 if __name__ == '__main__':

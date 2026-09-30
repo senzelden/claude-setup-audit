@@ -200,3 +200,69 @@ def mask_snapshot(snap):
         for comp in plugin.get('components') or []:
             _entry(comp, counter)
     return dict(counter)
+
+
+def path_matches(path, pattern):
+    """'*' matches one key or index; '**' (last element only) matches any remainder."""
+    for i, pat in enumerate(pattern):
+        if pat == '**':
+            return True
+        if i >= len(path):
+            return False
+        if pat == '*':
+            continue
+        if isinstance(path[i], int) or path[i] != pat:
+            return False
+    return len(path) == len(pattern)
+
+
+SETTINGS_PREFIXES = (('global', 'settings', '*'), ('managed_settings', 'settings', '*'),
+                     ('projects', '*', 'settings', '*'), ('instructions', 'settings_candidates', '*'))
+HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
+                ('header_keys', '*'), ('allowed_env_vars', '*'))
+SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
+                 ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
+                 ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
+                 ('other', 'autoUpdates')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
+ENTRY_KEEP = tuple((k,) for k in ('source', 'scope', 'status', 'kind', 'relation', 'active_state',
+                                  'reason', 'frontmatter_status', 'estimate_basis')) \
+    + tuple(('frontmatter', k) for k in FRONTMATTER_KEEP)
+SUBTREES = (('collection_scope', '**'), ('readiness', '**'), ('harness_overhead', '**'), ('coverage', '**'),
+            ('ledger_signals', '**'), ('drift_signals', '**'), ('skill_listing', '**'),
+            ('managed_settings', 'sources', '**'), ('instructions', 'sources', '**'),
+            ('instructions', 'contexts', '**'), ('instructions', 'agents_md_setting_observed', '**'),
+            ('extensions', 'sources', '**'), ('global', 'plugin_session_start_hooks', '**'),
+            ('memory', 'similar_across_projects', '**'))
+SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
+          ('global', 'version'), ('global', 'doctor'),
+          *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
+          *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'mcp_servers', 'skills', 'agents',
+                                                'commands', 'hooks', 'git')),
+          ('memory', 'by_project', '*', 'entries', '*', 'file'),
+          *(('usage', k) for k in ('coverage_note', 'window_note', 'stats_scope_note', 'facets_scope_note',
+                                   'latest_insights_report')),
+          ('usage', 'daily_token_totals_recent', '*', 'date'),
+          *(('usage', k, '*', '*') for k in ('top_tools', 'tool_error_categories', 'sessions_per_project',
+                                             'facet_friction')),
+          *(('usage', s, '*', k) for s in ('heaviest_sessions', 'most_friction_sessions') for k in ('project', 'start')),
+          ('corrections', 'by_project', '*', '*'), ('corrections', 'samples', '*', 'project'),
+          *(('transcripts', k) for k in ('coverage_note', 'window_note', 'quantile_method', 'mcp_count_note',
+                                         'mcp_configured_but_unused_note')),
+          *(('transcripts', k, '*', '*') for k in ('context_baseline_by_project_median', 'mcp_calls_by_server')),
+          ('transcripts', 'mcp_configured_but_unused', '*'),
+          ('transcripts', 'tool_errors', 'categories_basis'), ('transcripts', 'tool_errors', 'scope_note'),
+          ('instructions', 'limitations', '*'), ('extensions', 'limitations', '*'),
+          *(('extensions', 'mcp_servers', '*', k) for k in ('source', 'scope', 'status', 'name', 'project',
+                'active_state', 'representation', 'transport', 'executable', 'package_version_evidence',
+                'endpoint_origin', 'endpoint_detail', 'reason')),
+          *(('extensions', 'mcp_servers', '*', k, '*') for k in ('env_keys', 'headers_keys',
+                'env_variable_references', 'headers_variable_references', 'credential_mechanisms')),
+          *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
+                                                        'source', 'status', 'reason')),
+          ('extensions', 'plugins', '*', 'manifest_keys', '*'),
+          ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
+KEPT_STRING_FIELDS = (SUBTREES + SINGLE
+    + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP)
+    + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
+            for s in ENTRY_KEEP)
+    + tuple(('extensions', 'plugins', '*', 'components', '*', 'handlers', '*') + h for h in HANDLER_KEEP))

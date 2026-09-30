@@ -155,12 +155,14 @@ is masked and every other class is kept.
 | `corrections` | `by_project`, `samples[].project` | path | keep |
 | `corrections` | `samples[].text` | free | mask |
 | `transcripts` | notes, `context_baseline_by_project_median`, `mcp_calls_by_server`, `mcp_configured_but_unused` | const, id | keep |
+| `transcripts.tool_errors` | `categories_basis`, `scope_note` (added 2026-09-30) | const | keep |
 | `previous_audits[]`, `generated`, `collection_scope.*` | — | path, date, enum | keep |
 | `instructions.entries[]`, `extensions.plugins[].components[]` | `source`, `scope`, `status`, `kind`, `relation`, `active_state`, `reason`, `frontmatter_status`, `estimate_basis` | path, enum | keep |
 | same | `excerpt` (up to 32 KiB of file text) | free | mask |
 | same | `frontmatter.{name, model, context, agent, disable-model-invocation, user-invocable, paths}` | id, enum, path | keep (R5) |
 | same | `frontmatter.{description, when_to_use, allowed-tools, disallowed-tools, hooks}` and any other key | free | mask (R5) |
-| `extensions.plugins[].components[].handlers[]` | hook handler shape | as settings `hook_handlers` | as above |
+| settings summary `hook_handlers[]` | `fingerprint` (added 2026-09-30) | id (hash) | keep |
+| `extensions.plugins[].components[].handlers[]` | hook handler shape, including `fingerprint` (added 2026-09-30) | as settings `hook_handlers` | as above |
 | `instructions` | `sources[]`, `contexts[]`, `agents_md_setting_observed[]`, `limitations[]` | path, enum, const | keep |
 | `extensions.mcp_servers[]` | `name`, `transport`, `executable`, `package_version_evidence`, `endpoint_origin`, `endpoint_detail`, `*_keys[]`, `*_variable_references[]`, `credential_mechanisms[]`, provenance | id, enum, path, const | keep |
 | `extensions.plugins[]` | `name`, `scope`, `project`, `version`, `source`, `status`, `reason`, `manifest_keys[]`, `enablement_observations[].source` | id, path, enum | keep |
