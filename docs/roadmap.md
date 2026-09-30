@@ -92,8 +92,9 @@ Hosted validation passed all eight jobs at `48d9d5d`:
   provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal
   mutation and verification. Start with sandbox settings; do not redesign all apply paths at once.
-- **Deeper checks:** hook content and matcher validation, duplicate hooks/layer conflicts,
-  permission wildcard placement, MCP exposure metadata and recurring tool-error clustering.
+- **Deeper checks:** hook matcher validation, duplicate hooks/layer conflicts and permission
+  wildcard placement are implemented (unreleased). Remaining: MCP exposure metadata and recurring
+  tool-error clustering.
   Verify proposed signals against current official documentation before implementation.
 - **Enterprise posture:** opt-in data-handling assessment that separates locally observable
   settings from provider/account/admin facts requiring verification. Keep training, retention,

@@ -155,6 +155,8 @@ What is **measured** versus **estimated** matters for credibility; say which in 
 - Measured: `transcripts.context_baseline_tokens` (real tokens of each session's first turn),
   MCP call counts, token usage by model, tool errors, and `harness_overhead` (hook-injected
   context, skill listing, subagent spend; injected tokens are chars/4 of measured text).
+- Static (configuration text only): `permissions.rule_shape_issues`, hook handler `issues`, and
+  `config_conflicts`. Their effects come from the quoted docs, not observed runs; say so.
 - Estimated: CLAUDE.md tokens (chars/4). `COST-startup-hooks` is measured from
   `harness_overhead.injected_context` and falls back to the file-size estimate
   (`plugin_session_start_hooks`, `basis: file_size_estimate`) when no session has records; add

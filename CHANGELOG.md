@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - `manifest_unreadable` harness reason when a plugin's `plugin.json` exists but cannot be read.
+- Permission rule-shape checks (`permissions.rule_shape_issues`; `SEC-wildcard-placement`,
+  `SEC-ineffective-deny`).
+- Hook handler validation against the hooks docs (per-handler `issues`, `fingerprint`;
+  `HYG-hook-config`).
+- Cross-layer `config_conflicts`: duplicate hooks and shadowed allow rules (`HYG-hook-duplicates`
+  is now evidence-backed; `HYG-shadowed-allow`).
 
 ### Changed
 
@@ -21,6 +27,8 @@ All notable changes to this project are documented here. The format follows
   dropping the `; log <path>` suffix.
 - Snapshot schema types drift `last_value` as a number and describes `skill_listing_series`
   (additive, still v1); the bundled validator supports the `number` type.
+- `HYG-hook-duplicates` no longer claims settings-file duplicates run twice (the hooks docs: they
+  run once; plugin copies stay separate).
 
 ## [0.9.0] - 2026-09-29
 

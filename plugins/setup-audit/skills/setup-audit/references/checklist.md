@@ -24,6 +24,32 @@ the collector snapshot.
   So an allow rule that looks risky in isolation may already be constrained by a blocking hook
   (check `hook_handlers` for a command hook on the same matcher before proposing a redundant deny
   rule), and a hook that looks protective doesn't substitute for a missing deny rule.
+- **SEC-wildcard-placement** (`permissions.rule_shape_issues.allow`, static; permissions docs "Wildcard
+  patterns", fetched 2026-09-30): allow rules whose `*` reaches further than the rule reads.
+  - `wildcard-before-subcommand`: a `*` after only the program name, followed by a later word
+    (`Bash(git * main)`, `Bash(git -C * status *)`). The `*` also matches options inserted there:
+    `git -c core.fsmonitor=<script> diff main` makes git run a program. Claude Code (v2.1.246+) warns
+    at startup when the later word is the subcommand; the collector can't tell a subcommand from an
+    argument, so confirm before proposing. Fix: the exact value, or one rule per subcommand with the
+    `*` after it (`Bash(git status *)`).
+  - `wildcard-program`: `*` in the program position (`Bash(* --version)`) matches any program.
+  - `star-joined-to-program`: no space before the trailing `*` (`Bash(ls*)` also matches `lsof`).
+    Fix: `Bash(ls *)`.
+  - `colon-star-literal`, `mcp-rule-with-parentheses`: the rule does nothing as written (hygiene).
+  Weigh together with SEC-risky-allow: a flagged git, interpreter or network rule is worse.
+- **SEC-ineffective-deny** (`permissions.rule_shape_issues.deny` / `.ask`, static): deny or ask rules
+  Claude Code doesn't apply as written, so the block or prompt the user expects never happens.
+  - `colon-star-literal`: `:*` only works at the end; in `Bash(git:* push)` the colon is literal
+    and the rule matches no git command. Fix: `Bash(git push *)`.
+  - `ignored-primary-field`: `Tool(param:value)` on a primary content field (`command`, `file_path`,
+    `path`, `notebook_path`, `url`). The docs say these can't be matched this way; for
+    `Bash(command:rm *)` they say Claude Code ignores the rule and warns at startup. Fix:
+    `Bash(rm *)`, `Read(./path)`, `WebFetch(domain:host)`.
+  - `mcp-rule-with-parentheses`: settings files skip `mcp__` rules with parentheses; parameter
+    matching on MCP tools needs `--disallowedTools`.
+  Other wildcard shapes in deny/ask match more rather than less (Claude Code refuses or prompts for
+  the extra commands, errors docs), so they aren't flagged. Severity is high when the rule guards
+  secrets or destructive commands.
 - **SEC-deny-baseline**: there are no `deny` rules anywhere. Propose a small user-level baseline,
   verified against the permissions docs: reads of `.env` files, `~/.ssh`, `~/.aws`, credential
   files and `/proc/*/environ`, and force-push. Anchor paths with `//` or `~/` so they apply in
@@ -207,8 +233,40 @@ metric that motivated it, so the next run can check whether it moved.
 - **HYG-stale-dirs** (`missing_additional_dirs`): directories that no longer exist, or paths from
   another machine or user.
 - **HYG-worktrees** (`is_worktree_copy`): many stale worktree copies of CLAUDE.md.
-- **HYG-hook-duplicates**: the same event + matcher + command registered in several layers (user,
-  project, plugin), which runs twice.
+- **HYG-hook-duplicates** (`config_conflicts.hook_duplicates`, static): the same handler (event,
+  matcher, whole handler object; `fingerprint` joins to `hook_handlers[].fingerprint` for the
+  redacted command) in several places of one stack. Per the hooks docs (fetched 2026-09-30), the
+  same handler in more than one settings file runs once (`effect: deduplicated`: clutter, low); a
+  plugin's copy stays separate (`separate_copies`: it runs twice, double cost and side effects,
+  medium, higher on `PreToolUse`/`SessionStart`); `same_file`: the docs don't say, report as
+  clutter. Fix: drop the settings copy when a plugin provides the hook. Under
+  `allow_managed_hooks_only` or `disableAllHooks`, check which copies actually run first.
+- **HYG-shadowed-allow** (`config_conflicts.permission_overlaps`, static): an allow rule that a
+  deny or ask rule in the same stack always matches first. Rules are evaluated deny, then ask, then
+  allow, across every scope (permissions docs), so the allow never takes effect: with `by.list: deny`
+  the call is blocked; with `ask` it still prompts (the usual cause of "I said don't ask again and it
+  still asks"). `match`: `exact`, `tool` (a bare or tool-glob rule) or `prefix` (a Bash trailing
+  wildcard). Only provable coverage is reported; path globs and mid-rule wildcards aren't compared,
+  and equal text isn't taken as coverage for a non-Bash `!` specifier (gitignore negation denies
+  nothing), a single-`/` path across different settings files (each anchors at its own directory),
+  or a tool whose deny/ask lists in that file hold a `!` rule. A Bash deny shaped like an input
+  parameter (`Bash(timeout:*)`) is compared by raw text only. Absence isn't proof. Fix: remove the
+  dead allow, or narrow the deny/ask if the allow was intended; never propose loosening a managed
+  rule.
+- **HYG-hook-config** (`hook_handlers[].issues` / `unknown_fields`, the same fields on
+  `extensions.plugins[].components[].handlers[]`, static; hooks docs fetched 2026-09-30): hook
+  configuration that doesn't do what it reads.
+  - Never fires: `unknown_event` (not a documented event; check case, e.g. `pretooluse`),
+    `if_never_runs` (`if` on a non-tool event), `mcp_server_only_matcher` (`mcp__server` without
+    `__.*` is compared exactly and matches no tool).
+  - Fires more than intended: `matcher_ignored` (a matcher on an event without matcher support is
+    silently ignored, so the hook runs on every occurrence), `narrow_event_regex_path` (a
+    `StopFailure` matcher with a comma, space or hyphen is a regex, not a list; only `|` separates).
+  - Unclear: `invalid_regex` (doesn't compile; checked with Python `re`, JS-only constructs skipped;
+    what Claude Code does with it is undocumented, so say "invalid", not "ignored"),
+    `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
+    handler type; name the field, don't claim it's ignored).
+  A guard that never fires (a `PreToolUse` or security hook) is high severity; the rest is hygiene.
 
 ## Agent readiness (`RDY-`, opt-in via `focus=readiness`)
 

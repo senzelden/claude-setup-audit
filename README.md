@@ -12,8 +12,9 @@ CLAUDE.md files, memory,
 and usage and transcript data, and compares them with the **current** official docs. You get a
 short, ranked list of fixes for:
 
-- **Security**: risky standing permissions, secrets baked into rules, missing deny rules, broken
-  hooks, sandbox gaps.
+- **Security**: risky standing permissions, secrets baked into rules, missing deny rules,
+  wildcards that match more than they read, deny rules Claude Code ignores, broken hooks, sandbox
+  gaps. Hygiene checks also flag hooks that can never fire, duplicate hooks and shadowed allow rules.
 - **Cost & context**: your *measured* per-session context baseline, oversized CLAUDE.md files,
   unused MCP servers, skill-listing overflow, model and compaction settings, and prompt-cache
   health (hit ratio, 1-hour vs 5-minute cache writes, and mid-session cache rewrites classified

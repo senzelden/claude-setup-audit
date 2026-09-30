@@ -91,6 +91,22 @@ roots containing spaces are not followed. `complete: false` lists `incomplete_re
 Nothing stored is transcript content, hook command text or script text: only counts, sizes, dates,
 plugin names, relative script paths and pattern ids.
 
+## Configuration checks
+
+`config_conflicts` is coverage source `config_conflicts` (`collected`, or `partial` when the caps
+omitted entries; `basis: static`). It reads settings text only.
+
+- Stacks: `global` is managed + user + home-local settings; each collected project directory is
+  managed + user `settings.json` + its own project files. Plugin enablement comes from the
+  highest-precedence file in the stack (managed > local > project > user).
+- Not seen: `--settings`, CLI flags, server/MDM policy and skill/agent frontmatter hooks. Nested
+  project directories are separate stacks.
+- Overlaps cover only exact, tool and single-trailing-wildcard Bash cases, so a missing overlap is
+  not proof of none. Extension handler caps (100 per component) can hide a duplicate.
+- Documentation baseline: the permissions, errors and hooks pages at
+  `https://code.claude.com/docs/en/`, fetched 2026-09-30. The collector never runs hooks or
+  evaluates rules against real commands; effects come from the quoted docs.
+
 ## Learning ledger counts
 
 `ledger_signals` (from `collect.py --ledger`) counts post-fix matches per active, non-metric

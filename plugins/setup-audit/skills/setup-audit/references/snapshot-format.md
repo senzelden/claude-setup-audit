@@ -24,6 +24,19 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (`file_size_estimate`).
+- `config_conflicts` (always emitted by current collectors, optional in the schema):
+  - `stacks`;
+  - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,
+    sources with layer/path/plugin);
+  - `permission_overlaps` (stack, allow and covering rule with layer/path, redacted rule text,
+    covering list, `match`);
+  - `*_omitted` counts.
+
+  Settings summaries also carry:
+  - `permissions.rule_shape_issues`;
+  - handler `fingerprint`, and `issues`/`unknown_fields`/`plugin_relative` when present.
+
+  Additive within snapshot v1.
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.
 - Pre-versioned snapshots remain queryable with a stderr warning: they have no validated
   contract. Do not silently label them v1 or infer complete coverage; recollect when needed.
