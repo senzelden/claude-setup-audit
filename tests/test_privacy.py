@@ -541,8 +541,9 @@ class Docs(unittest.TestCase):
                       skill)
         step3 = skill.split('## Step 3', 1)[1].split('## Step 4', 1)[0]
         step4 = skill.split('## Step 4', 1)[1].split('## Step 5', 1)[0]
-        self.assertIn('In metadata-only mode, `fix` describes the change\'s shape only', step3)
-        self.assertIn('not written\n  into the saved report', step3)
+        flat3 = ' '.join(step3.split())
+        self.assertIn('In metadata-only mode, `fix` describes the change\'s shape only', flat3)
+        self.assertIn('is not written into the saved report', flat3)
         self.assertIn("(metadata-only: the change's shape only)", step4)
         step5 = skill.split('## Step 5', 1)[1]
         self.assertIn('In metadata-only mode, run the `prune_permissions.py` / `apply_ops.py` dry runs', step5)
