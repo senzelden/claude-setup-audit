@@ -94,6 +94,38 @@ the collector snapshot.
   type, including `http` — mention this once per audit rather than per hook when it's unset.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages.
+- **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
+  `settings[].mcp_policy`; static, never connected, no values stored). Weigh, citing field and
+  source:
+  - `headers_literal_keys` / `env_literal_keys` on a `project` server whose `file_git_status` is
+    `tracked`: a committed credential is likely. Confirm on the file (never copy the value), then
+    propose moving the value out of `.mcp.json`: reference an environment variable (`${VAR}` in
+    `headers`/`env`) or use `headersHelper`, and rotate the credential if it was committed. This
+    is MCP-specific; `SEC-secret-literal` covers tokens in allow rules, not this.
+  - `url_has_userinfo` or `url_has_query` on a remote server: a credential may sit in the URL.
+    Prefer headers with `${VAR}` references. Credential variables such as `ANTHROPIC_API_KEY` in a
+    remote `url`/`headers` read as empty (mcp.md), so `url_variable_references` naming one means a
+    broken server, not a leak.
+  - `plaintext_transport`: tokens and tool traffic in cleartext to a non-loopback host.
+    Recommendation-level; the docs do not rate it.
+  - A `project` server with a `policy_observations` kind `approval_enable_all` or
+    `approval_enabled`: any server a teammate adds to `.mcp.json` loads. In `claude -p`, SDK and
+    cloud sessions, project servers load without asking (mcp.md). Propose
+    `disabledMcpjsonServers` for unwanted ones. Committed approvals are ignored in an untrusted
+    folder, so cite `project_trust_accepted`.
+  - `credential_mechanisms` containing `headersHelper_configured` on a `project` server: a
+    repo-supplied shell command that runs once the folder is trusted ("arbitrary shell command",
+    mcp.md).
+  - `permission_allow` (or `permission_allow_any_server`) observations on a server that writes to
+    external systems: calls run without a prompt. `mcp__*` in allow is skipped by Claude Code;
+    rule validity is reported by the permission-rule checks, not here.
+  - Allowlist posture, once per audit and only in an organization context: `allowedMcpServers`
+    without `allowManagedMcpServersOnly` merges user allowlists, and a `serverName` entry "is not
+    a security control" (managed-mcp.md). `serverUrl`/`serverCommand` entries are not evaluated
+    here, so never claim a server is unrestricted without checking them.
+  - `oauth_scopes: null` on a sensitive remote service: suggest pinning `oauth.scopes`, the
+    documented way to restrict a server.
+  Cross-check reliability through `tool_prefix` = `transcripts.tool_errors.by_mcp_server[].server`.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
   already-supplied version observation; unavailable diagnostics are not installation failures.
@@ -165,6 +197,20 @@ the collector snapshot.
   re-reading context, or a top-tier model on mechanical agents.
 - **COST-tool-errors** (`avg_tool_errors_per_session`, `tool_error_categories`): every failed call
   is a paid retry. Recurring categories point at missing commands in CLAUDE.md or a missing script.
+  Prefer `transcripts.tool_errors` (see `COST-tool-error-clusters`) when present.
+- **COST-tool-error-clusters** (`transcripts.tool_errors`, measured; categories heuristic): cite
+  `by_tool` and `by_mcp_server` counts, never error text (none is stored). Separate `denied`
+  (permission prompts refused or rules denying) from failures; `failure_rate` already excludes
+  them and is `null` under `min_calls_for_rate` calls.
+  - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
+    fix authentication or configuration (`claude mcp get <name>` shows an `Issue:` line), or
+    propose removal together with its `SEC-mcp-exposure` fields. The thresholds are a
+    recommendation.
+  - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.
+  - `nonzero_exit` clusters: missing run or test commands (`RDY-test-loop`, CLAUDE.md).
+  - `file_state` recurring: an edit-before-read habit; an `LRN-` pattern if it spans 3+ sessions.
+  - `validation`: malformed tool calls; check for a tool or server whose schema confuses the model.
+  `error_results_unmatched` and `results_without_is_error` bound the evidence; say so when large.
 - **COST-cache-health** (`transcripts.cache`, measured): Claude Code places cache points itself, so
   there's no `cache_control` to set. What the user controls is the cache lifetime (TTL) and the
   habits that break the cache.
@@ -267,6 +313,11 @@ metric that motivated it, so the next run can check whether it moved.
     `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
     handler type; name the field, don't claim it's ignored).
   A guard that never fires (a `PreToolUse` or security hook) is high severity; the rest is hygiene.
+- **HYG-mcp-config** (`config_notes`, `extensions.mcp_name_collisions`): `url_without_type`
+  (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`
+  (skipped at load), `sse_deprecated` (switch to `http`), and the same name in several scopes with
+  `endpoint_origins_differ: true` (OAuth sign-ins are stored per endpoint, so sign-in state differs
+  between projects). `empty_url_placeholder` is a documented placeholder, not a finding.
 
 ## Agent readiness (`RDY-`, opt-in via `focus=readiness`)
 

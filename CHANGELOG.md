@@ -20,6 +20,16 @@ All notable changes to this project are documented here. The format follows
   `HYG-hook-config`).
 - Cross-layer `config_conflicts`: duplicate hooks and shadowed allow rules (`HYG-hook-duplicates`
   is now evidence-backed; `HYG-shadowed-allow`).
+- MCP exposure metadata per server:
+  - transport class, config notes, endpoint locality, cleartext and URL flags, literal key names,
+    OAuth scopes, tool prefix and `.mcp.json` git status
+  - per-source approval, toggle, policy and permission observations, and same-name collisions
+
+  Nothing is connected or executed, and no values are stored. New checks `SEC-mcp-exposure` and
+  `HYG-mcp-config`.
+- `transcripts.tool_errors`: error counts, failure rates and heuristic categories per built-in tool
+  and per MCP server, from `tool_use`/`tool_result` pairs; error text is not stored. New check
+  `COST-tool-error-clusters`.
 
 ### Changed
 

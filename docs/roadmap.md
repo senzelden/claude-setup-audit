@@ -93,8 +93,9 @@ Hosted validation passed all eight jobs at `48d9d5d`:
 - **Deterministic apply:** structured approved operations with preconditions, backup, minimal
   mutation and verification. Start with sandbox settings; do not redesign all apply paths at once.
 - **Deeper checks:** hook matcher validation, duplicate hooks/layer conflicts and permission
-  wildcard placement are implemented (unreleased). Remaining: MCP exposure metadata and recurring
-  tool-error clustering.
+  wildcard placement, MCP exposure metadata and recurring tool-error clustering are implemented
+  (unreleased).
+  Follow-up: a ledger tool-error source and a drift signal for MCP failure rate.
   Follow-up: build_snapshot aborts when one settings file is malformed (e.g. permissions/hooks not
   an object, `ask: 5`, `deny: [null]`, `allow: [{}]` raise TypeError in analyze_permissions,
   summarize_settings, redact, harness.hook_index, hook_handler_entry); needs per-file coverage
