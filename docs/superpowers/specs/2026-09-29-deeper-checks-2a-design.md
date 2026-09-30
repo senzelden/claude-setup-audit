@@ -286,14 +286,19 @@ handlers}]}`:
 first at every deny list in the stack and then at every ask list. `rule_covers(by, allow)` returns
 `exact`, `tool` or `prefix`, or `None`, and proves coverage only in these cases:
 
-- raw equality, or equality after normalizing Bash `:*` → ` *` and `Bash(*)` → `Bash`;
+- raw equality, or equality after normalizing Bash `:*` → ` *` and `Bash(*)` → `Bash` (amended 2026-09-30
+  after task review: a param-shaped Bash deny such as `Bash(timeout:*)` matches by raw text only; for
+  non-Bash tools with a specifier, equality is refused when the specifier starts with `!` (gitignore
+  negation denies nothing), when it starts with a single `/` and the rules come from different settings
+  files (anchored at each source's own directory), or when the denying file's deny/ask lists hold a `!`
+  rule for that tool);
 - a bare `by` naming the same tool (`tool`), or a bare tool-name glob with a single trailing `*`
   whose prefix starts the allow's tool name (`mcp__*`, `*`);
 - Bash only: `by` with exactly one `*`, at its end:
   - ` *` (spaced), with prefix P: covers when the allow's literal text before its first `*` starts
     with `P + ' '`, or, for an allow with no `*`, equals P;
   - no space, with prefix P: covers when that literal text starts with P;
-  - an allow ending in a sole ` *` must also satisfy the condition for its bare form.
+  - (an allow ending in a sole ` *` needs no extra bare-form check: it is implied; amended 2026-09-30).
 
 Coverage is never computed in these cases:
 

@@ -128,59 +128,68 @@ def handler_issues(event, matcher, handler):
 
 
 MAX_OVERLAPS, MAX_DUPLICATES, MAX_SOURCES = 30, 20, 10
-BASH_PARAMS = ('command', 'description', 'timeout', 'run_in_background')  # hooks.md Bash tool input
+# hooks.md "Bash" tool_input table (raw page fetched 2026-09-30): the only documented fields.
+BASH_PARAMS = ('command', 'description', 'timeout', 'run_in_background')
 RULE_RE = re.compile(r'([^()]+?)(?:\((.*)\))?', re.S)
 BASH_RULE_RE = re.compile(r'Bash\((.*)\)', re.S)
 PARAM_RE = re.compile(r'(%s)\s*:' % '|'.join(BASH_PARAMS))
 
 
-def bash_rule_body(rule):
-    """(body, colon_prefix) of a `Bash(...)` rule, else None; shared with collect.rule_shape_flags.
-
-    colon_prefix is True when a trailing `:*` (the documented prefix form) was stripped from body.
-    """
-    m = BASH_RULE_RE.fullmatch(rule.strip()) if isinstance(rule, str) else None
-    if not m:
-        return None
-    body = m.group(1).strip()
+def bash_spec_body(spec):
+    """(body, colon_prefix) of a Bash specifier; colon_prefix: a trailing `:*` (prefix form) was stripped."""
+    body = spec.strip()
     if body.endswith(':*'):
         return body[:-2], True
     return body, False
 
 
+def bash_rule_body(rule):
+    """bash_spec_body of a `Bash(...)` rule, else None; shared with collect.rule_shape_flags."""
+    m = BASH_RULE_RE.fullmatch(rule.strip()) if isinstance(rule, str) else None
+    return bash_spec_body(m.group(1)) if m else None
+
+
 def _parse(rule):
-    """(tool, specifier or None, is_bash_param_rule); None for unparseable rules.
+    """(tool, normalized specifier or None, is_bash_param_rule, raw specifier); None if unparseable.
 
     permissions.md: `Bash(*)` is equivalent to `Bash`; a trailing `:*` equals a trailing ` *`.
     """
     m = RULE_RE.fullmatch(rule.strip()) if isinstance(rule, str) else None
     if not m:
         return None
-    tool, spec = m.group(1).strip(), m.group(2)
-    param = False
-    if tool == 'Bash' and spec is not None:
-        body, colon = bash_rule_body(rule)
+    tool, raw = m.group(1).strip(), m.group(2)
+    spec, param = raw, False
+    if tool == 'Bash' and raw is not None:
+        body, colon = bash_spec_body(raw)
         param = bool(PARAM_RE.match(body + ':*' if colon else body))
         if colon and ':*' not in body:
             spec = body + ' *'
         else:
             spec = None if body == '*' else body + (':*' if colon else '')
-    return tool, spec, param
+    return tool, spec, param, raw
 
 
-def rule_covers(by, allow):
+def rule_covers(by, allow, same_file=True):
     """'exact' | 'tool' | 'prefix' when every call `allow` matches is provably matched by `by`.
 
     Conservative: path globs and mid-rule wildcards are never compared, and a deny shaped like a
-    Bash input-parameter rule (`Bash(timeout:*)`) is ambiguous, so it only matches exactly.
+    Bash input-parameter rule (`Bash(timeout:*)`) is ambiguous, so only its raw text matches.
+    Non-Bash specifiers are equal-text only, and not even then when `!` (gitignore negation
+    denies nothing) or, across settings files, a leading single `/` (anchors at each file's own
+    directory, permissions.md fetched 2026-09-30) makes equal text mean different things.
     """
     b, a = _parse(by), _parse(allow)
     if not b or not a:
         return None
-    (btool, bspec, bparam), (atool, aspec, _) = b, a
+    (btool, bspec, bparam, braw), (atool, aspec, _, araw) = b, a
     if atool.startswith('mcp__') and aspec is not None:
         return None  # "it skips any `mcp__` rule that has parentheses"
+    if bparam:
+        return 'exact' if (btool, braw) == (atool, araw) else None
     if (btool, bspec) == (atool, aspec):
+        if btool != 'Bash' and bspec is not None and (
+                bspec.startswith('!') or (bspec.startswith('/') and not bspec.startswith('//') and not same_file)):
+            return None
         return 'exact'
     if bspec is None:
         if btool == atool:
@@ -188,23 +197,37 @@ def rule_covers(by, allow):
         if btool.count('*') == 1 and btool.endswith('*') and atool.startswith(btool[:-1]):
             return 'tool'
         return None
-    if btool != atool or atool != 'Bash' or aspec is None or bparam:
+    if btool != atool or atool != 'Bash' or aspec is None:
         return None
     if bspec.count('*') != 1 or not bspec.endswith('*'):
         return None
     spaced = bspec.endswith(' *')
     prefix = bspec[:-2] if spaced else bspec[:-1]
-
-    def ok(text, open_ended):
-        if spaced:  # `git *` matches `git` and `git ...`, not `gitk`
-            return text.startswith(prefix + ' ') or (not open_ended and text == prefix)
-        return text.startswith(prefix)
-
     literal = aspec.split('*', 1)[0]
-    bare = aspec[:-2] if aspec.endswith(' *') and aspec.count('*') == 1 else None
-    if not ok(literal, '*' in aspec) or (bare is not None and not ok(bare, False)):
-        return None
-    return 'prefix'
+    if spaced:  # `git *` matches `git` and `git ...`, not `gitk`
+        good = literal.startswith(prefix + ' ') or ('*' not in aspec and literal == prefix)
+    else:
+        good = literal.startswith(prefix)
+    return 'prefix' if good else None
+
+
+def _rules(files, lst):
+    """Rule strings of one list across settings files, tolerating missing lists and odd entries."""
+    for f in files:
+        perms = f.get('permissions')
+        rules = perms.get(lst) if isinstance(perms, dict) else None
+        yield f, [r for r in rules if isinstance(r, str)] if isinstance(rules, list) else []
+
+
+def _negates(f, tool):
+    """True when this file's deny/ask lists hold a `Tool(!...)` gitignore negation for `tool`."""
+    for lst in ('deny', 'ask'):
+        for _, rules in _rules([f], lst):
+            for r in rules:
+                p = _parse(r)
+                if p and p[0] == tool and p[3] is not None and p[3].startswith('!'):
+                    return True
+    return False
 
 
 def permission_overlaps(stacks, redact, cap=MAX_OVERLAPS):
@@ -215,12 +238,15 @@ def permission_overlaps(stacks, redact, cap=MAX_OVERLAPS):
     seen, found = set(), []
     for stack in stacks:
         files = stack['settings']
-        candidates = [(lst, f, rule) for lst in ('deny', 'ask') for f in files
-                      for rule in f['permissions'].get(lst, [])]
-        for f in files:
-            for allow in f['permissions'].get('allow', []):
+        candidates = [(lst, f, rule) for lst in ('deny', 'ask') for f, rules in _rules(files, lst)
+                      for rule in rules]
+        for f, allows in _rules(files, 'allow'):
+            for allow in allows:
+                atool = (_parse(allow) or (None,))[0]
                 for lst, by_file, by in candidates:
-                    match = rule_covers(by, allow)
+                    match = rule_covers(by, allow, same_file=by_file['path'] == f['path'])
+                    if match == 'exact' and atool != 'Bash' and _negates(by_file, atool):
+                        match = None  # a `!` carve-out in that file may cancel the equal rule
                     if match:
                         break
                 else:

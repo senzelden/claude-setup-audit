@@ -188,7 +188,9 @@ class RuleCoverage(unittest.TestCase):
                 ('Read', 'Read(./src/**)', 'tool'), ('mcp__*', 'mcp__github__get_issue', 'tool'),
                 ('*', 'WebSearch', 'tool'), ('Bash(git *)', 'Bash(git log *)', 'prefix'),
                 ('Bash(git *)', 'Bash(git)', 'prefix'), ('Bash(git *)', 'Bash(git log*)', 'prefix'),
-                ('Bash(git*)', 'Bash(gitk)', 'prefix'), ('Bash(git:*)', 'Bash(git status)', 'prefix')):
+                ('Bash(git*)', 'Bash(gitk)', 'prefix'), ('Bash(git:*)', 'Bash(git status)', 'prefix'),
+                ('Bash (x)', 'Bash (x)', 'exact'), ('Bash', 'Bash (x)', 'tool'),
+                ('Bash(command:rm *)', 'Bash(command:rm *)', 'exact'), ('Read(/src/**)', 'Read(/src/**)', 'exact')):
             with self.subTest(by=by, allow=allow):
                 self.assertEqual(config_checks.rule_covers(by, allow), match)
 
@@ -199,7 +201,9 @@ class RuleCoverage(unittest.TestCase):
                 ('Bash(timeout:*)', 'Bash(timeout 5 ls)'), ('Read(./src/**)', 'Read(./src/a.py)'),
                 ('Bash(git * main)', 'Bash(git merge main)'), ('mcp__github__*', 'mcp__gitlab__get'),
                 ('Bash(git push *)', 'mcp__github__push(x)'), ('mcp__*', 'mcp__github__create(x)'),
-                ('Bash(git:* push)', 'Bash(git push)'), (None, 'Bash'), ('Bash(', 'Bash')):
+                ('Bash(git:* push)', 'Bash(git push)'), (None, 'Bash'), ('Bash(', 'Bash'),
+                ('Bash(timeout:*)', 'Bash(timeout *)'), ('Bash (x)', 'Bash'), ('Read(!sample.env)', 'Read(!sample.env)'),
+                ('Bash(command:rm *)', 'Bash(command:rm x)')):
             with self.subTest(by=by, allow=allow):
                 self.assertIsNone(config_checks.rule_covers(by, allow))
 
@@ -238,3 +242,34 @@ class PermissionOverlaps(unittest.TestCase):
         found, _ = self.overlaps(stack('global', sfile('user', USER, allow=[secret], deny=[secret])))
         self.assertEqual(found[0]['allow']['rule'], 'Bash([REDACTED] *)')
         self.assertEqual(found[0]['by']['rule'], 'Bash([REDACTED] *)')
+
+    def test_single_slash_paths_anchor_per_file(self):
+        self.assertIsNone(config_checks.rule_covers('Read(/src/**)', 'Read(/src/**)', same_file=False))
+        self.assertEqual(config_checks.rule_covers('Read(//etc/**)', 'Read(//etc/**)', same_file=False), 'exact')
+
+
+class PermissionOverlapEdges(unittest.TestCase):
+    def overlaps(self, *stacks):
+        return config_checks.permission_overlaps(list(stacks), collect.redact)
+
+    def test_odd_rule_spellings_and_lists_do_not_crash(self):
+        found, _ = self.overlaps(stack('g', sfile('user', USER, allow=['Bash', 'Bash(ls)', 7, None]),
+                                       sfile('project', PROJECT, deny=['Bash (ls)', 5, None])))
+        self.assertEqual([o['match'] for o in found], ['exact'])
+        odd = {'layer': 'user', 'path': USER, 'handlers': [], 'enabled_plugins': {},
+               'permissions': {'allow': None, 'deny': 'Bash', 'ask': [None]}}
+        self.assertEqual(self.overlaps(stack('g', odd, {**odd, 'permissions': None})), ([], 0))
+
+    def test_single_slash_rule_in_different_files_is_not_reported(self):
+        user = sfile('user', USER, allow=['Read(/src/**)'])
+        proj = sfile('project', PROJECT, deny=['Read(/src/**)'])
+        self.assertEqual(self.overlaps(stack('~/app', user, proj)), ([], 0))
+        both = sfile('user', USER, allow=['Read(/src/**)'], deny=['Read(/src/**)'])
+        self.assertEqual(len(self.overlaps(stack('g', both))[0]), 1)
+
+    def test_negation_in_the_denying_file_blocks_exact_claims(self):
+        deny = sfile('project', PROJECT, deny=['Read(*.env)', 'Read(!sample.env)'])
+        allow = sfile('user', USER, allow=['Read(*.env)'])
+        self.assertEqual(self.overlaps(stack('~/app', deny, allow)), ([], 0))
+        plain = sfile('project', PROJECT, deny=['Read(*.env)'])
+        self.assertEqual(len(self.overlaps(stack('~/app', plain, allow))[0]), 1)
