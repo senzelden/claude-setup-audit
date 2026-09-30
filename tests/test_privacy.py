@@ -328,6 +328,10 @@ CANARIES = tuple(f'{name}{tag}' for tag in LAYER_TAGS for name in SETTINGS_NAMES
     'zcskilldesc', 'zcskillwhen', 'zcskilltools', 'zcskillbody', 'zclastupdate', 'zcpluginskill',
     'zcpluginwhen', 'zcplugincmd', 'zcpluginhttp', 'zcpluginprompt', 'zcpluginhookfm', 'zcskillhooks',
     'zcshapepush', 'zcoverlapallow', 'zcoverlapby')  # rule text of rule_shape_issues and permission_overlaps
+MCP_POLICY = {'enabledMcpjsonServers': ['pgsrv'], 'disabledMcpjsonServers': ['off'],
+              'enableAllProjectMcpServers': True, 'allowedMcpServers': [{'serverName': 'pgsrv'}],
+              'deniedMcpServers': [{'serverName': 'bad'}]}
+MCP_POLICY_INVALID = {key: 'not-valid' for key in privacy.MCP_POLICY_KEYS}  # every shape becomes "invalid"
 # Never stored, in either mode: MCP arguments, header literals and URL paths, and tool-error text.
 NEVER_STORED = ('zcmcparg', 'zcmcpheader', 'zcmcpurlpath', 'zctoolerrortext')
 
@@ -395,9 +399,13 @@ class EndToEnd(PatchedHome):
         self.write(plugin_file('hooks', 'hooks.json'), {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
             {'type': 'command', 'command': 'echo zcplugincmd'},
             {'type': 'http', 'url': 'https://hooks.example.com/zcpluginhttp'},
-            {'type': 'prompt', 'prompt': 'zcpluginprompt'}]}]}})
+            {'type': 'prompt', 'prompt': 'zcpluginprompt'}]}],
+            'PostToolUse': [{'matcher': 'Edit|Write', 'hooks': [
+                {'type': 'command', 'command': 'echo samehook'},
+                {'type': 'command', 'command': 'echo weird', 'zzweirdfield': 1}]}]}})
+        self.write(plugin_file('.mcp.json'), {'mcpServers': {'plugsrv': {'command': 'plugbin'}}})
         self.write('.claude/settings.json', {**settings_with('g'), 'enabledPlugins': {'p@m': True},
-                   'enabledMcpjsonServers': ['pgsrv'], 'allowedMcpServers': [{'serverName': 'pgsrv'}],
+                   **MCP_POLICY,
                    'permissions': {'deny': ['Bash(zcdenyruleg)', 'Bash(zcoverlapby:*)'],
                                    'allow': ['Bash(sudo zcriskyruleg)', 'Bash(git:* zcshapepush)',
                                              'Bash(zcoverlapby zcoverlapallow)',
@@ -406,7 +414,12 @@ class EndToEnd(PatchedHome):
             'pgsrv': {'type': 'http', 'url': 'https://mcp.example.com/${MCP_HOST}/zcmcpurlpath',
                       'headers': {'X-Key': '${MCP_KEY}', 'X-Lit': 'zcmcpheader'},
                       'oauth': {'clientId': 'abc', 'scopes': 'read write'}},
-            'localdb': {'command': 'npx', 'args': ['-y', 'pkg@1.0.0', 'zcmcparg'], 'env': {'DB': '${DB_URL}'}}}})
+            'ssesrv': {'type': 'sse', 'url': 'https://sse.example.com/x'},
+            'localdb': {'command': 'npx', 'args': ['-y', 'pkg@1.0.0', 'zcmcparg'],
+                        'env': {'DB': '${DB_URL}', 'MODE': 'literal'}}}})
+        self.write('.claude.json', {'mcpServers': {'pgsrv': {'command': 'pgbin'}}, 'projects': {app: {
+            'enabledMcpjsonServers': ['pgsrv'], 'disabledMcpjsonServers': ['y'], 'enabledMcpServers': ['z'],
+            'disabledMcpServers': ['x'], 'hasTrustDialogAccepted': True}}})
         calls = [{'type': 'assistant', 'sessionId': 't1', 'timestamp': stamp, 'message': {'content': [
             {'type': 'tool_use', 'id': f'u{i}', 'name': name, 'input': {}}]}}
             for i, name in enumerate(('Bash', 'mcp__pgsrv__query'))]
@@ -414,8 +427,8 @@ class EndToEnd(PatchedHome):
             {'type': 'tool_result', 'tool_use_id': f'u{i}', 'is_error': True, 'content': 'Exit code 1 zctoolerrortext'}]}}
             for i in range(2)]
         self.write('.claude/projects/-code-app/t1.jsonl', '\n'.join(map(json.dumps, calls)))
-        self.write('managed/managed-settings.json', settings_with('m'))
-        self.write('code/app/.claude/settings.json', settings_with('p'))
+        self.write('managed/managed-settings.json', {**settings_with('m'), **MCP_POLICY_INVALID})
+        self.write('code/app/.claude/settings.json', {**settings_with('p'), **MCP_POLICY})
         self.write('code/app/.claude/settings.local.json', settings_with('l'))
 
     def snapshots(self):
@@ -459,6 +472,19 @@ class EndToEnd(PatchedHome):
     def kept(snap):
         return sorted((pattern_of(p), v) for p, v in leaves(snap) if isinstance(v, str)
                       and any(privacy.path_matches(p, k) for k in privacy.KEPT_STRING_FIELDS))
+
+    def test_every_kept_pattern_added_by_the_sweep_is_reached(self):
+        _, meta = self.snapshots()
+        paths = [p for p, v in leaves(meta) if isinstance(v, str) and not privacy.MARKER_RE.match(v)]
+        per_settings = privacy.MCP_POLICY_KEEP + tuple(('hook_handlers', '*', k, '*')
+                                                       for k in ('issues', 'unknown_fields'))
+        # A settings-summary pattern counts as reached when any of the four summary locations has a leaf.
+        added = ([(pat,) for pat in privacy.SWEEP_KEEP]
+                 + [tuple(pre + s for pre in privacy.SETTINGS_PREFIXES) for s in per_settings]
+                 + [(('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', k, '*'),)
+                    for k in ('issues', 'unknown_fields')])
+        self.assertEqual([alts for alts in added
+                          if not any(privacy.path_matches(p, pat) for pat in alts for p in paths)], [])
 
     def test_every_string_leaf_is_classified(self):
         _, meta = self.snapshots()
@@ -607,7 +633,8 @@ class Docs(unittest.TestCase):
         for bucket, ids in ((partial, ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
                                        'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
                                        'HYG-missing-hook-script', 'SEC-wildcard-placement',
-                                       'SEC-ineffective-deny', 'HYG-shadowed-allow', 'SEC-secret-literal')),
+                                       'SEC-ineffective-deny', 'HYG-shadowed-allow', 'SEC-secret-literal',
+                                       'SEC-secret-env')),
                             (not_checked, ('SEC-docs-only-constraint', 'LRN-contradiction', 'LRN-enforce'))):
             for check in ids:
                 self.assertIn(check, bucket)

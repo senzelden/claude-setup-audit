@@ -6,13 +6,14 @@ and don't report a check that passed unless it has been resolved since the last 
 the collector snapshot.
 
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
-caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text), SEC-sandbox (keys and
+caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed on
+`permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys and
 booleans only), SEC-hooks (type, matcher, origin, header keys; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
-HYG-shadowed-allow (rule text masked; flags, layers, paths and match kinds remain), and
-SEC-secret-literal (flag and count only). **Not checked:**
+HYG-shadowed-allow (rule text masked; flags, layers, paths and match kinds remain).
+**Not checked:**
 SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity pilot. **Unaffected:**
 readiness, cost metrics and harness overhead.
 

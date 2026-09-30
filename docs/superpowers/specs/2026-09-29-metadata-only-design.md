@@ -158,7 +158,7 @@ is masked and every other class is kept.
 | `transcripts.tool_errors` | `categories_basis`, `scope_note` (added 2026-09-30) | const | keep |
 | settings summary | `permissions.rule_shape_issues.{list}.{flag}[]` (added 2026-09-30) | free (redacted rule text); list and flag keys are enum | mask values, keep keys |
 | settings summary | `hook_handlers[].issues[]`, `.unknown_fields[]` (added 2026-09-30) | enum, id (user-authored field names) | keep |
-| settings summary | `mcp_policy.*` (server names, `"invalid"`) (added 2026-09-30) | id, enum | keep |
+| settings summary | `mcp_policy.{enabled,disabled}McpjsonServers[]`, `.{allowed,denied}McpServers.server_names[]`, and the string `"invalid"` in place of any list, flag or dict (added 2026-09-30) | id, enum | keep (each shape listed in `MCP_POLICY_KEEP`) |
 | `config_conflicts` | `permission_overlaps[].allow.rule`, `.by.rule` (added 2026-09-30) | free (rule text) | mask |
 | `config_conflicts` | `permission_overlaps[].stack`, `.match`, `.allow.{layer,path}`, `.by.{list,layer,path}` (added 2026-09-30) | id, enum, path | keep |
 | `config_conflicts` | `hook_duplicates[].stack`, `.event`, `.matcher` (R19), `.type`, `.fingerprint`, `.effect`, `.sources[].{layer,path,plugin}` (added 2026-09-30; no command text) | id, enum, path, hash | keep |

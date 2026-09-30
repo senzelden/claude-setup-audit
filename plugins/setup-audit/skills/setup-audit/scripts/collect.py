@@ -774,7 +774,8 @@ def collect_memory():
         for f in sorted(files):
             if f == "MEMORY.md":
                 continue
-            head = open(os.path.join(d, f), errors="replace").read(600)
+            with open(os.path.join(d, f), errors="replace") as fh:
+                head = fh.read(600)
             m = re.search(r"^description:\s*(.+)$", head, re.M)
             desc = redact(m.group(1).strip())[:160] if m else ""
             entries.append({"file": f, "description": desc})
