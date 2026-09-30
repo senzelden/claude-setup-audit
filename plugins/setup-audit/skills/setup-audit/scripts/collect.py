@@ -294,6 +294,66 @@ def git_status(repo, rel):
         return "unknown"
 
 
+# settings-reference.md and managed-mcp.md, fetched 2026-09-29. Shapes only: allow/deny URL and
+# command values are never copied, and no effective policy is computed.
+MCP_POLICY_LISTS = ("enabledMcpjsonServers", "disabledMcpjsonServers")
+MCP_POLICY_FLAGS = ("enableAllProjectMcpServers", "allowManagedMcpServersOnly", "disableClaudeAiConnectors")
+MCP_NAME_CAP = extensions.NAME_CAP
+
+
+def _mcp_name(value):
+    return redact(value)[:MCP_NAME_CAP]
+
+
+def _mcp_policy_list(value):
+    if not isinstance(value, list):
+        return "invalid"
+    kinds, names = Counter(), set()
+    for entry in value:
+        key = next(iter(entry)) if isinstance(entry, dict) and len(entry) == 1 else None
+        kinds[key if key in ("serverName", "serverUrl", "serverCommand") else "invalid"] += 1
+        if key == "serverName" and isinstance(entry[key], str):
+            names.add(_mcp_name(entry[key]))
+    return {"entries": len(value), "by_key": dict(sorted(kinds.items())), "server_names": sorted(names)[:50]}
+
+
+def mcp_policy(d):
+    out = {}
+    for key in MCP_POLICY_LISTS:
+        if key in d:
+            v = d[key]
+            out[key] = (sorted({_mcp_name(x) for x in v if isinstance(x, str)})[:100]
+                        if isinstance(v, list) else "invalid")
+    for key in MCP_POLICY_FLAGS:
+        if key in d:
+            out[key] = d[key] if isinstance(d[key], bool) else "invalid"
+    for key in ("allowedMcpServers", "deniedMcpServers"):
+        if key in d:
+            out[key] = _mcp_policy_list(d[key])
+    return out or None
+
+
+def mcp_permission_rules(perms):
+    """Count mcp__ rules per server segment (a glob segment counts as '*'); rule validity is 2A's."""
+    out = {}
+    if not isinstance(perms, dict):
+        return out
+    for kind in ("allow", "ask", "deny"):
+        counts = Counter()
+        rules = perms.get(kind)
+        for rule in rules if isinstance(rules, list) else []:
+            if not isinstance(rule, str):
+                continue
+            tool = rule.split("(", 1)[0].strip()
+            if tool.startswith("mcp__"):
+                segment = tool.split("__")[1]
+                if segment:
+                    counts["*" if "*" in segment else _mcp_name(segment)] += 1
+        if counts:
+            out[kind] = dict(sorted(counts.items())[:50])
+    return out
+
+
 def analyze_permissions(perms):
     allow = perms.get("allow", []) or []
     flags = defaultdict(list)
@@ -385,6 +445,8 @@ def summarize_settings(path, data=None, managed=False):
         "sandbox": d.get("sandbox"),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),
+        "mcp_policy": mcp_policy(d),
+        "mcp_permission_rules": mcp_permission_rules(perms),
         "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
                                      "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
     }
@@ -1679,6 +1741,11 @@ def build_snapshot(a):
     snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
                                                        snap['managed_settings']['sources'], settings,
                                                        redact, hook_handler_entry, git_status=git_status)
+    layers = ([("user", None, s) for s in snap["global"]["settings"]]
+              + [("project", p, s) for p, e in snap["projects"].items() for s in e.get("settings", [])]
+              + [("managed", None, s) for s in snap["managed_settings"]["settings"]])
+    extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers,
+                                snap["extensions"]["mcp_project_state"], lambda p: p.replace(HOME, "~"))
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["harness_overhead"] = harness.assemble(

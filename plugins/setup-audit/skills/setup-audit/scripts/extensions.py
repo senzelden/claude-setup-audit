@@ -11,6 +11,8 @@ import inventory
 MAX_ENTRIES = 100
 MAX_PLUGINS = 50
 NAME_CAP = 120
+PROJECT_STATE_LISTS = ('enabledMcpjsonServers', 'disabledMcpjsonServers', 'disabledMcpServers', 'enabledMcpServers')
+OBS_LIMIT = 20
 
 # mcp.md, fetched 2026-09-29: reserved built-in names ("including"; not exhaustive), remote types
 # (streamable-http is an alias of http), and the tool-name normalization for plugin servers.
@@ -173,6 +175,70 @@ def name_collisions(servers):
     return out[:MAX_ENTRIES]
 
 
+def mcp_observations(servers, layers, project_state, display):
+    """Per-source observations for each collected server; never an effective state.
+
+    layers: (user|project|managed, project display path or None, settings summary). A project layer
+    applies to servers of that project, or to servers without a project (then its source names it).
+    Past OBS_LIMIT, managed-policy observations are kept first, then the rest in collection order.
+    """
+    for s in servers:
+        if s.get('status') != 'collected':
+            continue
+        project = display(s['project']) if s.get('project') else None
+        obs = []  # (is_managed, observation)
+        for layer, where, summary in layers:
+            if layer == 'project' and project is not None and where != project:
+                continue
+            managed = layer == 'managed'
+            src = summary.get('path', '?')
+            policy = summary.get('mcp_policy') or {}
+
+            def add(kind, value, src=src, managed=managed):
+                obs.append((managed, dict(source=src, kind=kind, value=value)))
+
+            if s['scope'] == 'project':
+                for key, kind in (('enabledMcpjsonServers', 'approval_enabled'),
+                                  ('disabledMcpjsonServers', 'approval_rejected')):
+                    if isinstance(policy.get(key), list) and s['name'] in policy[key]:
+                        add(kind, True)
+                if isinstance(policy.get('enableAllProjectMcpServers'), bool):
+                    add('approval_enable_all', policy['enableAllProjectMcpServers'])
+            for key, kind in (('allowedMcpServers', 'policy_allowed_by_name'),
+                              ('deniedMcpServers', 'policy_denied_by_name')):
+                shape = policy.get(key)
+                if isinstance(shape, dict) and s['name'] in shape.get('server_names', []):
+                    add(kind, True)
+            rules = summary.get('mcp_permission_rules') or {}
+            for kind in ('allow', 'ask', 'deny'):
+                counts = rules.get(kind) or {}
+                if counts.get(s.get('tool_prefix')):
+                    add(f'permission_{kind}', counts[s['tool_prefix']])
+                if counts.get('*'):
+                    add(f'permission_{kind}_any_server', counts['*'])
+        names = {s['name']} | ({f"plugin:{s['plugin']}:{s['name']}"} if s.get('plugin') else set())
+        for state in project_state:
+            where = display(state['project'])
+            if project is not None and where != project:
+                continue
+            src = f"{display(state['source'])}#projects[{where}]"
+            if s['scope'] == 'project':
+                for key, kind in (('enabledMcpjsonServers', 'approval_enabled'),
+                                  ('disabledMcpjsonServers', 'approval_rejected')):
+                    if s['name'] in state.get(key, []):
+                        obs.append((False, dict(source=src, kind=kind, value=True)))
+                s['project_trust_accepted'] = state.get('trust_accepted')
+            for key, kind in (('disabledMcpServers', 'toggle_disabled'), ('enabledMcpServers', 'toggle_enabled')):
+                if names & set(state.get(key, [])):
+                    obs.append((False, dict(source=src, kind=kind, value=True)))
+        if s['scope'] == 'project':
+            s.setdefault('project_trust_accepted', None)
+        keep = sorted(sorted(range(len(obs)), key=lambda i: (not obs[i][0], i))[:OBS_LIMIT])
+        s['policy_observations'] = [obs[i][1] for i in keep]
+        if len(obs) > OBS_LIMIT:
+            s['policy_observations_omitted'] = len(obs) - OBS_LIMIT
+
+
 def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sources, settings, redact, hook_summary,
                        git_status=None):
     sources, servers, plugins = [], [], []
@@ -193,9 +259,18 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     servers_from(user, user_path, 'user')
     project_paths = sorted(set(roots) | {c['session_cwd'] for c in contexts})
     local = user.get('projects', {})
+    project_state = []
     for root in project_paths:
-        if isinstance(local, dict) and isinstance(local.get(root), dict):
-            servers_from(local[root], user_path, 'local', root)
+        entry = local.get(root) if isinstance(local, dict) else None
+        if isinstance(entry, dict):
+            servers_from(entry, user_path, 'local', root)
+            state = {'project': root, 'source': user_path}
+            for key in PROJECT_STATE_LISTS:
+                if isinstance(entry.get(key), list):
+                    state[key] = sorted({redact(x)[:NAME_CAP] for x in entry[key] if isinstance(x, str)})[:MAX_ENTRIES]
+            trust = entry.get('hasTrustDialogAccepted')
+            state['trust_accepted'] = trust if isinstance(trust, bool) else None
+            project_state.append(state)
         path = os.path.join(root, '.mcp.json')
         before = len(servers)
         servers_from(json_object(path, 'project', sources), path, 'project', root)
@@ -228,7 +303,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     selected = []
     for name, row in records:
         scope = row.get('scope')
-        project = row.get('projectPath')
+        project = row.get('projectPath') if isinstance(row.get('projectPath'), str) else None
         if scope in ('project', 'local') and project not in project_paths:
             continue
         if scope not in ('user', 'project', 'local', 'managed'):
@@ -241,7 +316,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
                                         eligible=len(selected), scanned=min(len(selected), MAX_PLUGINS),
                                         omitted=max(0, len(selected)-MAX_PLUGINS)))
     for name, row in selected[:MAX_PLUGINS]:
-        plugin = dict(name=redact(name), scope=row.get('scope'), project=row.get('projectPath'),
+        plugin = dict(name=redact(name), scope=row.get('scope'), project=project,
                       version=redact(str(row.get('version', 'unknown'))), active_state='unknown',
                       enablement_observations=[dict(source=s['path'], value=s['enabled_plugins'][name])
                                                for s in settings if isinstance(s.get('enabled_plugins'), dict)
@@ -292,7 +367,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
     sources.extend(inventory.source(p.get('source', registry_path), 'plugin', p['status']) for p in plugins)
     return dict(mcp_servers=servers, plugins=plugins, sources=sources,
-                mcp_name_collisions=name_collisions(servers),
+                mcp_name_collisions=name_collisions(servers), mcp_project_state=project_state[:MAX_ENTRIES],
                 limitations=['Activation, approval, runtime overrides, remote connectors and server policy remain unknown.',
                              'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
                              'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.'])

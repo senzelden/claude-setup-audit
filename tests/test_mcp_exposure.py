@@ -1,6 +1,8 @@
 """MCP exposure metadata and policy observations with fake homes; never connects or runs servers."""
+import argparse
 import json
 import os
+from unittest import mock
 from test_collect import FakeHome, collect
 import extensions
 
@@ -174,3 +176,148 @@ class ExposureFields(FakeHome):
         s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % var, 'env': env, 'headers': env}})['a']
         self.assertEqual((len(s['env_literal_keys']), len(s['headers_literal_keys'])), (100, 100))
         self.assertEqual([len(v) for v in s['url_variable_references']], [120])
+
+
+def parsed(*argv):
+    ap = argparse.ArgumentParser()
+    collect.add_collection_args(ap)
+    a = ap.parse_args(list(argv))
+    collect.apply_collection_args(ap, a)
+    return a
+
+
+class PolicyObservations(FakeHome):
+    scan = ExposureFields.scan  # reuse the helper without re-running ExposureFields' tests
+
+    def test_settings_mcp_policy_shape(self):
+        path = self.write('.claude/settings.json', {
+            'enabledMcpjsonServers': ['b', 'a', 'a'], 'disabledMcpjsonServers': 'x',
+            'enableAllProjectMcpServers': True, 'allowManagedMcpServersOnly': 'yes',
+            'allowedMcpServers': [{'serverName': 'gh'}, {'serverUrl': 'https://u:opaque@x.example/*'},
+                                  {'serverCommand': ['npx', 'opaque']}, {'bad': 1},
+                                  {'serverName': 'a', 'serverUrl': 'b'}],
+            'deniedMcpServers': 'nope'})
+        s = collect.summarize_settings(path)
+        self.assertEqual(s['mcp_policy'], {
+            'enabledMcpjsonServers': ['a', 'b'], 'disabledMcpjsonServers': 'invalid',
+            'enableAllProjectMcpServers': True, 'allowManagedMcpServersOnly': 'invalid',
+            'allowedMcpServers': {'entries': 5, 'by_key': {'invalid': 2, 'serverCommand': 1, 'serverName': 1,
+                                                           'serverUrl': 1}, 'server_names': ['gh']},
+            'deniedMcpServers': 'invalid'})
+        self.assertNotIn('opaque', json.dumps(s))
+        other = self.write('.claude/settings.local.json', {'model': 'x'})
+        self.assertIsNone(collect.summarize_settings(other)['mcp_policy'])
+
+    def test_stored_names_are_redacted_and_capped(self):
+        secret = 'sk-sentinel0123456789'
+        path = self.write('.claude/settings.json', {
+            'enabledMcpjsonServers': [secret, 'n' * 500],
+            'allowedMcpServers': [{'serverName': secret}, {'serverName': 'm' * 500}],
+            'permissions': {'allow': [f'mcp__{secret}__x', 'mcp__' + 'p' * 500]}})
+        s = collect.summarize_settings(path)
+        self.assertNotIn(secret, json.dumps(s))
+        for name in s['mcp_policy']['enabledMcpjsonServers'] + s['mcp_policy']['allowedMcpServers']['server_names'] \
+                + list(s['mcp_permission_rules']['allow']):
+            self.assertLessEqual(len(name), extensions.NAME_CAP)
+
+    def test_permission_rules_are_counted_per_server_segment(self):
+        rules = collect.mcp_permission_rules({
+            'allow': ['mcp__github__get_*', 'mcp__github', 'mcp__*', 'Bash(ls)', 'mcp__plugin_demo_db__query',
+                      'mcp__', 7],
+            'deny': ['mcp__slack__post(channel:x)']})
+        self.assertEqual(rules, {'allow': {'*': 1, 'github': 2, 'plugin_demo_db': 1}, 'deny': {'slack': 1}})
+
+    def test_permission_rules_tolerate_malformed_shapes(self):
+        self.assertEqual(collect.mcp_permission_rules(['mcp__a']), {})
+        self.assertEqual(collect.mcp_permission_rules({'allow': 'mcp__a', 'deny': {'x': 1}, 'ask': [None, 3]}), {})
+        self.assertEqual(collect.mcp_permission_rules({'allow': ['mcp__a', None]}), {'allow': {'a': 1}})
+
+    def test_project_state_keeps_only_mcp_lists_and_trust(self):
+        root = os.path.join(self.home, 'repo')
+        self.write('.claude.json', {'projects': {
+            root: {'enabledMcpjsonServers': ['db'], 'disabledMcpjsonServers': [],
+                   'disabledMcpServers': ['plugin:demo:x'], 'enabledMcpServers': ['computer-use'],
+                   'hasTrustDialogAccepted': False, 'lastCost': 12.5, 'lastSessionFirstPrompt': 'opaque'},
+            '/elsewhere': {'hasTrustDialogAccepted': True}}})
+        state = self.scan([root])['mcp_project_state']
+        self.assertEqual(state, [{'project': root, 'source': os.path.join(self.home, '.claude.json'),
+                                  'enabledMcpjsonServers': ['db'], 'disabledMcpjsonServers': [],
+                                  'disabledMcpServers': ['plugin:demo:x'], 'enabledMcpServers': ['computer-use'],
+                                  'trust_accepted': False}])
+        self.assertNotIn('opaque', json.dumps(state))
+
+    def test_non_string_plugin_project_path_is_treated_as_missing(self):
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {
+            'a@m': [{'scope': 'user', 'projectPath': ['x'], 'installPath': '/nowhere'},
+                    {'scope': 'project', 'projectPath': 7, 'installPath': '/nowhere'}]}})
+        plugins = self.scan()['plugins']
+        self.assertEqual([(p['scope'], p['project']) for p in plugins], [('user', None)])
+        servers = [{'status': 'collected', 'scope': 'plugin', 'name': 'x', 'project': plugins[0]['project'],
+                    'tool_prefix': 'x'}]
+        extensions.mcp_observations(servers, [], [], lambda p: p)
+        self.assertEqual(servers[0]['policy_observations'], [])
+
+    def test_observations_join_layers_state_and_rules(self):
+        P = '/h/p'
+        servers = [
+            {'status': 'collected', 'scope': 'project', 'name': 'db', 'project': P, 'tool_prefix': 'db'},
+            {'status': 'collected', 'scope': 'user', 'name': 'gh', 'project': None, 'tool_prefix': 'gh'},
+            {'status': 'collected', 'scope': 'plugin', 'name': 'x', 'project': None, 'plugin': 'demo',
+             'tool_prefix': 'plugin_demo_x'},
+            {'status': 'unavailable', 'scope': 'user', 'name': 'broken', 'project': None}]
+        layers = [
+            ('user', None, {'path': '~/.claude/settings.json', 'mcp_policy': None,
+                            'mcp_permission_rules': {'allow': {'gh': 1, '*': 1}}}),
+            ('project', '~/p', {'path': '~/p/.claude/settings.local.json',
+                                'mcp_policy': {'enabledMcpjsonServers': ['db']}, 'mcp_permission_rules': {}}),
+            ('project', '~/q', {'path': '~/q/.claude/settings.json',
+                                'mcp_policy': {'enableAllProjectMcpServers': True},
+                                'mcp_permission_rules': {'deny': {'plugin_demo_x': 2}}}),
+            ('managed', None, {'path': '/etc/claude-code/managed-settings.json',
+                               'mcp_policy': {'deniedMcpServers': {'entries': 1, 'by_key': {'serverName': 1},
+                                                                   'server_names': ['gh']}},
+                               'mcp_permission_rules': {}})]
+        state = [{'project': P, 'source': '/h/.claude.json', 'disabledMcpServers': ['plugin:demo:x'],
+                  'trust_accepted': False}]
+        extensions.mcp_observations(servers, layers, state, lambda p: p.replace('/h', '~'))
+        obs = lambda i: [(o['source'], o['kind'], o['value']) for o in servers[i]['policy_observations']]  # noqa: E731
+        self.assertEqual(obs(0), [('~/.claude/settings.json', 'permission_allow_any_server', 1),
+                                  ('~/p/.claude/settings.local.json', 'approval_enabled', True)])
+        self.assertIs(servers[0]['project_trust_accepted'], False)
+        self.assertEqual(obs(1), [('~/.claude/settings.json', 'permission_allow', 1),
+                                  ('~/.claude/settings.json', 'permission_allow_any_server', 1),
+                                  ('/etc/claude-code/managed-settings.json', 'policy_denied_by_name', True)])
+        self.assertEqual(obs(2), [('~/.claude/settings.json', 'permission_allow_any_server', 1),
+                                  ('~/q/.claude/settings.json', 'permission_deny', 2),
+                                  ('~/.claude.json#projects[~/p]', 'toggle_disabled', True)])
+        self.assertNotIn('policy_observations', servers[3])
+        self.assertNotIn('project_trust_accepted', servers[1])
+
+    def test_observation_cap_keeps_managed_policy(self):
+        servers = [{'status': 'collected', 'scope': 'user', 'name': 'gh', 'project': None, 'tool_prefix': 'gh'}]
+        layers = [('project', f'~/p{i}', {'path': f'~/p{i}/.claude/settings.json', 'mcp_policy': None,
+                                          'mcp_permission_rules': {'allow': {'gh': 1}}}) for i in range(25)]
+        layers.append(('managed', None, {'path': '/etc/claude-code/managed-settings.json',
+                                         'mcp_policy': {'deniedMcpServers': {'server_names': ['gh']}},
+                                         'mcp_permission_rules': {}}))
+        extensions.mcp_observations(servers, layers, [], lambda p: p)
+        kept = servers[0]['policy_observations']
+        self.assertEqual((len(kept), servers[0]['policy_observations_omitted']), (20, 6))
+        self.assertIn('policy_denied_by_name', [o['kind'] for o in kept])
+        self.assertEqual([o['source'] for o in kept[:-1]], [f'~/p{i}/.claude/settings.json' for i in range(19)])
+
+    def test_snapshot_carries_observations(self):
+        root = os.path.join(self.home, 'repo')
+        self.write('repo/.mcp.json', {'mcpServers': {'db': {'command': 'node', 'args': ['opaque']}}})
+        self.write('repo/.claude/settings.local.json', {'enabledMcpjsonServers': ['db'],
+                                                        'permissions': {'allow': ['mcp__db__query']}})
+        self.write('.claude.json', {'projects': {root: {'hasTrustDialogAccepted': True}}})
+        with mock.patch.object(collect, 'git_status', return_value='tracked'):
+            snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'project', '--project', root))
+        db = next(s for s in snap['extensions']['mcp_servers'] if s['name'] == 'db')
+        seen = {(o['source'], o['kind'], o['value']) for o in db['policy_observations']}
+        self.assertIn(('~/repo/.claude/settings.local.json', 'approval_enabled', True), seen)
+        self.assertIn(('~/repo/.claude/settings.local.json', 'permission_allow', 1), seen)
+        self.assertIs(db['project_trust_accepted'], True)
+        self.assertEqual(db['file_git_status'], 'tracked')
+        self.assertNotIn('opaque', json.dumps(snap))
