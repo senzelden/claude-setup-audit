@@ -222,3 +222,181 @@ def load_ops(raw):
             raise OpsError('duplicate_target')
         files.add(t['file'])
     return doc['targets']
+
+
+_MISSING = object()
+
+
+def dump(doc):
+    return json.dumps(doc, indent=2, ensure_ascii=False) + '\n'
+
+
+def tilde(path):
+    return ledger.tilde(path, collect.HOME)
+
+
+def expand(path):
+    if path.startswith('~/'):
+        return os.path.normpath(os.path.join(collect.HOME, path[2:]))
+    if not os.path.isabs(path):
+        raise OpsError('relative_path')
+    return os.path.normpath(path)
+
+
+def resolve_target(file):
+    path = expand(file)
+    name, parent = os.path.basename(path), os.path.dirname(path)
+    managed = collect.managed_directory()
+    if (managed and (path == managed or path.startswith(managed + os.sep))) \
+            or name == 'managed-settings.json' or 'managed-settings.d' in path.split(os.sep):
+        raise OpsError('managed_refused')
+    claude = os.path.normpath(collect.CLAUDE)
+    if path == os.path.join(claude, 'settings.json'):
+        scope = 'user'
+    elif name == 'settings.local.json' and (parent == claude or os.path.basename(parent) == '.claude'):
+        scope = 'local'
+    elif name == 'settings.json' and os.path.basename(parent) == '.claude':
+        scope = 'project'
+    else:
+        raise OpsError('target_not_settings')
+    if os.path.islink(parent):
+        raise OpsError('symlink')
+    return path, scope
+
+
+def _get(doc, parts):
+    node = doc
+    for part in parts:
+        if not isinstance(node, dict) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
+
+
+def _holds(expect, current):
+    (k, v), = expect.items()
+    if k == 'absent':
+        return current is _MISSING
+    if current is _MISSING:
+        return False
+    return ledger.fingerprint(current) == (v if k == 'sha256' else ledger.fingerprint(v))
+
+
+def _set(doc, parts, value):
+    node = doc
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+        if not isinstance(node, dict):
+            raise OpsError('type_conflict')
+    node[parts[-1]] = value
+
+
+def _remove(doc, parts):
+    chain = [doc]
+    for part in parts[:-1]:
+        chain.append(chain[-1][part])
+    del chain[-1][parts[-1]]
+    for depth in range(len(parts) - 1, 0, -1):  # prune ancestors this removal emptied
+        if chain[depth]:
+            break
+        del chain[depth - 1][parts[depth - 1]]
+
+
+def plan_ops(doc, ops, scope):
+    new, rows, warnings = copy.deepcopy(doc), [], []
+    for o in ops:
+        parts = o['path'].split('.')
+        row = {'op': o['op'], 'path': o['path'], 'status': 'planned', 'reason': '',
+               'before': None, 'before_sha256': None, 'after': o.get('value')}
+        rows.append(row)
+        try:
+            if o['op'] == 'set':
+                warnings += [{'path': o['path'], 'warning': w} for w in validate_value(o['path'], o['value'], scope)]
+            else:
+                check_key(o['path'], None)
+            current = _get(new, parts)
+            if current is not _MISSING:
+                row.update(before=current, before_sha256=ledger.fingerprint(current))
+            if o['op'] == 'remove' and current is _MISSING:
+                raise OpsError('absent')
+            if not _holds(o['expect'], current):
+                row['current_sha256'] = row['before_sha256']
+                raise OpsError('precondition_mismatch')
+            if o['op'] == 'set':
+                if current is not _MISSING and ledger.fingerprint(current) == ledger.fingerprint(o['value']):
+                    row['status'] = 'unchanged'
+                    continue
+                _set(new, parts, copy.deepcopy(o['value']))
+            else:
+                _remove(new, parts)
+        except OpsError as exc:
+            row.update(status='rejected', reason=exc.reason)
+    return new, rows, warnings
+
+
+def _parse(raw):
+    try:
+        doc = report_state.load_json(raw.decode('utf-8'))
+    except (report_state.ReportError, UnicodeDecodeError, RecursionError):
+        raise OpsError('invalid_json') from None
+    if not isinstance(doc, dict):
+        raise OpsError('invalid_json')
+    return doc
+
+
+def _read(path):
+    """(raw bytes, identity) through one no-follow descriptor; (None, None) when missing."""
+    try:
+        pre = os.lstat(path)  # refuse before open(): opening a FIFO would block
+    except FileNotFoundError:
+        return None, None
+    except OSError:
+        raise OpsError('unreadable') from None
+    if stat.S_ISLNK(pre.st_mode):
+        raise OpsError('symlink')
+    if not stat.S_ISREG(pre.st_mode):
+        raise OpsError('unreadable')
+    try:
+        fd, st = safe_write.open_no_symlink(path)
+    except FileNotFoundError:
+        return None, None
+    except safe_write.SymlinkRefused:
+        raise OpsError('symlink') from None
+    except OSError:
+        raise OpsError('unreadable') from None
+    try:
+        if not stat.S_ISREG(st.st_mode):
+            raise OpsError('unreadable')
+        with os.fdopen(os.dup(fd), 'rb') as stream:
+            raw = stream.read(MAX_TARGET_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > MAX_TARGET_BYTES:
+        raise OpsError('too_large')
+    return raw, safe_write.identity_of(st)
+
+
+def plan_target(target):
+    p = {'file': target['file'], 'kind': None, 'exists': None, 'file_sha256': None, 'reformat': False,
+         'status': 'rejected', 'reason': '', 'warnings': [], 'backup': None, 'created': False,
+         'verified': None, 'ops': [], '_path': None, '_identity': None, '_new': None, '_text': None}
+    try:
+        path, scope = resolve_target(target['file'])
+        p.update(file=tilde(path), kind=scope, _path=path)
+        raw, identity = _read(path)
+        if raw is None and not os.path.isdir(os.path.dirname(path)):
+            raise OpsError('no_parent_directory')
+        doc = {} if raw is None else _parse(raw)
+        p.update(exists=raw is not None, _identity=identity,
+                 file_sha256='absent' if raw is None else 'sha256:' + hashlib.sha256(raw).hexdigest(),
+                 reformat=raw is not None and raw != dump(doc).encode('utf-8'))
+        new, rows, warnings = plan_ops(doc, target['ops'], scope)
+        p.update(ops=rows, warnings=([{'path': None, 'warning': 'shared_project_file'}] if scope == 'project' else [])
+                 + warnings)
+        if any(r['status'] == 'rejected' for r in rows):
+            raise OpsError('op_rejected')
+        changed = any(r['status'] == 'planned' for r in rows)
+        p.update(status='planned' if changed else 'unchanged', _new=new, _text=dump(new) if changed else None)
+    except OpsError as exc:
+        p.update(status='rejected', reason=exc.reason)
+    return p
