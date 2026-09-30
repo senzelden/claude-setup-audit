@@ -389,6 +389,7 @@ class Apply(FakeHome):
         apply_ops.apply_target(p, p['file_sha256'], self.backups)
         self.assertEqual((p['status'], p['reason']), ('blocked', 'symlink'))
         self.assertEqual(Path(sentinel).read_text(), '{"keep": true}')
+        self.assertEqual(self.listing(), [])
 
     def test_backup_failure_leaves_target_untouched(self):
         original = self.seed()
@@ -408,7 +409,7 @@ class Apply(FakeHome):
         self.assertEqual(len(self.listing()), 1)
 
     def test_verify_mismatch_is_reported(self):
-        self.seed()
+        original = self.seed()
         p = self.plan()
 
         def diverge(target, text, prefix, encoding):
@@ -416,7 +417,46 @@ class Apply(FakeHome):
         with mock.patch.object(apply_ops.safe_write, 'atomic_write', side_effect=diverge):
             apply_ops.apply_target(p, p['file_sha256'], self.backups)
         self.assertEqual((p['status'], p['reason'], p['verified']), ('verify_failed', 'verify_failed', False))
-        self.assertTrue(p['backup'])
+        self.assertEqual(Path(self.backups, os.path.basename(p['backup'])).read_bytes(), original)
+
+    def test_verify_reread_error_is_reported_and_keeps_backup(self):
+        original = self.seed()
+        p = self.plan()
+        with mock.patch.object(apply_ops, '_read', side_effect=OSError('gone')):
+            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['verified']), ('verify_failed', False))
+        self.assertEqual(Path(self.backups, os.path.basename(p['backup'])).read_bytes(), original)
+
+    def test_target_deleted_after_plan_is_blocked_without_backup(self):
+        self.seed()
+        p = self.plan()
+        os.unlink(self.path)
+        apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'changed_since_plan'))
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.listing(), [])
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'needs mkfifo')
+    def test_target_swapped_for_fifo_after_plan_does_not_hang(self):
+        self.seed()
+        p = self.plan()
+        os.unlink(self.path)
+        os.mkfifo(self.path)
+        worker = threading.Thread(target=lambda: apply_ops.apply_target(p, p['file_sha256'], self.backups),
+                                  daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive(), 'apply blocked on the FIFO')
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'changed_since_plan'))
+        self.assertEqual(self.listing(), [])
+
+    def test_failed_exclusive_create_leaves_no_file(self):
+        os.makedirs(os.path.dirname(self.path))
+        p = self.plan(op('sandbox.enabled', True))
+        with mock.patch.object(apply_ops.os, 'fsync', side_effect=OSError('disk full')):
+            apply_ops.apply_target(p, 'absent', self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'write_failed'))
+        self.assertFalse(os.path.exists(self.path))
 
     def test_missing_file_is_created_exclusively(self):
         os.makedirs(os.path.dirname(self.path))
@@ -444,8 +484,9 @@ class Apply(FakeHome):
         for file in (self.FILE, '~/q/.claude/settings.local.json', self.FILE):
             ops = ([op('sandbox.enabled', False, {'value': True})] if len(made) == 2 else [])
             p = self.plan(*ops, file=file)
-            before = Path(apply_ops.expand(file)).read_bytes()   # same target again, same second
-            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+            before = Path(apply_ops.expand(file)).read_bytes()   # third pass: same target again, same second
+            with mock.patch.object(apply_ops.safe_write.time, 'time', return_value=1_700_000_000):
+                apply_ops.apply_target(p, p['file_sha256'], self.backups)
             self.assertEqual(p['status'], 'applied')
             backup = os.path.join(self.backups, os.path.basename(p['backup']))
             self.assertEqual(Path(backup).read_bytes(), before)

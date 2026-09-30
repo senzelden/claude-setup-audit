@@ -403,6 +403,7 @@ def plan_target(target):
 
 
 def _block(p, why, status='blocked'):
+    assert why in REASONS, why
     p.update(status=status, reason=why)
 
 
@@ -415,11 +416,18 @@ def _create(path, text):
             stream.write(text.encode('utf-8'))
             stream.flush()
             os.fsync(stream.fileno())
+    except BaseException:
+        try:
+            os.unlink(path)  # created exclusively above, so it is ours to remove
+        except OSError:
+            pass
+        raise
     finally:
         os.close(fd)
 
 
 def apply_target(p, expect_file, backup_dir):
+    assert p['status'] == 'planned', p['status']
     path = p['_path']
     if expect_file != p['file_sha256']:
         return _block(p, 'changed_since_plan')
@@ -432,6 +440,14 @@ def apply_target(p, expect_file, backup_dir):
             return _block(p, 'write_failed')
         p['created'] = True
     else:
+        try:
+            pre = os.lstat(path)  # refuse before open(): opening a FIFO would block
+        except OSError:
+            return _block(p, 'changed_since_plan')
+        if stat.S_ISLNK(pre.st_mode):
+            return _block(p, 'symlink')
+        if not stat.S_ISREG(pre.st_mode):
+            return _block(p, 'changed_since_plan')
         try:
             fd, st = safe_write.open_no_symlink(path)
         except safe_write.SymlinkRefused:
@@ -455,7 +471,7 @@ def apply_target(p, expect_file, backup_dir):
     try:
         raw, _ = _read(path)
         ok = raw is not None and ledger.fingerprint(_parse(raw)) == ledger.fingerprint(p['_new'])
-    except OpsError:
+    except (OpsError, OSError):
         ok = False
     p['verified'] = ok
     if ok:
