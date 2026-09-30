@@ -3,6 +3,7 @@
   "title": "Setup Audit snapshot v1",
   "description": "Stable envelope and coverage/provenance contract. Family payloads allow additive fields; see snapshot-format.md.",
   "$defs": {
+    "config_layer": {"enum": ["managed", "user", "project", "local", "plugin"]},
     "skill_listing_point": {
       "type": "object",
       "required": ["date", "skill_count", "chars"],
@@ -417,6 +418,38 @@
             }
           }
         }
+      }
+    },
+    "config_conflicts": {
+      "type": "object",
+      "required": ["stacks", "hook_duplicates", "hook_duplicates_omitted", "permission_overlaps",
+                   "permission_overlaps_omitted"],
+      "properties": {
+        "stacks": {"type": "integer", "minimum": 1},
+        "hook_duplicates": {"type": "array", "items": {
+          "type": "object",
+          "required": ["stack", "event", "matcher", "type", "fingerprint", "effect", "sources"],
+          "properties": {
+            "stack": {"type": "string"}, "event": {"type": "string"}, "matcher": {"type": "string"},
+            "type": {"type": "string"}, "fingerprint": {"type": "string"},
+            "effect": {"enum": ["deduplicated", "separate_copies", "same_file"]},
+            "sources": {"type": "array", "items": {
+              "type": "object", "required": ["layer", "path", "plugin"],
+              "properties": {"layer": {"$ref": "#/$defs/config_layer"}, "path": {"type": "string"},
+                             "plugin": {"type": ["string", "null"]}}}}}}},
+        "hook_duplicates_omitted": {"type": "integer", "minimum": 0},
+        "permission_overlaps": {"type": "array", "items": {
+          "type": "object", "required": ["stack", "allow", "by", "match"],
+          "properties": {
+            "stack": {"type": "string"},
+            "allow": {"type": "object", "required": ["layer", "path", "rule"],
+                      "properties": {"layer": {"$ref": "#/$defs/config_layer"}, "path": {"type": "string"},
+                                     "rule": {"type": "string"}}},
+            "by": {"type": "object", "required": ["list", "layer", "path", "rule"],
+                   "properties": {"list": {"enum": ["deny", "ask"]}, "layer": {"$ref": "#/$defs/config_layer"},
+                                  "path": {"type": "string"}, "rule": {"type": "string"}}},
+            "match": {"enum": ["exact", "tool", "prefix"]}}}},
+        "permission_overlaps_omitted": {"type": "integer", "minimum": 0}
       }
     },
     "drift_signals": {

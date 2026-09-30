@@ -239,3 +239,29 @@ class SnapshotContract(FakeHome):
         with self.assertRaises(contract.SnapshotError) as caught:
             contract.validate_snapshot(snapshot)
         self.assertNotIn('PRIVATE', str(caught.exception))
+
+    def test_config_conflicts_are_optional_and_checked(self):
+        snap = self.snapshot()
+        self.assertEqual(snap["config_conflicts"]["stacks"], 1)
+        snap["config_conflicts"] = {
+            "stacks": 1, "hook_duplicates_omitted": 0, "permission_overlaps_omitted": 0,
+            "hook_duplicates": [{"stack": "global", "event": "PreToolUse", "matcher": "Bash", "type": "command",
+                                 "fingerprint": "0123456789abcdef", "effect": "deduplicated",
+                                 "sources": [{"layer": "user", "path": "~/.claude/settings.json", "plugin": None}]}],
+            "permission_overlaps": [{"stack": "global",
+                                     "allow": {"layer": "user", "path": "~/.claude/settings.json", "rule": "Bash(x)"},
+                                     "by": {"list": "deny", "layer": "managed", "path": "/etc/m.json", "rule": "Bash"},
+                                     "match": "tool"}]}
+        contract.validate_snapshot(snap)
+        contract.validate_snapshot({k: v for k, v in snap.items() if k != "config_conflicts"})
+        for mutate in (lambda c: c["hook_duplicates"][0].update(effect="bogus"),
+                       lambda c: c["hook_duplicates"][0].pop("fingerprint"),
+                       lambda c: c["hook_duplicates"][0]["sources"][0].update(layer="bogus"),
+                       lambda c: c["permission_overlaps"][0].update(match="bogus"),
+                       lambda c: c["permission_overlaps"][0]["by"].update(list="allow"),
+                       lambda c: c.update(permission_overlaps_omitted=-1),
+                       lambda c: c.update(stacks=0)):
+            altered = copy.deepcopy(snap)
+            mutate(altered["config_conflicts"])
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(altered)

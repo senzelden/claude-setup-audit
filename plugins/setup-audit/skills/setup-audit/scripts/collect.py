@@ -345,6 +345,12 @@ def hook_handler_entry(event, matcher, x):
     return entry
 
 
+# Settings display path -> raw allow/ask/deny rules of that file, filled by summarize_settings and
+# cleared by build_snapshot. Read only by config_stacks(); never serialized (summaries are).
+_RAW_PERMISSIONS = {}
+LAYER_RANK = {"user": 0, "project": 1, "local": 2, "managed": 3}  # settings precedence, lowest first
+
+
 def summarize_settings(path, data=None, managed=False):
     d = load_json(path) if data is None else data
     if d is None:
@@ -355,10 +361,11 @@ def summarize_settings(path, data=None, managed=False):
     # missing_hook_scripts needs the raw (unredacted, untruncated) command to expand path
     # placeholders and check the filesystem; only command hooks name a local path at all.
     raw_commands = [x.get("command", "") for _, _, x in handlers if x.get("type", "command") == "command"]
+    perms = d.get("permissions", {}) or {}
     # Project settings live in <project>/.claude/; user settings in ~/.claude (no project dir).
     settings_dir = os.path.dirname(os.path.abspath(path))
     project_dir = None if managed or settings_dir == CLAUDE else os.path.dirname(settings_dir)
-    return {
+    summary = {
         "path": path.replace(HOME, "~"),
         "keys": sorted(d.keys()),
         "model": d.get("model"),
@@ -374,10 +381,14 @@ def summarize_settings(path, data=None, managed=False):
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
         "sandbox": d.get("sandbox"),
         "auto_mode_configured": bool(d.get("autoMode")),
-        "permissions": analyze_permissions(d.get("permissions", {}) or {}),
+        "permissions": analyze_permissions(perms),
         "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
                                      "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
     }
+    # Raw rules for config_stacks(); never part of a summary, which is serialized.
+    _RAW_PERMISSIONS[summary["path"]] = {k: [r for r in (perms.get(k) if isinstance(perms.get(k), list) else [])
+                                            if isinstance(r, str)] for k in ("allow", "ask", "deny")}
+    return summary
 
 
 
@@ -471,6 +482,11 @@ def snapshot_coverage(snap, roots):
         sources.append(source_coverage("harness_overhead", scope,
                                       "collected" if harness_section["complete"] else "partial",
                                       **({"reason": ",".join(reasons)} if reasons else {})))
+    conflicts = snap.get("config_conflicts")
+    if conflicts:
+        omitted = conflicts["hook_duplicates_omitted"] + conflicts["permission_overlaps_omitted"]
+        sources.append(source_coverage("config_conflicts", scope, "partial" if omitted else "collected",
+                                      basis="static", omitted=omitted))
     sources.extend(snap.get("instructions", {}).get("sources", []))
     sources.extend(snap.get("extensions", {}).get("sources", []))
     pilot = snap.get("instruction_clarity")
@@ -540,6 +556,59 @@ def plugin_session_start_hooks(index):
         injected = sum(os.path.getsize(p) for p in glob.glob(os.path.join(root, "skills", "using-*", "SKILL.md")))
         out.append(dict(item, est_injected_tokens=injected // 4 or None, basis='file_size_estimate'))
     return sorted(out, key=lambda x: x['plugin'])
+
+
+def _stack_file(summary, layer):
+    enabled = summary.get("enabled_plugins")
+    return {"layer": layer, "path": summary["path"],
+            "permissions": _RAW_PERMISSIONS.get(summary["path"], {"allow": [], "ask": [], "deny": []}),
+            "handlers": summary.get("hook_handlers") or [],
+            "enabled_plugins": enabled if isinstance(enabled, dict) else {}}
+
+
+def _file_layer(summary, shared):
+    return "local" if summary["path"].endswith("settings.local.json") else shared
+
+
+def _stack_plugins(plugins, files, root):
+    """Enabled plugins' hook handlers for one stack; enablement from the highest-precedence file."""
+    out, seen = [], set()
+    for p in plugins:
+        name = p.get("name")
+        if name in seen or p.get("status") != "collected":
+            continue
+        if p.get("scope") in ("project", "local"):
+            project = p.get("project")
+            if root is None or not isinstance(project, str) or project.replace(HOME, "~") != root:
+                continue
+        values = sorted(((LAYER_RANK[f["layer"]], f["enabled_plugins"][name]) for f in files
+                         if name in f["enabled_plugins"]), key=lambda v: v[0])
+        if not values or values[-1][1] is not True:
+            continue
+        seen.add(name)
+        for c in p.get("components", []):
+            if c.get("kind") == "hooks" and c.get("handlers"):
+                out.append({"plugin": name, "path": c["source"].replace(HOME, "~"), "handlers": c["handlers"]})
+    return out
+
+
+def config_stacks(snap):
+    """Settings files that apply together: global (managed, user, home-local) and one per project.
+
+    permissions.md: ~/.claude/settings.local.json is read only in sessions started in the home
+    directory, so project stacks leave it out.
+    """
+    managed = [_stack_file(s, "managed") for s in snap["managed_settings"]["settings"]]
+    user = [_stack_file(s, _file_layer(s, "user")) for s in snap["global"]["settings"]]
+    plugins = snap["extensions"]["plugins"]
+    stacks = [{"name": "global", "settings": managed + user,
+               "plugins": _stack_plugins(plugins, managed + user, None)}]
+    for name in sorted(snap["projects"]):
+        own = [_stack_file(s, _file_layer(s, "project")) for s in snap["projects"][name].get("settings", [])]
+        if own:
+            files = managed + [f for f in user if f["layer"] == "user"] + own
+            stacks.append({"name": name, "settings": files, "plugins": _stack_plugins(plugins, files, name)})
+    return stacks
 
 
 def discover_projects(with_context=False):
@@ -1555,6 +1624,7 @@ def apply_collection_args(ap, a):
 
 def build_snapshot(a):
     """Collect, sanitize and validate a snapshot for parsed arguments; return the JSON-native dict."""
+    _RAW_PERMISSIONS.clear()
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
     contexts = []
     if a.scope == "global":
@@ -1606,6 +1676,7 @@ def build_snapshot(a):
     snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
                                                        snap['managed_settings']['sources'], settings,
                                                        redact, hook_handler_entry)
+    snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["harness_overhead"] = harness.assemble(
         harness_raw, hook_index, hook_index_reasons, snap["extensions"],

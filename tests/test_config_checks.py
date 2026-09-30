@@ -2,7 +2,11 @@
 
 Fake homes only; never the real ~/.claude.
 """
+import argparse
+import json
+import os
 import unittest
+from unittest import mock
 from test_collect import FakeHome, collect
 import config_checks
 
@@ -348,3 +352,65 @@ class HookDuplicates(unittest.TestCase):
         section = config_checks.conflicts([stack('global', sfile('user', USER))], collect.redact)
         self.assertEqual(section, {'stacks': 1, 'hook_duplicates': [], 'hook_duplicates_omitted': 0,
                                    'permission_overlaps': [], 'permission_overlaps_omitted': 0})
+
+
+class ConfigConflictsEndToEnd(FakeHome):
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(collect._RAW_PERMISSIONS.clear)
+
+    def build(self, *argv):
+        ap = argparse.ArgumentParser()
+        collect.add_collection_args(ap)
+        a = ap.parse_args(['--claude-dir', self.claude, *argv])
+        collect.apply_collection_args(ap, a)
+        with mock.patch.object(collect, 'managed_directory', return_value=os.path.join(self.home, 'managed')):
+            return collect.build_snapshot(a)
+
+    def fixture(self):
+        hooks = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'lint.sh CANARY-7f3a'}]}]}
+        self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(git push *)']}, 'hooks': hooks,
+                                             'enabledPlugins': {'demo@market': True}})
+        self.write('.claude/settings.local.json', {'permissions': {'deny': ['Bash(git push *)']}})
+        self.write('repo/.claude/settings.json', {'permissions': {'allow': ['Bash(git log *)'], 'ask': ['Bash(git *)']},
+                                                  'hooks': hooks})
+        self.write('repo/.claude/settings.local.json', {'enabledPlugins': {'demo@market': False}})
+        root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
+        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {
+            'demo@market': [{'scope': 'user', 'installPath': root, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/market/demo/1/hooks/hooks.json', {'hooks': hooks})
+        return os.path.join(self.home, 'repo')
+
+    def test_layers_precedence_and_report_once(self):
+        root = self.fixture()
+        snap = self.build('--scope', 'project', '--project', root)
+        cc = snap['config_conflicts']
+        self.assertEqual(cc['stacks'], 2)
+        # global: the user hook and the enabled plugin's copy both run; ~/repo: project-local false
+        # disables the plugin, so the user and project copies are one deduplicated handler.
+        self.assertEqual([(d['stack'], d['effect']) for d in cc['hook_duplicates']],
+                         [('global', 'separate_copies'), ('~/repo', 'deduplicated')])
+        # home-local deny applies only to home-directory sessions; in ~/repo the project ask shadows.
+        self.assertEqual([(o['stack'], o['allow']['rule'], o['by']['list'], o['by']['layer'], o['match'])
+                          for o in cc['permission_overlaps']],
+                         [('global', 'Bash(git push *)', 'deny', 'local', 'exact'),
+                          ('~/repo', 'Bash(git push *)', 'ask', 'project', 'prefix'),
+                          ('~/repo', 'Bash(git log *)', 'ask', 'project', 'prefix')])
+        self.assertNotIn('CANARY-7f3a', json.dumps(cc))
+        self.assertIn('config_conflicts', [s['source'] for s in snap['coverage']['sources']])
+        for rel in ('.claude/settings.json', '.claude/settings.local.json', 'repo/.claude/settings.json'):
+            os.remove(os.path.join(self.home, rel))
+        again = self.build('--scope', 'project', '--project', root)['config_conflicts']
+        self.assertEqual((again['permission_overlaps'], again['hook_duplicates']), ([], []))
+
+    def test_raw_rules_from_an_earlier_build_are_dropped(self):
+        stale = '~/stale/.claude/settings.json'
+        collect._RAW_PERMISSIONS[stale] = {'allow': ['Bash(x)'], 'ask': [], 'deny': []}
+        self.fixture()
+        self.build('--scope', 'global')
+        self.assertNotIn(stale, collect._RAW_PERMISSIONS)
+        self.assertIn('~/.claude/settings.json', collect._RAW_PERMISSIONS)
+
+    def test_global_scope_has_one_stack(self):
+        self.fixture()
+        self.assertEqual(self.build('--scope', 'global')['config_conflicts']['stacks'], 1)
