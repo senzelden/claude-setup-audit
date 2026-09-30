@@ -906,6 +906,129 @@ def harness_listing(raw, record, timestamp, path):
     return True
 
 
+# Heuristic categories over the first 300 characters of an is_error tool_result, after a leading
+# <tool_use_error> tag. Shapes observed in local transcripts on 2026-09-29; Claude Code documents no
+# tool-error taxonomy. First match wins. Only the category name is kept, never the text.
+TOOL_ERROR_CATEGORIES = [
+    ("user_rejected", re.compile(r"doesn.t want to (proceed|take this action)|user rejected", re.I)),
+    ("permission_denied", re.compile(r"^Permission (for this action|to use)\b")),
+    ("sandbox", re.compile(r"\b(bwrap|apply-seccomp|sandbox-exec|seatbelt)\b", re.I)),
+    ("timeout", re.compile(r"timed out|\btimeout\b", re.I)),
+    ("nonzero_exit", re.compile(r"^Exit code \d+")),
+    ("validation", re.compile(r"InputValidationError|does not match (the )?required|invalid (input|arguments?|params)", re.I)),
+    ("file_state", re.compile(r"has not been read yet|has been modified since|String to replace not found", re.I)),
+    ("not_found", re.compile(r"does not exist|No such file|ENOENT|\bnot found\b", re.I)),
+    ("too_large", re.compile(r"exceeds (the )?maximum|too large|too long", re.I)),
+    ("auth", re.compile(r"\b(401|403)\b|unauthori[sz]ed|forbidden|authenticat", re.I)),
+    ("connection", re.compile(r"ECONNREFUSED|ECONNRESET|ENOTFOUND|not connected|"
+                              r"connection (closed|refused|reset|error)|fetch failed", re.I)),
+]
+DENIAL_CATEGORIES = {"user_rejected", "permission_denied"}
+TOOL_ERROR_LIMIT = 15
+MIN_CALLS_FOR_RATE = 5
+BUILTIN_TOOL_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+
+
+def tool_error_category(content):
+    if isinstance(content, list):
+        content = " ".join(b["text"] for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
+    text = re.sub(r"^\s*<tool_use_error>\s*", "", content[:300] if isinstance(content, str) else "")
+    return next((name for name, rx in TOOL_ERROR_CATEGORIES if rx.search(text)), "other")
+
+
+def _tool_key(name):
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) >= 3 and parts[1]:
+            return ("mcp", _mcp_name(parts[1]), redact("__".join(parts[2:]))[:64])
+        return ("builtin", "other")
+    return ("builtin", name if BUILTIN_TOOL_RE.fullmatch(name) else "other")
+
+
+def _tool_error_stats():
+    return {"calls": Counter(), "errors": Counter(), "denied": Counter(), "categories": defaultdict(Counter),
+            "seen_calls": set(), "seen_results": set(), "unmatched": 0, "no_flag": 0}
+
+
+def tool_error_record(record, path, names, stats):
+    """Count tool calls and is_error results of one in-window record (main or subagent file)."""
+    if record.get("type") not in ("assistant", "user"):
+        return
+    msg = record.get("message")
+    items = msg.get("content", record.get("content")) if isinstance(msg, dict) else record.get("content")
+    if not isinstance(items, list):
+        return
+    session = record.get("sessionId")
+    scope = (os.path.dirname(path), session if isinstance(session, str) and session else path)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "tool_use" and isinstance(item.get("name"), str):
+            key, tool_id = _tool_key(item["name"]), item.get("id")
+            if isinstance(tool_id, str) and tool_id:
+                names[tool_id] = key
+                if (scope, tool_id) in stats["seen_calls"]:
+                    continue
+                stats["seen_calls"].add((scope, tool_id))
+            stats["calls"][key] += 1
+        elif item.get("type") == "tool_result":
+            if "is_error" not in item:
+                stats["no_flag"] += 1
+                continue
+            if item["is_error"] is not True:
+                continue
+            tool_id = item.get("tool_use_id")
+            key = names.get(tool_id) if isinstance(tool_id, str) else None
+            if key is None:
+                stats["unmatched"] += 1
+                continue
+            if (scope, tool_id) in stats["seen_results"]:
+                continue
+            stats["seen_results"].add((scope, tool_id))
+            category = tool_error_category(item.get("content"))
+            stats["errors"][key] += 1
+            stats["categories"][key][category] += 1
+            stats["denied"][key] += category in DENIAL_CATEGORIES
+
+
+def tool_error_summary(stats):
+    def row(keys, **extra):
+        calls = sum(stats["calls"][k] for k in keys)
+        errors = sum(stats["errors"][k] for k in keys)
+        denied = sum(stats["denied"][k] for k in keys)
+        categories = Counter()
+        for k in keys:
+            categories.update(stats["categories"].get(k, {}))
+        rate = round((errors - denied) / calls, 3) if calls >= MIN_CALLS_FOR_RATE else None
+        return dict(extra, calls=calls, errors=errors, denied=denied, failure_rate=rate,
+                    categories=dict(sorted(categories.items())))
+    order = lambda r: (-r["errors"], -r["calls"], r.get("tool") or r.get("server"))  # noqa: E731
+    tools = sorted((row([k], tool=k[1]) for k in stats["errors"] if k[0] == "builtin"), key=order)
+    by_server = defaultdict(list)
+    for k in stats["calls"]:
+        if k[0] == "mcp":
+            by_server[k[1]].append(k)
+    servers = []
+    for server, keys in by_server.items():
+        failing = sorted(((k[2], stats["errors"][k]) for k in keys if stats["errors"][k]), key=lambda kv: (-kv[1], kv[0]))
+        servers.append(row(keys, server=server, top_error_tools=[list(kv) for kv in failing[:3]]))
+    servers.sort(key=order)
+    return {
+        "error_results_paired": sum(stats["errors"].values()),
+        "error_results_unmatched": stats["unmatched"],
+        "results_without_is_error": stats["no_flag"],
+        "by_tool": tools[:TOOL_ERROR_LIMIT],
+        "by_mcp_server": servers[:TOOL_ERROR_LIMIT],
+        "omitted": {"tools": max(0, len(tools) - TOOL_ERROR_LIMIT),
+                    "mcp_servers": max(0, len(servers) - TOOL_ERROR_LIMIT)},
+        "min_calls_for_rate": MIN_CALLS_FOR_RATE,
+        "categories_basis": "Heuristic text patterns observed 2026-09-29; error text is not stored.",
+        "scope_note": ("Main and subagent transcripts in the window; is_error true only; paired by tool id within a "
+                       "file; deduplicated by project directory, sessionId (file fallback) and tool id. "
+                       "failure_rate excludes permission_denied and user_rejected; null under min_calls_for_rate."),
+    }
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -936,6 +1059,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         selected.append(files[:cap])
     top, sub = selected
     seen_mcp = set()
+    tool_stats = _tool_error_stats()
     mcp_without_id = 0
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
@@ -946,6 +1070,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     for path in top + sub:
         need_baseline = is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
+        names = {}  # tool_use id -> tool key, for pairing errors
         pending = {}  # Bash tool_use id -> start time, for test commands
         if is_top:
             session_key = (proj_key, os.path.splitext(os.path.basename(path))[0])
@@ -981,6 +1106,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                         in_window = True
                         raw["sessions"] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
+                    tool_error_record(record, path, names, tool_stats)
                     if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
                         entry_seen = True
                         ep = record.get("entrypoint")
@@ -1102,6 +1228,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "context_baseline_by_project_median": sorted(
             ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
         "mcp_calls_by_server": mcp_calls.most_common(),
+        "tool_errors": tool_error_summary(tool_stats),
         "cache": {
             "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
             "read_tokens": cache["read"],
