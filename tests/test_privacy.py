@@ -314,11 +314,12 @@ def settings_with(tag, hooks=True):
     return body
 
 
-SETTINGS_TAGS = ('', 'managed', 'project', 'local')  # global, managed, project, session-local candidate
-CANARIES = tuple(f'{name}{tag}' for tag in SETTINGS_TAGS
-                 for name in ('zcmodelsetting', 'zcstatusline', 'zcsandboxvalue', 'zcriskyrule', 'zcdenyrule',
-                              'zchookcmd', 'zcmissingscript', 'zchttppath', 'zcprompthook')) + (
-    'zcfirstprompt', 'zcfrictionmost', 'zcfriction', 'zccorrection', 'zcmemorydesc', 'zcclaudemd', 'zcrulebody',
+# Layer tags: global, managed, project, session-local candidate. No canary is a substring of another.
+LAYER_TAGS = {'g': 'global', 'm': 'managed_settings', 'p': 'projects', 'l': 'instructions'}
+SETTINGS_NAMES = ('zcmodelsetting', 'zcstatusline', 'zcsandboxvalue', 'zcriskyrule', 'zcdenyrule',
+                  'zchookcmd', 'zcmissingscript', 'zchttppath', 'zcprompthook')
+CANARIES = tuple(f'{name}{tag}' for tag in LAYER_TAGS for name in SETTINGS_NAMES) + (
+    'zcfirstprompt', 'zcfrictionmost', 'zcfrictionone', 'zccorrection', 'zcmemorydesc', 'zcclaudemd', 'zcrulebody',
     'zcskilldesc', 'zcskillwhen', 'zcskilltools', 'zcskillbody', 'zclastupdate', 'zcpluginskill',
     'zcpluginwhen', 'zcplugincmd', 'zcpluginhttp', 'zcpluginprompt', 'zcpluginhookfm', 'zcskillhooks')
 
@@ -360,7 +361,7 @@ class EndToEnd(PatchedHome):
         self.write('.claude/skills/s/SKILL.md', '---\nname: s\ndescription: zcskilldesc\nwhen_to_use: zcskillwhen\n'
                    'allowed-tools: Bash(zcskilltools)\nhooks: zcskillhooks\n---\nBody zcskillbody\n')
         self.write('.claude/.last-update-result.json', {'status': 'failed', 'error': 'zclastupdate'})
-        for i, (sid, prompt, detail) in enumerate((('s1', 'zcfirstprompt', 'zcfriction'),
+        for i, (sid, prompt, detail) in enumerate((('s1', 'zcfirstprompt', 'zcfrictionone'),
                                                    ('s2', 'other', 'zcfrictionmost'))):
             self.write(f'.claude/usage-data/session-meta/{sid}.json', {
                 'session_id': sid, 'start_time': stamp, 'project_path': app, 'first_prompt': f'please {prompt}',
@@ -387,13 +388,13 @@ class EndToEnd(PatchedHome):
             {'type': 'command', 'command': 'echo zcplugincmd'},
             {'type': 'http', 'url': 'https://hooks.example.com/zcpluginhttp'},
             {'type': 'prompt', 'prompt': 'zcpluginprompt'}]}]}})
-        self.write('.claude/settings.json', {**settings_with(''), 'enabledPlugins': {'p@m': True},
-                   'permissions': {**settings_with('')['permissions'],
-                                   'allow': ['Bash(sudo zcriskyrule)',
+        self.write('.claude/settings.json', {**settings_with('g'), 'enabledPlugins': {'p@m': True},
+                   'permissions': {**settings_with('g')['permissions'],
+                                   'allow': ['Bash(sudo zcriskyruleg)',
                                              f'Bash(export AWS_SECRET_ACCESS_KEY={AWS} && aws s3 ls)']}})
-        self.write('managed/managed-settings.json', settings_with('managed'))
-        self.write('code/app/.claude/settings.json', settings_with('project'))
-        self.write('code/app/.claude/settings.local.json', settings_with('local'))
+        self.write('managed/managed-settings.json', settings_with('m'))
+        self.write('code/app/.claude/settings.json', settings_with('p'))
+        self.write('code/app/.claude/settings.local.json', settings_with('l'))
 
     def snapshots(self):
         self.plant()
@@ -401,13 +402,20 @@ class EndToEnd(PatchedHome):
         return (collect.build_snapshot(args(roots=[app])),
                 collect.build_snapshot(args(roots=[app], metadata_only=True)))
 
+    def test_canaries_are_unique_and_not_substrings_of_each_other(self):
+        self.assertEqual(len(set(CANARIES)), len(CANARIES))
+        self.assertEqual([(a, b) for a in CANARIES for b in CANARIES if a != b and a in b], [])
+
     def test_full_mode_carries_every_canary(self):  # proves the fixture reaches every masked location
         full, _ = self.snapshots()
         text = json.dumps(full)
         self.assertEqual([c for c in CANARIES if c not in text], [])
-        for section in (full['global']['settings'], full['managed_settings']['settings'],
-                        next(iter(full['projects'].values()))['settings'], full['instructions']['settings_candidates']):
-            self.assertTrue(section)
+        sections = {'g': full['global']['settings'], 'm': full['managed_settings']['settings'],
+                    'p': next(iter(full['projects'].values()))['settings'],
+                    'l': full['instructions']['settings_candidates']}
+        for tag, section in sections.items():  # each layer's canaries sit in that layer's own section
+            body = json.dumps(section)
+            self.assertEqual([c for c in (n + tag for n in SETTINGS_NAMES) if c not in body], [], LAYER_TAGS[tag])
 
     def test_metadata_mode_carries_no_canary_and_no_secret(self):
         full, meta = self.snapshots()
@@ -444,13 +452,20 @@ class EndToEnd(PatchedHome):
 
     def test_every_handler_type_target_is_masked(self):
         full, meta = self.snapshots()
-        types = lambda snap: {h['type']: h['target'] for h in snap['global']['settings'][0]['hook_handlers']}  # noqa: E731
+
+        def types(snap):
+            return {h['type']: h['target'] for h in snap['global']['settings'][0]['hook_handlers']}
+
         self.assertEqual(set(types(full)), {'command', 'http', 'prompt', 'mcp_tool'})
         self.assertEqual({t: privacy.MARKER_RE.match(v) is not None for t, v in types(meta).items()},
                          {t: True for t in types(full)})
 
 
 class PathMatching(unittest.TestCase):
+    def test_double_star_must_be_last(self):
+        with self.assertRaises(ValueError):
+            privacy.path_matches(('a', 'b'), ('**', 'b'))
+
     def test_star_matches_one_key_or_index(self):
         self.assertTrue(privacy.path_matches(('a', 3, 'b'), ('a', '*', 'b')))
         self.assertFalse(privacy.path_matches(('a', 'b'), ('a', '*', 'b')))

@@ -204,6 +204,8 @@ def mask_snapshot(snap):
 
 def path_matches(path, pattern):
     """'*' matches one key or index; '**' (last element only) matches any remainder."""
+    if '**' in pattern[:-1]:
+        raise ValueError("'**' is only valid as the last pattern element")
     for i, pat in enumerate(pattern):
         if pat == '**':
             return True
