@@ -19,6 +19,13 @@ REMOTE_TYPES = frozenset({'http', 'streamable-http', 'sse', 'ws'})
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z_0-9]*)(?::-[^}]*)?\}')
 
 
+def split_url(url):
+    """urlsplit with the WHATWG rule that '\\' equals '/' in special schemes (http, https, ws, wss)."""
+    if url.split(':', 1)[0].lower() in ('http', 'https', 'ws', 'wss'):
+        url = url.replace('\\', '/')
+    return urlsplit(url)
+
+
 def tool_prefix(name, plugin=None):
     """Server segment of mcp__<segment>__<tool>: chars outside [A-Za-z0-9_-] become '_'."""
     norm = lambda s: re.sub(r'[^A-Za-z0-9_-]', '_', s)  # noqa: E731
@@ -30,12 +37,12 @@ def endpoint_locality(url):
     if '${' in url:
         return 'dynamic'
     try:
-        host = urlsplit(url).hostname
+        host = split_url(url).hostname
     except ValueError:
         return 'invalid'
     if not host:
         return 'invalid'
-    if host == 'localhost' or host.endswith('.localhost'):
+    if host == 'localhost':
         return 'loopback'
     try:
         ip = ipaddress.ip_address(host)
@@ -85,7 +92,7 @@ def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
     url = config.get('url')
     if isinstance(url, str):
         try:
-            parts = urlsplit(url)
+            parts = split_url(url)
             item['endpoint_origin'] = (f'{parts.scheme}://{parts.hostname}' if parts.scheme in ('http', 'https', 'ws', 'wss')
                                        and parts.hostname else 'dynamic_or_unknown')
         except ValueError:
@@ -125,25 +132,25 @@ def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
     if isinstance(url, str) and url:
         item['endpoint_locality'] = endpoint_locality(url)
         try:
-            parts = urlsplit(url)
+            parts = split_url(url)
             scheme, userinfo, query = parts.scheme, '@' in parts.netloc, bool(parts.query)
         except ValueError:
             scheme, userinfo, query = '', False, False
         item['url_has_userinfo'], item['url_has_query'] = userinfo, query
         item['plaintext_transport'] = scheme in ('http', 'ws') and item['endpoint_locality'] != 'loopback'
-        item['url_variable_references'] = sorted({m.group(1) for m in VAR_RE.finditer(url)})
+        item['url_variable_references'] = sorted({redact(m.group(1))[:NAME_CAP] for m in VAR_RE.finditer(url)})[:MAX_ENTRIES]
     for key in ('env', 'headers'):
         values = config.get(key)
         if isinstance(values, dict):
             item[key + '_literal_keys'] = sorted(k for k, v in values.items()
-                                                 if isinstance(v, str) and v and not VAR_RE.search(v))
+                                                 if isinstance(v, str) and v and not VAR_RE.search(v))[:MAX_ENTRIES]
     oauth = config.get('oauth')
     if isinstance(oauth, dict):
         item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth if isinstance(k, str))[:MAX_ENTRIES]
         scopes = oauth.get('scopes')
         item['oauth_scopes'] = (sorted({redact(t[:64]) for t in scopes.split()})[:20]
                                 if isinstance(scopes, str) else None)
-    item['tool_prefix'] = redact(tool_prefix(name, plugin))[:NAME_CAP]
+    item['tool_prefix'] = tool_prefix(redact(name), redact(plugin) if plugin else None)[:NAME_CAP]
     if plugin:
         item['plugin'] = redact(plugin)[:NAME_CAP]
     return item

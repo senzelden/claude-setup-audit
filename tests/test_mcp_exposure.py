@@ -1,8 +1,6 @@
 """MCP exposure metadata and policy observations with fake homes; never connects or runs servers."""
-import argparse
 import json
 import os
-from unittest import mock
 from test_collect import FakeHome, collect
 import extensions
 
@@ -145,3 +143,34 @@ class ExposureFields(FakeHome):
         self.assertNotIn(secret, json.dumps([server['tool_prefix'], server['oauth_scopes']]))
         self.assertTrue(all(len(x) <= 64 for x in server['oauth_scopes']))
 
+
+    def test_tool_prefix_does_not_launder_secrets(self):
+        canary = 'CANARY0123456789abcdef'
+        names = ['Bearer ' + canary, 'api_key=' + canary, 'token: ' + canary]
+        s = self.servers({n: {'command': 'node'} for n in names})
+        self.assertNotIn(canary, json.dumps(s))
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {'p@m': [
+            {'scope': 'user', 'installPath': os.path.join(self.claude, 'plugins/cache/m/p/1')}]}})
+        self.write('.claude/plugins/cache/m/p/1/.claude-plugin/plugin.json',
+                   {'name': 'api_key=' + canary, 'mcpServers': {n: {'command': 'node'} for n in names}})
+        self.assertNotIn(canary, json.dumps(self.scan()['mcp_servers']))
+
+    def test_backslash_authority_is_not_loopback(self):
+        s = self.servers({
+            'a': {'type': 'http', 'url': 'http://evil.com\\@localhost/'},
+            'b': {'type': 'ws', 'url': 'ws://evil.com\\@127.0.0.1/'}})
+        for n in 'ab':
+            self.assertEqual((s[n]['endpoint_locality'], s[n]['plaintext_transport']), ('named_host', True), n)
+            self.assertEqual(s[n]['endpoint_origin'], ('http' if n == 'a' else 'ws') + '://evil.com')
+
+    def test_localhost_subdomain_is_named_host(self):
+        s = self.servers({'a': {'type': 'http', 'url': 'http://x.localhost/'},
+                          'b': {'type': 'http', 'url': 'http://localhost/'}})
+        self.assertEqual((s['a']['endpoint_locality'], s['b']['endpoint_locality']), ('named_host', 'loopback'))
+
+    def test_lists_are_capped_and_variable_names_redacted(self):
+        env = {f'K{i:03}': 'lit' for i in range(150)}
+        var = 'TOK_CANARY' + 'x' * 200
+        s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % var, 'env': env, 'headers': env}})['a']
+        self.assertEqual((len(s['env_literal_keys']), len(s['headers_literal_keys'])), (100, 100))
+        self.assertEqual([len(v) for v in s['url_variable_references']], [120])
