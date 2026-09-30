@@ -309,6 +309,9 @@ before writing it.
 Preserve any required execution method as part of the approval. For permission pruning,
 require a successful `prune_permissions.py` dry run before its apply call; if either cannot
 execute, follow the blocked-action guidance in Step 1 rather than manually editing permissions.
+For sandbox settings, require a successful `apply_ops.py` dry run before its apply call; if either
+cannot execute, or the helper refuses an op, follow the blocked-action guidance in Step 1 rather
+than manually editing `sandbox` keys.
 
 1. **Back up first**: copy every file to `~/.claude/backups/setup-audit-<timestamp>/`, keeping
    its path recognisable, before any edit or before handing work to a sub-agent.
@@ -335,10 +338,22 @@ execute, follow the blocked-action guidance in Step 1 rather than manually editi
      it in `.claude/archive/` if `docs/` feeds a published site or package.
    - Run the repo's tests that touch docs.
 7. **Sandbox.** Check dependencies and platform prerequisites first (e.g. AppArmor on recent
-   Ubuntu). Enable it last and probe it afterwards: a write outside the project should be
-   blocked, and package caches the user needs should be writable (`sandbox.filesystem.allowWrite`).
+   Ubuntu). Change `sandbox.*` keys only with `apply_ops.py` (ops format, allowlist and reasons:
+   `references/apply-ops.md`): write the ops file to `$TMPDIR`, run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/apply_ops.py --ops <file>` (dry run), show each op's
+   before/after (and say so when `reformat` is true), copy each target's `file_sha256` into its
+   `expect_file`, then rerun with `--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`.
+   On `precondition_mismatch`, show the reported current value; re-plan only if the approved
+   change still makes sense. Never replace a refused or failed op with Write/Edit. Enable it
+   last (a separate ops file after the other sandbox keys) and probe it afterwards: a write
+   outside the project should be blocked, and package caches the user needs should be writable
+   (`sandbox.filesystem.allowWrite`). Once the sandbox is on it protects settings files, so a
+   later `--apply` from a sandboxed Bash call fails with `backup_failed` or `write_failed`:
+   report it blocked; running outside the sandbox needs the user's approval at the permission
+   prompt.
 8. **Record and verify.** Append each result to `applied` in audit.json and to an "Applied" section
-   in the report: files, backup paths, the verification you ran, and how to revert. Report
+   in the report: files, backup paths, the verification you ran, and how to revert. For `apply_ops.py`, take the backup paths and
+   `verified` from its output. Report
    skipped or failed items plainly. Update each finding’s `action_status` and regenerate the
    HTML from the updated JSON, so the linked report reflects the final results.
 9. **Ledger.** Before an approved LRN edit run

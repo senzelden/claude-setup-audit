@@ -628,3 +628,38 @@ class Cli(FakeHome):
         self.assertEqual((code, out['targets'][0]['ops'][0]['reason']), (1, 'excluded_key'))
         code, out, _ = self.call('--ops', os.path.join(self.home, 'missing.json'))
         self.assertEqual((code, out['error']), (1, 'invalid_ops_file'))
+
+
+class Docs(unittest.TestCase):
+    ROOT = os.path.join(os.path.dirname(__file__), '..')
+    SKILL = os.path.join(ROOT, 'plugins', 'setup-audit', 'skills', 'setup-audit')
+
+    def read(self, *parts):
+        with open(os.path.join(*parts), encoding='utf-8') as f:
+            return f.read()
+
+    def test_reference_matches_constants(self):
+        ref = self.read(self.SKILL, 'references', 'apply-ops.md')
+        rows = {line.split('`')[1] for line in ref.splitlines() if line.startswith('| `sandbox')}
+        self.assertEqual(rows, set(apply_ops.SANDBOX_KEYS) | set(apply_ops.EXCLUDED_KEYS))
+        for text in (*apply_ops.REASONS, 'fetched 2026-09-29', *apply_ops.DOCS_SOURCES, 'expect_file',
+                     'file_sha256', 'wildcard_ignored_on_linux', 'shared_project_file'):
+            self.assertIn(text, ref)
+
+    def test_skill_requires_the_helper_for_sandbox_changes(self):
+        skill = self.read(self.SKILL, 'SKILL.md')
+        item = skill.split('7. **Sandbox.**', 1)[1].split('8. **Record', 1)[0]
+        for text in ('apply_ops.py --ops', '--apply --backup-dir', 'references/apply-ops.md', 'file_sha256',
+                     'Never replace a refused or failed op with Write/Edit'):
+            self.assertIn(text, item)
+        preamble = skill.split('## Step 5', 1)[1].split('1. **Back up first**', 1)[0]
+        self.assertIn('successful `apply_ops.py` dry run', preamble)
+        frontmatter = skill.split('\n---', 1)[0]  # the file starts with '---'; the first '\n---' closes it
+        allowed = frontmatter.split('allowed-tools:', 1)[1].split('\n', 1)[0]
+        self.assertIn('collect.py', allowed)
+        self.assertNotIn('apply_ops', allowed)
+
+    def test_checklist_points_sandbox_fixes_at_the_helper(self):
+        checklist = self.read(self.SKILL, 'references', 'checklist.md')
+        section = checklist.split('**SEC-sandbox**', 1)[1].split('- **SEC-hooks**', 1)[0]
+        self.assertIn('apply_ops.py', section)

@@ -30,6 +30,11 @@ All notable changes to this project are documented here. The format follows
 - `transcripts.tool_errors`: error counts, failure rates and heuristic categories per built-in tool
   and per MCP server, from `tool_use`/`tool_result` pairs; error text is not stored. New check
   `COST-tool-error-clusters`.
+- `scripts/apply_ops.py`: deterministic apply for approved sandbox settings changes. Structured
+  `set`/`remove` ops on 25 allowlisted `sandbox.*` keys (types and file scopes from the settings
+  reference, fetched 2026-09-29), a precondition per op, a file hash carried from the dry run into
+  `--apply`, a private backup, atomic write and re-read verification. The skill now requires it for
+  sandbox changes.
 
 ### Changed
 

@@ -75,6 +75,8 @@ the collector snapshot.
   - filesystem write/read exceptions and the network allowlist: broad entries undermine the
     boundary the sandbox exists for; note when a permission `allow` rule grants something the
     sandbox would otherwise have blocked, since that rule is now the only remaining control
+  - Fix: change `sandbox.*` keys only via `apply_ops.py` (SKILL.md Step 5 item 7); keys it refuses
+    stay blocked unless the user authorizes a manual edit.
 - **SEC-hooks** (`hook_handlers`, `allow_managed_hooks_only`): hooks run with the user's
   permissions, but the boundary differs by handler `type` (verified against the hooks docs) —
   weigh each differently rather than reporting all hooks generically:
