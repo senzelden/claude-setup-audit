@@ -33,6 +33,20 @@ class SnapshotContract(FakeHome):
             collect.main()
         return json.loads(output.getvalue())
 
+    def test_coverage_privacy_is_optional_and_typed(self):
+        snap = self.snapshot()
+        snap['coverage'].pop('privacy', None)
+        contract.validate_snapshot(snap)  # absent: still valid (older snapshots)
+        snap['coverage']['privacy'] = {'mode': 'metadata-only', 'free_text': 'replaced',
+                                       'marker': '[metadata-only: N chars]',
+                                       'replaced_fields': {'first_prompt': 2}, 'redactions': {'contextual': 0}}
+        contract.validate_snapshot(snap)
+        for bad in ({'mode': 'partial'}, {'replaced_fields': {'x': -1}}, {'free_text': 'maybe'}):
+            broken = copy.deepcopy(snap)
+            broken['coverage']['privacy'].update(bad)
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(broken)
+
     def test_producer_scopes_and_optional_pilot(self):
         for scope in ('global', 'project', 'all'):
             for pilot in (False, True):

@@ -1,9 +1,15 @@
 """Privacy: contextual secret detection. Fake homes only; no test here touches ~/.claude."""
+import argparse
+import contextlib
 import copy
+import io
+import json
+import os
 import unittest
 from collections import Counter
+from unittest import mock
 
-from test_collect import collect  # also puts the plugin scripts directory on sys.path
+from test_collect import FakeHome, collect  # also puts the plugin scripts directory on sys.path
 import privacy
 
 AWS = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
@@ -208,6 +214,80 @@ class MaskingUnits(unittest.TestCase):
         self.assertEqual(snap['memory']['by_project']['p']['entries'][0],
                          {'file': 'a.md', 'description': '[metadata-only: 0 chars]'})
         self.assertEqual(counts, {'memory_descriptions': 1, 'excerpts': 1})
+
+
+def args(**kw):
+    base = dict(roots=[], days=30, claude_dir=None, scope='all', project=None)
+    return argparse.Namespace(**{**base, **kw})
+
+
+class CollectorMode(FakeHome):
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(collect, 'managed_directory', lambda: os.path.join(self.home, 'managed'))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_full_mode_records_privacy_full(self):
+        snap = collect.build_snapshot(args())
+        p = snap['coverage']['privacy']
+        self.assertEqual((p['mode'], p['free_text'], p['replaced_fields']), ('full', 'collected', {}))
+        self.assertNotIn('free_text_fields', [s['source'] for s in snap['coverage']['sources']])
+
+    def test_metadata_mode_records_mode_source_and_limitation(self):
+        self.write('.claude/settings.json', {'permissions': {'deny': ['Bash(rm -rf /)']}})
+        snap = collect.build_snapshot(args(metadata_only=True))
+        p = snap['coverage']['privacy']
+        self.assertEqual((p['mode'], p['free_text']), ('metadata-only', 'replaced'))
+        self.assertEqual(p['marker'], privacy.MARKER_FORMAT)
+        self.assertEqual(p['replaced_fields']['permission_deny'], 1)
+        src = [s for s in snap['coverage']['sources'] if s['source'] == 'free_text_fields']
+        self.assertEqual((src[0]['status'], src[0]['reason'], src[0]['scope']),
+                         ('not_checked', 'metadata_only_mode', 'all'))
+        self.assertTrue(any(x.startswith('Metadata-only mode:') for x in snap['coverage']['limitations']))
+
+    def test_redaction_counts_and_secret_absent(self):
+        secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+        self.write('.claude/settings.json', {'hooks': {'Stop': [{'hooks': [
+            {'type': 'command', 'command': f'AWS_SECRET_ACCESS_KEY={secret} ./sync.sh'}]}]}})
+        for mode in (False, True):
+            snap = collect.build_snapshot(args(metadata_only=mode))
+            self.assertNotIn(secret, json.dumps(snap))
+        full = collect.build_snapshot(args())
+        text = json.dumps(full)
+        redactions = full['coverage']['privacy']['redactions']
+        self.assertGreaterEqual(redactions['contextual'], 1)
+        # Non-overlapping: '[REDACTED:context]' does not contain '[REDACTED]'.
+        self.assertEqual(redactions, {'pattern_or_key': text.count('[REDACTED]'),
+                                      'contextual': text.count(privacy.CONTEXT_TOKEN)})
+        self.assertEqual(text.count('[REDACTED'), sum(redactions.values()))
+
+    def test_env_hook_join_runs_before_masking(self):
+        app = os.path.join(self.home, 'code', 'app')
+        self.write('code/app/.envrc', 'use_pass TOKEN x\n')
+        self.write('.claude/settings.json', {'hooks': {'SessionStart': [{'hooks': [
+            {'type': 'command', 'command': 'direnv export bash > "$CLAUDE_ENV_FILE"'}]}]}})
+        snap = collect.build_snapshot(args(roots=[app], metadata_only=True))
+        self.assertIs(snap['readiness'][app.replace(self.home, '~')]['claude_env_hook'], True)
+
+    def test_metadata_only_with_clarity_pilot_is_a_usage_error(self):
+        argv = ['collect.py', '--claude-dir', self.claude, '--metadata-only', '--clarity-pilot']
+        with mock.patch('sys.argv', argv), contextlib.redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as cm:
+            collect.main()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn('--metadata-only cannot be combined with --clarity-pilot', err.getvalue())
+
+    def test_build_snapshot_refuses_metadata_only_with_clarity_pilot(self):
+        with self.assertRaisesRegex(ValueError, 'metadata-only excludes the clarity pilot'):
+            collect.build_snapshot(args(metadata_only=True, clarity_pilot=True))
+
+    def test_drift_arguments_stay_full(self):
+        ap = argparse.ArgumentParser()
+        collect.add_collection_args(ap)  # the argument set drift.py uses
+        ns = ap.parse_args(['--claude-dir', self.claude])
+        self.assertFalse(hasattr(ns, 'metadata_only'))
+        self.assertEqual(collect.build_snapshot(ns)['coverage']['privacy']['mode'], 'full')
 
 
 if __name__ == '__main__':

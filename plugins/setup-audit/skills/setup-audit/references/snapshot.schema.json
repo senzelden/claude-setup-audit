@@ -783,6 +783,17 @@
           "items": {
             "type": "string"
           }
+        },
+        "privacy": {
+          "type": "object",
+          "required": ["mode", "free_text", "replaced_fields", "redactions"],
+          "properties": {
+            "mode": {"enum": ["full", "metadata-only"]},
+            "free_text": {"enum": ["collected", "replaced"]},
+            "marker": {"type": "string"},
+            "replaced_fields": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "redactions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+          }
         }
       }
     },

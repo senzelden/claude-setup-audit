@@ -549,6 +549,13 @@ def collect_managed_settings():
     return out
 
 
+METADATA_ONLY_LIMITATION = (
+    "Metadata-only mode: free text (prompts, corrections, friction details, memory and skill descriptions, "
+    "instruction excerpts, hook commands and targets, permission rule text, sandbox and other structural "
+    "values) was replaced by length markers at collection; findings that need that text are not assessable "
+    "from this snapshot.")
+
+
 def snapshot_coverage(snap, roots):
     sources = list(snap["managed_settings"]["sources"])
     scope = snap["collection_scope"]["requested"]
@@ -1831,6 +1838,9 @@ def apply_collection_args(ap, a):
 
 def build_snapshot(a):
     """Collect, sanitize and validate a snapshot for parsed arguments; return the JSON-native dict."""
+    metadata_only = getattr(a, "metadata_only", False)  # drift.py's namespace has no such flag
+    if metadata_only and getattr(a, "clarity_pilot", False):
+        raise ValueError("metadata-only excludes the clarity pilot")
     _RAW_PERMISSIONS.clear()
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
     contexts = []
@@ -1920,10 +1930,23 @@ def build_snapshot(a):
     snap["transcripts"]["mcp_configured_but_unused_note"] = (
         "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
+    # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
+    replaced = privacy.mask_snapshot(snap) if metadata_only else {}
+    snap["coverage"]["privacy"] = {
+        "mode": "metadata-only" if metadata_only else "full",
+        "free_text": "replaced" if metadata_only else "collected",
+        "marker": privacy.MARKER_FORMAT, "replaced_fields": replaced, "redactions": {}}
+    if metadata_only:
+        snap["coverage"]["sources"].append(
+            source_coverage("free_text_fields", a.scope, "not_checked", reason="metadata_only_mode"))
+        snap["coverage"]["limitations"].append(METADATA_ONLY_LIMITATION)
     # default=... is a fallback for anything sanitize() left as a non-JSON-native object; redact
     # it too on the way out, since sanitize() can't see into a value it can't recurse into.
     text = json.dumps(sanitize(snap), indent=1, default=lambda o: redact(str(o)), allow_nan=False)
     snap = json.loads(text)
+    # '[REDACTED:context]' does not contain '[REDACTED]', so the two counts never overlap.
+    snap["coverage"]["privacy"]["redactions"] = {
+        "pattern_or_key": text.count("[REDACTED]"), "contextual": text.count(privacy.CONTEXT_TOKEN)}
     validate_snapshot(snap)
     return snap
 
@@ -1933,10 +1956,14 @@ def main():
     add_collection_args(ap)
     ap.add_argument("--out")
     ap.add_argument("--clarity-pilot", action="store_true", help="opt-in instruction clarity review candidates")
+    ap.add_argument("--metadata-only", action="store_true",
+                    help="replace free text with length markers (prompts, rules, hook commands, descriptions, excerpts)")
     ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
     ap.add_argument("--drift-log", help="drift log to summarize (read-only)")
     a = ap.parse_args()
     apply_collection_args(ap, a)
+    if a.metadata_only and a.clarity_pilot:
+        ap.error("--metadata-only cannot be combined with --clarity-pilot (the pilot reviews excerpt text)")
     text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
     if a.out:
         _write_snapshot(a.out, text)
