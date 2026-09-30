@@ -487,7 +487,7 @@ BANNER = ('privacy mode: metadata-only (free text replaced by [metadata-only: N 
 
 
 class QueryBanner(PatchedHome):
-    def run_query(self, *path, **kw):
+    def run_query(self, **kw):
         snap = collect.build_snapshot(args(**kw))
         target = os.path.join(self.home, 'snap.json')
         with open(target, 'w', encoding='utf-8') as f:
@@ -537,6 +537,15 @@ class Docs(unittest.TestCase):
         self.assertIn('[metadata-only: N chars]', skill)
         self.assertIn('coverage.privacy.mode', skill)
         self.assertIn('profile.privacy', skill)
+        self.assertIn('"Don\'t read my prompts", "metadata only" and\n"privacy mode" map to `privacy=metadata-only`',
+                      skill)
+        step3 = skill.split('## Step 3', 1)[1].split('## Step 4', 1)[0]
+        step4 = skill.split('## Step 4', 1)[1].split('## Step 5', 1)[0]
+        self.assertIn('In metadata-only mode, `fix` describes the change\'s shape only', step3)
+        self.assertIn('not written\n  into the saved report', step3)
+        self.assertIn("(metadata-only: the change's shape only)", step4)
+        step5 = skill.split('## Step 5', 1)[1]
+        self.assertIn('In metadata-only mode, run the `prune_permissions.py` / `apply_ops.py` dry runs', step5)
         self.assertIn(BANNER.split(' (')[0], self.read(self.SKILL, 'scripts', 'query_snapshot.py'))
 
     def test_readme_lists_the_privacy_option(self):
@@ -551,15 +560,20 @@ class Docs(unittest.TestCase):
                        '[REDACTED:context]', 'best-effort'):
             self.assertIn(needle, section)
 
-    def test_checklist_names_every_affected_check(self):
+    def test_checklist_names_every_affected_check_in_its_bucket(self):
         text = self.read(self.SKILL, 'references', 'checklist.md')
         head = text.split('\n## ', 1)[0]
-        for check in ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
-                      'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
-                      'HYG-missing-hook-script', 'SEC-docs-only-constraint', 'LRN-contradiction',
-                      'LRN-enforce', 'SEC-wildcard-placement', 'SEC-ineffective-deny',
-                      'HYG-shadowed-allow'):
-            self.assertIn(check, head)
+        partial, rest = head.split('**Partial:**', 1)[1].split('**Not checked:**', 1)
+        not_checked, unaffected = rest.split('**Unaffected:**', 1)
+        for bucket, ids in ((partial, ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
+                                       'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
+                                       'HYG-missing-hook-script', 'SEC-wildcard-placement',
+                                       'SEC-ineffective-deny', 'HYG-shadowed-allow')),
+                            (not_checked, ('SEC-docs-only-constraint', 'LRN-contradiction', 'LRN-enforce'))):
+            for check in ids:
+                self.assertIn(check, bucket)
+        self.assertNotIn('SEC-', unaffected)
+        self.assertIn('readiness', unaffected)
 
 
 if __name__ == '__main__':

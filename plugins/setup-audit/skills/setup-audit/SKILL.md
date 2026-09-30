@@ -31,7 +31,8 @@ one batch.
 Map natural requests onto the profile. Security, cost or recurring-mistake questions about the
 setup set that focus. "Is this repo ready for Claude Code?" means `focus=readiness` and
 `scope=project`, and it means reading the Agent readiness section of `references/checklist.md`,
-because that section holds the options to offer (e.g. for env variables Claude's shell can't see).
+because that section holds the options to offer (e.g. for env variables Claude's shell can't see). "Don't read my prompts", "metadata only" and
+"privacy mode" map to `privacy=metadata-only`.
 
 | Option | Values | Default |
 |---|---|---|
@@ -230,7 +231,9 @@ Work through `references/checklist.md`. For every candidate finding, record:
 - `evidence`: file + key/rule, or metric + number. Compute derived numbers with a short script,
   not mental arithmetic.
 - `fix`: the exact change as `before`/`after` text, a command, or manual steps when no exact
-  diff exists. Don't dress prose up as a diff.
+  diff exists. Don't dress prose up as a diff. In metadata-only mode, `fix` describes the change's
+  shape only; the exact before/after is read and shown in Step 5 after approval and is not written
+  into the saved report (audit.json or HTML).
 - `effort` and `reversible`.
 
 Use `parked` for real but poor-value items: a two-hour refactor to save seconds is parked.
@@ -271,7 +274,7 @@ Claude Code <version> · profile: focus=… depth=… scope=… mode=… · <N> 
 ### 1. <title>  (`<id>`)
 **Evidence:** … (measured|estimated)
 **Why it matters:** …
-**Fix:** before/after or command
+**Fix:** before/after or command (metadata-only: the change's shape only)
 **Docs:** <url>
 
 ## Parked
@@ -320,7 +323,9 @@ Otherwise ask which numbers to apply (e.g. `1,3,5`, `all high`, or `none`).
 ## Step 5: Apply approved items (`apply` mode, or `propose` after approval)
 
 Change only what was approved, one item at a time, and show the before/after for each one
-before writing it.
+before writing it. In metadata-only mode, run the `prune_permissions.py` / `apply_ops.py` dry runs
+only for approved items (their output shows real rule and setting text), and have the `applied`
+record cite files, backups and verification, not that text.
 Preserve any required execution method as part of the approval. For permission pruning,
 require a successful `prune_permissions.py` dry run before its apply call; if either cannot
 execute, follow the blocked-action guidance in Step 1 rather than manually editing permissions.
