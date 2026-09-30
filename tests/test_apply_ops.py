@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -280,6 +281,10 @@ class Planning(FakeHome):
             self.settings(text)
             self.assertEqual(self.plan(op('sandbox.enabled', True))['reason'], 'invalid_json', text)
 
+    def test_oversized_integer_literal_is_invalid_json(self):
+        self.settings('{"a": ' + '9' * 5000 + '}')
+        self.assertEqual(self.plan(op('sandbox.enabled', True))['reason'], 'invalid_json')
+
     def test_too_large(self):
         self.settings('{"a": "' + 'x' * apply_ops.MAX_TARGET_BYTES + '"}')
         self.assertEqual(self.plan(op('sandbox.enabled', True))['reason'], 'too_large')
@@ -309,8 +314,12 @@ class Planning(FakeHome):
     def test_fifo_target_is_refused_without_blocking(self):
         os.makedirs(os.path.join(self.home, 'p', '.claude'))
         os.mkfifo(os.path.join(self.home, 'p', '.claude', 'settings.local.json'))
-        p = self.plan(op('sandbox.enabled', True))
-        self.assertEqual((p['status'], p['reason']), ('rejected', 'unreadable'))
+        box = []
+        worker = threading.Thread(target=lambda: box.append(self.plan(op('sandbox.enabled', True))), daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive(), 'planning blocked on the FIFO')
+        self.assertEqual((box[0]['status'], box[0]['reason']), ('rejected', 'unreadable'))
 
     def test_dry_run_planning_writes_nothing(self):
         path = self.settings({'sandbox': {'enabled': False}})

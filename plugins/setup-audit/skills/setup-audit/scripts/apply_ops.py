@@ -337,7 +337,7 @@ def plan_ops(doc, ops, scope):
 def _parse(raw):
     try:
         doc = report_state.load_json(raw.decode('utf-8'))
-    except (report_state.ReportError, UnicodeDecodeError, RecursionError):
+    except (report_state.ReportError, UnicodeDecodeError, RecursionError, ValueError):
         raise OpsError('invalid_json') from None
     if not isinstance(doc, dict):
         raise OpsError('invalid_json')
