@@ -20,6 +20,9 @@ import json
 import sys
 from snapshot_contract import SnapshotError, validate_snapshot
 
+PRIVACY_BANNER = ('privacy mode: metadata-only (free text replaced by [metadata-only: N chars] markers; '
+                  'do not reconstruct it)')
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -37,6 +40,10 @@ def main():
         sys.exit(f'invalid snapshot: {exc if isinstance(exc, SnapshotError) else "unreadable or invalid JSON"}')
     if contract == 'legacy':
         print('Legacy unversioned snapshot: structure and coverage are not validated; recollect for v1.', file=sys.stderr)
+    coverage = node.get('coverage') if isinstance(node, dict) else None
+    privacy = coverage.get('privacy') if isinstance(coverage, dict) else None
+    if isinstance(privacy, dict) and privacy.get('mode') == 'metadata-only':
+        print(PRIVACY_BANNER)
     trail = []
     for step in a.path:
         trail.append(step)

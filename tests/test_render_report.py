@@ -68,6 +68,23 @@ class ReportTests(unittest.TestCase):
             self.assertIn(text, output)
         self.assertEqual(InlineAfterLabel(output).bad, [])
 
+    def test_metadata_only_badge_and_footer_only_in_that_mode(self):
+        badge = 'Metadata-only collection · prompt, rule and instruction text were not collected'
+        footer = ('Private report — metadata-only collection; paths and names are still included. '
+                  'Review before sharing.')
+        full = self.report()
+        full['profile']['privacy'] = 'full'
+        for report in (self.report(), full):
+            html = render_report.render(report)
+            self.assertNotIn(badge, html)
+            self.assertNotIn('metadata-only collection', html)
+        meta = self.report()
+        meta['profile']['privacy'] = 'metadata-only'
+        html = render_report.render(meta)
+        self.assertIn(f'<p class="badge">{badge}</p>', html)
+        self.assertIn(footer, html)
+        self.assertNotIn('Paths and evidence may contain sensitive information', html)
+
     def test_ledger_rows_render_verdicts_and_proposals(self):
         import report_state
         from test_report_state import ReportState

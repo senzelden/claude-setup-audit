@@ -12,7 +12,7 @@ Structural validation cannot verify that an observation or completed-check claim
   "window_days": 30,
   "checks": {"SEC-example": "complete"},
   "claude_code_version": "observed version or unknown",
-  "profile": {"focus": "security", "depth": "quick", "scope": "project", "mode": "audit"},
+  "profile": {"focus": "security", "depth": "quick", "scope": "project", "mode": "audit", "privacy": "full"},
   "summary": "Short summary already used in Markdown.",
   "coverage": {
     "requested_scope": "project",
@@ -51,6 +51,9 @@ relevant limitations). Coverage may add `summary` explaining what was reviewed i
 The renderer shows these existing report fields directly; it does not invent interpretations.
 It puts technical metadata and exact changes in expandable details, and omits empty optional
 sections. Set `example: true` only for fictional demonstrations.
+
+`profile.privacy` is optional (`full` or `metadata-only`). A metadata-only report quotes no
+collected text; evidence cites fields, flags and counts.
 
 A complete fictional example is in `examples/readable-audit.json` in the plugin directory.
 

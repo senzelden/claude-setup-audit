@@ -20,6 +20,11 @@ All notable changes to this project are documented here. The format follows
   (`AWS_SECRET_ACCESS_KEY=...`, `--api-token ...`, `--password ...`) becomes `[REDACTED:context]`,
   keeping the label. `secret-literal-in-rule` also fires on such rules, so their drift fingerprints
   change once.
+- `query_snapshot.py` prints a `privacy mode: metadata-only` line first for metadata-only
+  snapshots; `profile.privacy` (`full`/`metadata-only`) is validated in reports; the HTML report
+  shows a badge and footer variant; `privacy=metadata-only` option in the skill and README, with
+  affected-checks guidance.
+- Hook handler entries gain `server`, `tool` (mcp_tool) and `target_origin` (http) fields.
 - `manifest_unreadable` harness reason when a plugin's `plugin.json` exists but cannot be read.
 - Permission rule-shape checks (`permissions.rule_shape_issues`; `SEC-wildcard-placement`,
   `SEC-ineffective-deny`).

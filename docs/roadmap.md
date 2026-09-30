@@ -88,8 +88,9 @@ Hosted validation passed all eight jobs at `48d9d5d`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
-- **Privacy:** metadata-only collection/export, contextual secret detection and fuller
-  provenance for free-text evidence. Tune detection against realistic fixtures.
+- **Privacy:** metadata-only collection and contextual secret detection implemented (unreleased).
+  Follow-ups: optional path/name hashing (`--hash-paths`), metadata-only export of an existing
+  snapshot, and fuller provenance for free-text evidence. Tune detection against realistic fixtures.
 - **Deterministic apply:** sandbox slice implemented (unreleased) (`apply_ops.py`, allowlisted `sandbox.*` keys).
   Next: widen the allowlist key by key with doc-grounded types; a paid approved-apply eval for
   sandbox ops needs separate approval; do not migrate the pruner or ledger flows without a design.

@@ -98,6 +98,9 @@ def render(report):
              '<header><div class="eyebrow">Claude Code · Setup review</div><h1>Your setup audit</h1>']
     if report.get('example') is True:
         parts.append('<p class="badge">Example report · fictional data</p>')
+    metadata_only = isinstance(report.get('profile'), dict) and report['profile'].get('privacy') == 'metadata-only'
+    if metadata_only:
+        parts.append('<p class="badge">Metadata-only collection · prompt, rule and instruction text were not collected</p>')
     if report.get('generated'):
         parts.append(paragraph(report['generated'], 'muted'))
     parts.append('</header><nav aria-label="Report sections"><a href="#findings">Findings</a> · '
@@ -227,7 +230,10 @@ def render(report):
     parts.append('</section>')
     if report.get('new_features'):
         parts.append('<section><h2>New features worth trying</h2>' + display(report['new_features']) + '</section>')
-    parts.append('<p class="privacy">Private report — review before sharing. Paths and evidence may contain sensitive information.</p></body></html>\n')
+    footer = ('Private report — metadata-only collection; paths and names are still included. Review before sharing.'
+              if metadata_only else
+              'Private report — review before sharing. Paths and evidence may contain sensitive information.')
+    parts.append(f'<p class="privacy">{footer}</p></body></html>\n')
     return ''.join(parts)
 
 

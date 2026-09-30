@@ -101,6 +101,7 @@ directly:
 | `scope` | `global` · `project` · `all` | `all` |
 | `mode` | `audit` (read-only) · `propose` (report + diffs, then ask) · `apply` | `propose` |
 | `clarity` | `off` or `pilot` (instruction-clarity review candidates) | `off` |
+| `privacy` | `full` · `metadata-only` (free text replaced by length markers; paths and names kept) | `full` |
 | `report_dir` | where reports and trend data are kept | `~/.claude/audits` |
 
 **Cost:** the local snapshot is a deterministic script that takes a few seconds. The model's
@@ -179,6 +180,11 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
   `~/.claude/backups/`.
 - **Sends** nothing except requests for the public Claude Code docs pages (`depth=full`).
 - Reports contain paths, rule text and memory excerpts. **Review them before sharing.**
+- **Privacy mode** (`privacy=metadata-only`, or `collect.py --metadata-only`): prompts, corrections,
+  rule text, hook commands, descriptions and excerpts are replaced by `[metadata-only: N chars]`
+  markers, so those checks are partial or not checked. Paths, names and counts are still collected.
+  Secret detection (patterns plus a contextual detector that yields `[REDACTED:context]`) runs in both
+  modes and is best-effort. It cannot be combined with `clarity=pilot`.
 
 ## Measured, not guessed
 

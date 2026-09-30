@@ -27,6 +27,15 @@ class ReportState(unittest.TestCase):
                                     action_status='proposed')] if findings is None else findings), applied=[],
                     checks={'SEC-test': 'complete'})
 
+    def test_profile_privacy_is_validated(self):
+        ok = self.report()
+        ok['profile']['privacy'] = 'metadata-only'
+        state.finalize(ok)
+        bad = self.report()
+        bad['profile']['privacy'] = 'hidden'
+        with self.assertRaisesRegex(state.ReportError, 'invalid profile privacy'):
+            state.finalize(bad)
+
     def test_history_and_metrics_are_deterministic_and_nonmutating(self):
         old, current = self.report('2026-09-14'), self.report()
         current['metrics']['tokens']['value'] = 60

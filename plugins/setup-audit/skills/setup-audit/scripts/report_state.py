@@ -97,7 +97,8 @@ def _validate_report(report, strict=False):
         require(profile.get('scope') in ('global', 'project', 'all'), 'profile scope required')
     if 'scope' in profile:
         require(profile['scope'] in ('global', 'project', 'all'), 'invalid scope')
-    for key, values in (('depth', {'quick', 'full'}), ('mode', {'audit', 'propose', 'apply'})):
+    for key, values in (('depth', {'quick', 'full'}), ('mode', {'audit', 'propose', 'apply'}),
+                        ('privacy', {'full', 'metadata-only'})):
         if key in profile:
             require(profile[key] in values, 'invalid profile ' + key)
     if 'window_days' in report:

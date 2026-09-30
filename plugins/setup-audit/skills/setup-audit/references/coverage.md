@@ -213,3 +213,25 @@ locations). Installed-registry list records and field types were separately obse
 on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.
 Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime
 activation. Frontmatter folding and enablement can change the actual listing size.
+
+## Privacy
+
+`coverage.privacy` is always present: `mode` (`full` or `metadata-only`), `free_text`
+(`collected` or `replaced`), `marker` (`[metadata-only: N chars]`), `replaced_fields` and
+`redactions`. `replaced_fields` counts occurrences (one per masked string, not per field name)
+grouped by family, and is empty in full mode. `redactions` counts `[REDACTED]` (`pattern_or_key`)
+and `[REDACTED:context]` (`contextual`) tokens in the serialized snapshot.
+
+In metadata-only mode the collector adds the source `free_text_fields` with status `not_checked`
+and reason `metadata_only_mode`, plus a limitation saying that findings needing free text are not
+assessable. Free text (prompts, corrections, friction details, memory and skill descriptions,
+instruction excerpts, hook commands and targets, permission rule text, sandbox and other
+structural values) is replaced by `[metadata-only: N chars]`, where N is the original length.
+Paths, names, counts, flags and enums stay, so a metadata-only snapshot is still not free of
+sensitive information; review it before sharing.
+
+The contextual detector runs in both modes. A high-entropy value next to a key-like name
+(`AWS_SECRET_ACCESS_KEY=...`, `--api-token ...`, `sessionKey: ...`) or a `--password` value becomes
+`[REDACTED:context]`, keeping the label. It ignores hashes, UUIDs, paths, references, word-like
+identifiers and values with spaces, so it can miss short or low-entropy secrets and secrets with
+unfamiliar labels. Redaction remains best-effort.

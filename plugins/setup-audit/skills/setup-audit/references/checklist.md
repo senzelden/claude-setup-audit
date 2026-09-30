@@ -5,6 +5,16 @@ and don't report a check that passed unless it has been resolved since the last 
 (`SEC-…`, `COST-…`, `LRN-…`, `HYG-…`) prefix the finding `id` in audit.json. Field names refer to
 the collector snapshot.
 
+In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
+caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text), SEC-sandbox (keys and
+booleans only), SEC-hooks (type, matcher, origin, header keys; no command or prompt),
+COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
+LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
+(count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
+HYG-shadowed-allow (rule text masked; flags and counts remain). **Not checked:**
+SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity pilot. **Unaffected:**
+readiness, cost metrics and harness overhead.
+
 ## Security (`SEC-`)
 
 - **SEC-risky-allow** (`permissions.risky` per settings file). Weigh by blast radius:

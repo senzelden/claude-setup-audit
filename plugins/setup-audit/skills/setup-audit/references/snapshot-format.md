@@ -15,6 +15,12 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - Add optional fields without changing existing meanings within v1. Readers ignore unknown
   fields. New required fields, removed/renamed fields, changed types/units/semantics or new
   status values require a new snapshot version and reader support.
+- `coverage.privacy`: optional in the schema, emitted by current collectors (`mode`, `free_text`,
+  `marker`, `replaced_fields`, `redactions`). In metadata-only snapshots `[metadata-only: N chars]` markers replace free
+  text, type-preserving (a list stays a list of markers), each matching `\[metadata-only: \d+ chars\]`.
+  Hook handler entries carry `server`, `tool` (mcp_tool) and `target_origin` (http) so masked
+  targets stay identifiable. Contextual detection replaces a labelled literal secret with
+  `[REDACTED:context]` in every mode. Additive within snapshot v1.
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
   post-fix `matches`, `sessions_matched`, `sessions_scanned`, `complete`, `from`, `to`, `selector_sha`.
   Counts only; additive within snapshot v1.

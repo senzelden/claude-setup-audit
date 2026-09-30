@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import sys
 import unittest
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from unittest import mock
 
 from test_collect import FakeHome, collect  # also puts the plugin scripts directory on sys.path
 import privacy
+import query_snapshot
 
 AWS = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
 # (input, secret value, label that must survive, measured entropy in bits/char or None) -- T1-T10
@@ -478,6 +480,86 @@ class PathMatching(unittest.TestCase):
         self.assertTrue(privacy.path_matches(('a', 1, 'b', 'c'), ('a', '**')))
         self.assertTrue(privacy.path_matches(('a',), ('a', '**')))
         self.assertFalse(privacy.path_matches(('b', 'c'), ('a', '**')))
+
+
+BANNER = ('privacy mode: metadata-only (free text replaced by [metadata-only: N chars] markers; '
+          'do not reconstruct it)')
+
+
+class QueryBanner(PatchedHome):
+    def run_query(self, *path, **kw):
+        snap = collect.build_snapshot(args(**kw))
+        target = os.path.join(self.home, 'snap.json')
+        with open(target, 'w', encoding='utf-8') as f:
+            json.dump(snap, f)
+        for extra in ((), ('coverage',), ('coverage', '--keys')):
+            out = io.StringIO()
+            with mock.patch('sys.argv', ['query_snapshot.py', target, *extra]), \
+                    contextlib.redirect_stdout(out):
+                query_snapshot.main()
+            yield out.getvalue()
+
+    def test_metadata_only_prints_banner_first_on_every_path(self):
+        outputs = list(self.run_query(metadata_only=True))
+        self.assertEqual(len(outputs), 3)
+        for text in outputs:
+            self.assertEqual(text.splitlines()[0], BANNER)
+            self.assertEqual(text.splitlines()[1], '<untrusted_snapshot_data>')
+
+    def test_full_mode_prints_no_banner(self):
+        for text in self.run_query():
+            self.assertTrue(text.startswith('<untrusted_snapshot_data>'))
+
+
+class Docs(unittest.TestCase):
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    SKILL = os.path.join(ROOT, 'plugins', 'setup-audit', 'skills', 'setup-audit')
+
+    def read(self, *parts):
+        with open(os.path.join(*parts), encoding='utf-8') as f:
+            return f.read()
+
+    def test_snapshot_format_documents_markers_and_context_token(self):
+        text = self.read(self.SKILL, 'references', 'snapshot-format.md')
+        self.assertIn('[metadata-only: N chars]', text)
+        self.assertIn(r'\[metadata-only: \d+ chars\]', text)
+        self.assertIn('[REDACTED:context]', text)
+        self.assertIn('coverage.privacy', text)
+
+    def test_skill_documents_the_privacy_option_and_flag(self):
+        skill = self.read(self.SKILL, 'SKILL.md')
+        step0 = skill.split('## Step 0', 1)[1].split('## Step 1', 1)[0]
+        self.assertIn('| `privacy` |', step0)
+        self.assertIn('metadata-only', step0)
+        step1 = skill.split('## Step 1', 1)[1].split('## Step 2', 1)[0]
+        self.assertIn('--metadata-only', step1)
+        self.assertIn('clarity=pilot', step1)
+        self.assertIn('[metadata-only: N chars]', skill)
+        self.assertIn('coverage.privacy.mode', skill)
+        self.assertIn('profile.privacy', skill)
+        self.assertIn(BANNER.split(' (')[0], self.read(self.SKILL, 'scripts', 'query_snapshot.py'))
+
+    def test_readme_lists_the_privacy_option(self):
+        readme = self.read(self.ROOT, 'README.md')
+        self.assertRegex(readme, r'\| *`privacy` *\|[^\n]*`full`[^\n]*`metadata-only`')
+        self.assertIn('--metadata-only', readme)
+
+    def test_coverage_has_a_privacy_section(self):
+        text = self.read(self.SKILL, 'references', 'coverage.md')
+        section = text.split('## Privacy', 1)[1]
+        for needle in ('coverage.privacy', 'free_text_fields', '[metadata-only: N chars]',
+                       '[REDACTED:context]', 'best-effort'):
+            self.assertIn(needle, section)
+
+    def test_checklist_names_every_affected_check(self):
+        text = self.read(self.SKILL, 'references', 'checklist.md')
+        head = text.split('\n## ', 1)[0]
+        for check in ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
+                      'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
+                      'HYG-missing-hook-script', 'SEC-docs-only-constraint', 'LRN-contradiction',
+                      'LRN-enforce', 'SEC-wildcard-placement', 'SEC-ineffective-deny',
+                      'HYG-shadowed-allow'):
+            self.assertIn(check, head)
 
 
 if __name__ == '__main__':
