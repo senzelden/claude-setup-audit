@@ -495,3 +495,136 @@ class Apply(FakeHome):
         self.assertEqual(Path(outside).read_text(), 'untouched')
         self.assertEqual(Path(self.backups, 'keep.bak').read_text(), 'old backup')
         self.assertEqual(json.loads(Path(other).read_text()), {'sandbox': {'enabled': True}})
+
+
+class Run(FakeHome):
+    def setUp(self):
+        super().setUp()
+        self.a = self.write('a/.claude/settings.local.json', apply_ops.dump({'sandbox': {'enabled': False}}))
+        self.b = self.write('b/.claude/settings.local.json', apply_ops.dump({}))
+        self.backups = os.path.join(self.home, 'backups')
+
+    def ops(self, *targets):
+        return json.dumps({'version': 1, 'targets': list(targets)}).encode()
+
+    def target(self, file, *ops, expect_file=None):
+        t = {'file': file, 'ops': list(ops)}
+        if expect_file:
+            t['expect_file'] = expect_file
+        return t
+
+    def test_one_rejected_target_blocks_all_writes(self):
+        before = (Path(self.a).read_bytes(), Path(self.b).read_bytes())
+        out = apply_ops.run(self.ops(
+            self.target('~/a/.claude/settings.local.json', op('sandbox.enabled', True, {'value': False}), expect_file=sha(self.a)),
+            self.target('~/b/.claude/settings.local.json', op('permissions.defaultMode', 'plan'), expect_file=sha(self.b))),
+            apply=True, backup_dir=self.backups)
+        self.assertEqual([t['status'] for t in out['targets']], ['blocked', 'rejected'])
+        self.assertEqual(out['targets'][0]['reason'], 'not_applied_other_target_failed')
+        self.assertFalse(out['ok'])
+        self.assertEqual((Path(self.a).read_bytes(), Path(self.b).read_bytes()), before)
+        self.assertFalse(os.path.exists(self.backups))
+
+    def test_apply_requires_expect_file(self):
+        before = Path(self.a).read_bytes()
+        out = apply_ops.run(self.ops(self.target('~/a/.claude/settings.local.json',
+                                                 op('sandbox.enabled', True, {'value': False}))),
+                            apply=True, backup_dir=self.backups)
+        self.assertEqual(out['targets'][0]['reason'], 'expect_file_missing')
+        self.assertEqual(Path(self.a).read_bytes(), before)
+
+    def test_same_file_spelled_twice_is_a_duplicate_target(self):
+        out = apply_ops.run(self.ops(self.target('~/a/.claude/settings.local.json', op('sandbox.enabled', True, {'value': False})),
+                                     self.target(self.a, op('sandbox.failIfUnavailable', True))))
+        self.assertEqual((out['error'], out['ok'], out['targets']), ('duplicate_target', False, []))
+
+    def test_symlinked_backup_dir_is_refused(self):
+        real = os.path.join(self.home, 'real-backups')
+        os.makedirs(real)
+        os.symlink(real, self.backups)
+        before = Path(self.a).read_bytes()
+        out = apply_ops.run(self.ops(self.target('~/a/.claude/settings.local.json',
+                                                 op('sandbox.enabled', True, {'value': False}), expect_file=sha(self.a))),
+                            apply=True, backup_dir=self.backups)
+        self.assertEqual((out['error'], out['targets'][0]['reason']), ('backup_dir_symlink', 'backup_dir_symlink'))
+        self.assertEqual(Path(self.a).read_bytes(), before)
+        self.assertEqual(os.listdir(real), [])
+
+    def test_backup_dir_is_created_private(self):
+        out = apply_ops.run(self.ops(self.target('~/a/.claude/settings.local.json',
+                                                 op('sandbox.enabled', True, {'value': False}), expect_file=sha(self.a))),
+                            apply=True, backup_dir=self.backups)
+        self.assertTrue(out['ok'])
+        self.assertEqual(stat.S_IMODE(os.stat(self.backups).st_mode), 0o700)
+
+    def test_invalid_ops_file(self):
+        self.assertEqual(apply_ops.run(b'{'), {'applied': False, 'ok': False, 'docs_fetched': '2026-09-29',
+                                               'targets': [], 'error': 'invalid_ops_file'})
+
+    def test_output_is_sanitized_and_has_no_internal_fields(self):
+        canary = 'ghp_' + 'a' * 36
+        out = apply_ops.run(self.ops(self.target('~/.claude/settings.json', op(
+            'sandbox.credentials.envVars', [{'name': 'GH_TOKEN', 'mode': 'mask', 'extract': canary + '(x)'}]))))
+        text = json.dumps(out)
+        self.assertTrue(out['ok'], text)
+        self.assertNotIn(canary, text)
+        self.assertIn('[REDACTED]', text)
+        self.assertFalse([k for t in out['targets'] for k in t if k.startswith('_')])
+
+
+class Cli(FakeHome):
+    SCRIPT = os.path.join(SCRIPTS, 'apply_ops.py')
+
+    def call(self, *args):
+        env = {**os.environ, 'HOME': self.home, 'CLAUDE_CONFIG_DIR': self.claude}
+        r = subprocess.run([sys.executable, self.SCRIPT, *args], capture_output=True, text=True, env=env)
+        return r.returncode, (json.loads(r.stdout) if r.stdout.strip() else None), r.stderr
+
+    def ops_file(self, targets):
+        return self.write('ops.json', json.dumps({'version': 1, 'targets': targets}))
+
+    def test_dry_run_then_apply_then_stale_apply(self):
+        path = self.write('.claude/settings.json', apply_ops.dump({'theme': 'dark'}))
+        target = {'file': '~/.claude/settings.json', 'ops': [op('sandbox.enabled', True), op('sandbox.failIfUnavailable', True)]}
+        code, out, _ = self.call('--ops', self.ops_file([target]))
+        self.assertEqual((code, out['applied'], out['targets'][0]['status']), (0, False, 'planned'))
+        self.assertEqual(json.loads(Path(path).read_text()), {'theme': 'dark'})   # dry run wrote nothing
+        target['expect_file'] = out['targets'][0]['file_sha256']
+        ops = self.ops_file([target])
+        backups = os.path.join(self.home, 'b')
+        code, out, _ = self.call('--ops', ops, '--apply', '--backup-dir', backups)
+        self.assertEqual((code, out['targets'][0]['status'], out['targets'][0]['verified']), (0, 'applied', True))
+        self.assertTrue(out['targets'][0]['backup'].startswith('~/b/'))
+        code, out, _ = self.call('--ops', ops, '--apply', '--backup-dir', backups)
+        self.assertEqual((code, out['targets'][0]['reason']), (1, 'op_rejected'))  # preconditions no longer hold
+        same = {'file': '~/.claude/settings.json', 'ops': [op('sandbox.enabled', True, {'value': True})]}
+        code, out, _ = self.call('--ops', self.ops_file([same]))
+        self.assertEqual((code, out['targets'][0]['status']), (0, 'unchanged'))
+
+    def test_file_changed_after_dry_run_is_changed_since_plan(self):
+        path = self.write('.claude/settings.json', apply_ops.dump({'sandbox': {'enabled': False}}))
+        target = {'file': '~/.claude/settings.json', 'ops': [op('sandbox.enabled', True, {'value': False})]}
+        code, out, _ = self.call('--ops', self.ops_file([target]))
+        self.assertEqual((code, out['targets'][0]['status']), (0, 'planned'))
+        target['expect_file'] = out['targets'][0]['file_sha256']
+        ops = self.ops_file([target])
+        self.write('.claude/settings.json', apply_ops.dump({'sandbox': {'enabled': False}, 'theme': 'dark'}))
+        modified = Path(path).read_bytes()
+        backups = os.path.join(self.home, 'b')
+        code, out, _ = self.call('--ops', ops, '--apply', '--backup-dir', backups)
+        self.assertEqual((code, out['targets'][0]['status'], out['targets'][0]['reason']),
+                         (1, 'blocked', 'changed_since_plan'))
+        self.assertEqual(Path(path).read_bytes(), modified)
+        self.assertEqual(os.listdir(backups) if os.path.isdir(backups) else [], [])
+
+    def test_usage_errors_exit_2(self):
+        ops = self.ops_file([{'file': '~/.claude/settings.json', 'ops': [op('sandbox.enabled', True)]}])
+        self.assertEqual(self.call('--ops', ops, '--apply')[0], 2)
+        self.assertEqual(self.call()[0], 2)
+
+    def test_rejections_exit_1_with_json(self):
+        code, out, _ = self.call('--ops', self.ops_file([{'file': '~/.claude/settings.json',
+                                                          'ops': [op('sandbox.bwrapPath', '/usr/bin/bwrap')]}]))
+        self.assertEqual((code, out['targets'][0]['ops'][0]['reason']), (1, 'excluded_key'))
+        code, out, _ = self.call('--ops', os.path.join(self.home, 'missing.json'))
+        self.assertEqual((code, out['error']), (1, 'invalid_ops_file'))

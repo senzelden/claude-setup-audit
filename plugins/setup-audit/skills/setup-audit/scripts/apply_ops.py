@@ -478,3 +478,88 @@ def apply_target(p, expect_file, backup_dir):
         p.update(status='applied', reason='')
     else:
         _block(p, 'verify_failed', status='verify_failed')
+
+
+OK_STATUSES = ('planned', 'unchanged', 'applied')
+
+
+def _public(p):
+    row = {k: v for k, v in p.items() if not k.startswith('_')}
+    row['ops'] = [dict(r, before=collect.sanitize(r['before']), after=collect.sanitize(r['after']))
+                  for r in p['ops']]
+    return row
+
+
+def _prepare_backup_dir(backup_dir):
+    path = os.path.abspath(expand(backup_dir) if backup_dir.startswith('~/') else backup_dir)
+    if os.path.islink(path):
+        raise OpsError('backup_dir_symlink')
+    try:
+        if not os.path.isdir(path):
+            os.makedirs(path, mode=0o700)
+            os.chmod(path, 0o700)  # makedirs mode is subject to umask
+    except OSError:
+        raise OpsError('backup_dir_unusable') from None
+    return path
+
+
+def run(raw, apply=False, backup_dir=None):
+    result = {'applied': apply, 'ok': False, 'docs_fetched': DOCS_FETCHED, 'targets': [], 'error': None}
+    try:
+        targets = load_ops(raw)
+    except OpsError as exc:
+        result['error'] = exc.reason
+        return result
+    plans = [plan_target(t) for t in targets]
+    resolved = [p['_path'] for p in plans if p['_path']]
+    if len(set(resolved)) != len(resolved):
+        result['error'] = 'duplicate_target'
+        return result
+    if apply:
+        failed = any(p['status'] not in ('planned', 'unchanged') for p in plans)
+        missing = any('expect_file' not in t for t in targets)
+        if failed or missing:
+            for p, t in zip(plans, targets):
+                if p['status'] in ('planned', 'unchanged'):
+                    _block(p, 'expect_file_missing' if 'expect_file' not in t else 'not_applied_other_target_failed')
+        else:
+            try:
+                directory = _prepare_backup_dir(backup_dir) if any(p['status'] == 'planned' for p in plans) else None
+            except OpsError as exc:
+                result['error'] = exc.reason
+                for p in plans:
+                    if p['status'] == 'planned':
+                        _block(p, exc.reason)
+            else:
+                for p, t in zip(plans, targets):
+                    if p['status'] == 'planned':
+                        apply_target(p, t['expect_file'], directory)
+    result['targets'] = [_public(p) for p in plans]
+    result['ok'] = result['error'] is None and all(p['status'] in OK_STATUSES for p in plans)
+    return result
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--ops', required=True, help='ops file (JSON, see references/apply-ops.md)')
+    ap.add_argument('--apply', action='store_true', help='write the planned changes (default: dry run)')
+    ap.add_argument('--backup-dir', help='directory for private backups (required with --apply)')
+    ap.add_argument('--claude-dir', help='Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)')
+    a = ap.parse_args(argv)
+    if a.apply and not a.backup_dir:
+        ap.error('--apply requires --backup-dir')
+    if a.claude_dir:
+        collect.CLAUDE = os.path.abspath(os.path.expanduser(a.claude_dir))
+    try:
+        fd, _ = safe_write.open_no_symlink(a.ops)
+        with os.fdopen(fd, 'rb') as stream:
+            raw = stream.read(MAX_OPS_BYTES + 1)
+    except (OSError, safe_write.SymlinkRefused):
+        raw = None
+    result = run(raw, a.apply, a.backup_dir)
+    print(json.dumps(result, indent=1, ensure_ascii=False))
+    return 0 if result['ok'] else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
