@@ -98,3 +98,105 @@ def contextual_redact(text):
 
 def contextual_search(text):
     return contextual_redact(text) != text
+
+
+MARKER_FORMAT = '[metadata-only: N chars]'
+MARKER_RE = re.compile(r'\[metadata-only: \d+ chars\]\Z')
+FRONTMATTER_KEEP = frozenset({'name', 'model', 'context', 'agent', 'disable-model-invocation',
+                              'user-invocable', 'paths'})
+
+
+def marker(s):
+    return f'[metadata-only: {len(s)} chars]'
+
+
+def mask_value(v, counter, family):
+    if not isinstance(v, str) or MARKER_RE.match(v):
+        return v
+    counter[family] += 1
+    return marker(v)
+
+
+def mask_leaves(obj, counter, family):
+    if isinstance(obj, str):
+        return mask_value(obj, counter, family)
+    if isinstance(obj, dict):
+        return {k: mask_leaves(v, counter, family) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mask_leaves(v, counter, family) for v in obj]
+    return obj
+
+
+def _mask_list(lst, counter, family):
+    if isinstance(lst, list):
+        lst[:] = [mask_value(v, counter, family) for v in lst]
+
+
+def mask_handler(h, counter):
+    if isinstance(h, dict) and 'target' in h:
+        h['target'] = mask_value(h['target'], counter, 'hook_targets')
+
+
+def mask_settings(s, counter):
+    _mask_list(s.get('hook_commands'), counter, 'hook_commands')
+    for h in s.get('hook_handlers') or []:
+        mask_handler(h, counter)
+    _mask_list(s.get('missing_hook_scripts'), counter, 'missing_hook_scripts')
+    for key, family in (('sandbox', 'sandbox'), ('model_settings', 'model_settings')):
+        if key in s:
+            s[key] = mask_leaves(s[key], counter, family)
+    other = s.get('other') or {}
+    if 'statusLine' in other:
+        other['statusLine'] = mask_leaves(other['statusLine'], counter, 'status_line')
+    perms = s.get('permissions') or {}
+    _mask_list(perms.get('deny'), counter, 'permission_deny')
+    for rules in (perms.get('risky') or {}).values():
+        _mask_list(rules, counter, 'permission_risky')
+
+
+def mask_frontmatter(fm, counter):
+    if isinstance(fm, dict):
+        for k in fm:
+            if k not in FRONTMATTER_KEEP:
+                fm[k] = mask_leaves(fm[k], counter, 'frontmatter')
+
+
+def _entry(e, counter):
+    if 'excerpt' in e:
+        e['excerpt'] = mask_value(e['excerpt'], counter, 'excerpts')
+    mask_frontmatter(e.get('frontmatter'), counter)
+    for h in e.get('handlers') or []:
+        mask_handler(h, counter)
+
+
+def mask_snapshot(snap):
+    counter = Counter()
+    g, ms, ins = snap.get('global') or {}, snap.get('managed_settings') or {}, snap.get('instructions') or {}
+    summaries = list(g.get('settings') or []) + list(ms.get('settings') or [])
+    for p in (snap.get('projects') or {}).values():
+        summaries += p.get('settings') or []
+    summaries += ins.get('settings_candidates') or []
+    for s in summaries:
+        if isinstance(s, dict):
+            mask_settings(s, counter)
+    if 'last_update' in g:
+        g['last_update'] = mask_leaves(g['last_update'], counter, 'last_update')
+    usage = snap.get('usage') or {}
+    for key in ('heaviest_sessions', 'most_friction_sessions'):
+        for sess in usage.get(key) or []:
+            if 'first_prompt' in sess:
+                sess['first_prompt'] = mask_value(sess['first_prompt'], counter, 'first_prompt')
+    _mask_list(usage.get('facet_friction_details'), counter, 'facet_friction_details')
+    for sample in (snap.get('corrections') or {}).get('samples') or []:
+        if 'text' in sample:
+            sample['text'] = mask_value(sample['text'], counter, 'correction_samples')
+    for proj in ((snap.get('memory') or {}).get('by_project') or {}).values():
+        for e in proj.get('entries') or []:
+            if 'description' in e:
+                e['description'] = mask_value(e['description'], counter, 'memory_descriptions')
+    for e in ins.get('entries') or []:
+        _entry(e, counter)
+    for plugin in (snap.get('extensions') or {}).get('plugins') or []:
+        for comp in plugin.get('components') or []:
+            _entry(comp, counter)
+    return dict(counter)

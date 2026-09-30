@@ -1117,3 +1117,20 @@ class UsageMeasurements(FakeHome):
         for p in [-.1, 1.1]:
             with self.assertRaises(ValueError):
                 collect.pct([1], p)
+
+
+class HookHandlerIdentifiers(unittest.TestCase):
+    def test_mcp_tool_and_http_handlers_carry_identifiers(self):
+        mcp = collect.hook_handler_entry('PreToolUse', 'Bash', {'type': 'mcp_tool', 'server': 'srv', 'tool': 'check'})
+        self.assertEqual((mcp['server'], mcp['tool']), ('srv', 'check'))
+        http = collect.hook_handler_entry('Stop', None, {'type': 'http', 'url': 'https://hooks.example.com/p?q=1'})
+        self.assertEqual(http['target_origin'], 'https://hooks.example.com')
+        self.assertEqual(collect.hook_handler_entry('Stop', None, {'type': 'http', 'url': '$URL'})['target_origin'],
+                         'dynamic_or_unknown')
+        self.assertNotIn('target_origin', collect.hook_handler_entry('Stop', None, {'command': 'x'}))
+
+    def test_non_string_identifiers_and_backslash_url(self):
+        mcp = collect.hook_handler_entry('Stop', None, {'type': 'mcp_tool', 'server': 3, 'tool': None})
+        self.assertEqual((mcp['server'], mcp['tool']), (None, None))
+        http = collect.hook_handler_entry('Stop', None, {'type': 'http', 'url': 'https://good.example\\@evil.example/x'})
+        self.assertEqual(http['target_origin'], 'https://good.example')

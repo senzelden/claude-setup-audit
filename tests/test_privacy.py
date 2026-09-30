@@ -1,5 +1,7 @@
 """Privacy: contextual secret detection. Fake homes only; no test here touches ~/.claude."""
+import copy
 import unittest
+from collections import Counter
 
 from test_collect import collect  # also puts the plugin scripts directory on sys.path
 import privacy
@@ -133,6 +135,79 @@ class ContextualDetection(unittest.TestCase):
         self.assertEqual(out['session_cwd'], '/tmp/app')
         self.assertEqual(out['commit_sha'], '3f1c0a9b7e2d4c55a1b2c3d4e5f60718293a4b5c')
         self.assertEqual(out['api_key'], '$FOO')
+
+
+SETTINGS = {
+    'model': 'opus', 'modelSettings': {'opus': {'note': 'free text', 'budget': 3}},
+    'statusLine': {'type': 'command', 'command': 'print-status --verbose'},
+    'sandbox': {'enabled': True, 'network': {'allowedDomains': ['a.example.com', 'b.example.com']}},
+    'permissions': {'allow': ['Bash(sudo ls)', 'Bash(curl:*)'], 'deny': ['Bash(rm -rf /)', 'Read(.env)'],
+                    'defaultMode': 'acceptEdits', 'additionalDirectories': ['~/shared']},
+    'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+        {'type': 'command', 'command': 'echo hi'},
+        {'type': 'http', 'url': 'https://hooks.example.com/x', 'headers': {'X-Token': '$T'}},
+        {'type': 'prompt', 'prompt': 'judge this'},
+        {'type': 'mcp_tool', 'server': 'srv', 'tool': 'check'}]}]},
+}
+
+
+class MaskingUnits(unittest.TestCase):
+    def test_marker_format(self):
+        self.assertEqual(privacy.marker('abc'), '[metadata-only: 3 chars]')
+        self.assertTrue(privacy.MARKER_RE.match(privacy.marker('')))
+
+    def test_mask_settings_summary(self):
+        s = collect.summarize_settings('/tmp/x/settings.json', data=copy.deepcopy(SETTINGS))
+        before = copy.deepcopy(s)
+        c = Counter()
+        privacy.mask_settings(s, c)
+        self.assertTrue(all(privacy.MARKER_RE.match(v) for v in s['hook_commands']))
+        self.assertEqual(len(s['hook_commands']), len(before['hook_commands']))
+        for h, b in zip(s['hook_handlers'], before['hook_handlers']):
+            self.assertTrue(privacy.MARKER_RE.match(h['target']))
+            for k in ('event', 'matcher', 'type', 'server', 'tool', 'target_origin', 'header_keys'):
+                self.assertEqual(h.get(k), b.get(k))
+        self.assertEqual(sorted(s['permissions']['risky']), sorted(before['permissions']['risky']))
+        for flag, rules in s['permissions']['risky'].items():
+            self.assertEqual(len(rules), len(before['permissions']['risky'][flag]))
+            self.assertTrue(all(privacy.MARKER_RE.match(r) for r in rules))
+        self.assertEqual(len(s['permissions']['deny']), s['permissions']['deny_count'])
+        self.assertTrue(all(privacy.MARKER_RE.match(r) for r in s['permissions']['deny']))
+        self.assertIs(s['sandbox']['enabled'], True)
+        self.assertTrue(all(privacy.MARKER_RE.match(d) for d in s['sandbox']['network']['allowedDomains']))
+        self.assertEqual(s['model_settings']['opus']['budget'], 3)
+        self.assertTrue(privacy.MARKER_RE.match(s['model_settings']['opus']['note']))
+        self.assertTrue(privacy.MARKER_RE.match(s['other']['statusLine']['command']))
+        for k in ('path', 'keys', 'env_keys', 'model', 'hooks'):
+            self.assertEqual(s[k], before[k])
+        self.assertEqual(s['permissions']['default_mode'], 'acceptEdits')
+        self.assertEqual(s['permissions']['additional_dirs'], ['~/shared'])
+        self.assertEqual(c['hook_targets'], 4)
+        self.assertEqual(c['permission_deny'], 2)
+
+    def test_mask_frontmatter_keeps_identifier_keys_only(self):
+        fm = {'name': 's', 'model': 'haiku', 'paths': 'src/**', 'description': 'd', 'when_to_use': 'w',
+              'allowed-tools': 'Bash(x)', 'hooks': 'h', 'unknown-key': 'u'}
+        privacy.mask_frontmatter(fm, Counter())
+        self.assertEqual((fm['name'], fm['model'], fm['paths']), ('s', 'haiku', 'src/**'))
+        for k in ('description', 'when_to_use', 'allowed-tools', 'hooks', 'unknown-key'):
+            self.assertTrue(privacy.MARKER_RE.match(fm[k]), k)
+
+    def test_shared_objects_are_masked_once(self):
+        session = {'project': '~/app', 'first_prompt': 'hello there'}
+        snap = {'usage': {'heaviest_sessions': [session], 'most_friction_sessions': [session],
+                          'facet_friction_details': []}}
+        counts = privacy.mask_snapshot(snap)
+        self.assertEqual(session['first_prompt'], '[metadata-only: 11 chars]')
+        self.assertEqual(counts['first_prompt'], 1)
+
+    def test_mask_snapshot_skips_absent_sections_and_counts_families(self):
+        snap = {'corrections': {}, 'memory': {'by_project': {'p': {'entries': [{'file': 'a.md', 'description': ''}]}}},
+                'instructions': {'entries': [{'source': '/x/CLAUDE.md', 'excerpt': 'abc', 'frontmatter': {}}]}}
+        counts = privacy.mask_snapshot(snap)
+        self.assertEqual(snap['memory']['by_project']['p']['entries'][0],
+                         {'file': 'a.md', 'description': '[metadata-only: 0 chars]'})
+        self.assertEqual(counts, {'memory_descriptions': 1, 'excerpts': 1})
 
 
 if __name__ == '__main__':

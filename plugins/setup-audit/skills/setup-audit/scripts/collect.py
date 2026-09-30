@@ -401,10 +401,12 @@ def hook_handler_entry(event, matcher, x):
     """
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
-        target, extra = x.get("url", ""), {"header_keys": sorted(x.get("headers") or {}),
-                                           "allowed_env_vars": x.get("allowedEnvVars")}
+        target = x.get("url", "")
+        extra = {"header_keys": sorted(x.get("headers") or {}), "allowed_env_vars": x.get("allowedEnvVars"),
+                 "target_origin": extensions.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
     elif kind == "mcp_tool":
-        target, extra = f"{x.get('server', '?')}:{x.get('tool', '?')}", {}
+        target = f"{x.get('server', '?')}:{x.get('tool', '?')}"
+        extra = {k: _mcp_name(x[k]) if isinstance(x.get(k), str) else None for k in ("server", "tool")}
     elif kind in ("prompt", "agent"):
         target, extra = x.get("prompt", ""), {}
     else:

@@ -28,6 +28,16 @@ def split_url(url):
     return urlsplit(url)
 
 
+def url_origin(url):
+    """scheme://host for http/https/ws/wss URLs with a host; else 'dynamic_or_unknown' ('invalid_url' on ValueError)."""
+    try:
+        parts = split_url(url)
+    except ValueError:
+        return 'invalid_url'
+    return (f'{parts.scheme}://{parts.hostname}' if parts.scheme in ('http', 'https', 'ws', 'wss')
+            and parts.hostname else 'dynamic_or_unknown')
+
+
 def tool_prefix(name, plugin=None):
     """Server segment of mcp__<segment>__<tool>: chars outside [A-Za-z0-9_-] become '_'."""
     norm = lambda s: re.sub(r'[^A-Za-z0-9_-]', '_', s)  # noqa: E731
@@ -93,12 +103,7 @@ def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
                 r'(?:@[\w.-]+/)?[\w.-]+(?:@|==)\d+\.\d+\.\d+(?:-[\w.-]+)?', candidate) else 'no_exact_version_observed')
     url = config.get('url')
     if isinstance(url, str):
-        try:
-            parts = split_url(url)
-            item['endpoint_origin'] = (f'{parts.scheme}://{parts.hostname}' if parts.scheme in ('http', 'https', 'ws', 'wss')
-                                       and parts.hostname else 'dynamic_or_unknown')
-        except ValueError:
-            item['endpoint_origin'] = 'invalid_url'
+        item['endpoint_origin'] = url_origin(url)
         item['endpoint_detail'] = 'path, query, fragment, port and userinfo omitted'
     mechanisms = []
     for key in ('env', 'headers'):
