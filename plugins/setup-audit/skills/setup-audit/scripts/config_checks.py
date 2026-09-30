@@ -2,16 +2,15 @@
 
 Pure functions over settings JSON and collector summaries. Stdlib only; never runs a hook.
 Documentation baseline: https://code.claude.com/docs/en/hooks.md and
-https://code.claude.com/docs/en/permissions.md, both fetched 2026-09-29.
+https://code.claude.com/docs/en/permissions.md, both fetched 2026-09-29, re-verified 2026-09-30.
 """
 import hashlib
 import json
 import re
 import warnings
 
-DOCS_FETCHED = '2026-09-29'
 DEFAULT, NARROW = 'default', 'narrow'
-# hooks.md (fetched 2026-09-29), "Hook lifecycle" event table and "Matcher patterns":
+# hooks.md (fetched 2026-09-29, re-verified 2026-09-30), "Hook lifecycle" event table and "Matcher patterns":
 # event -> (what the matcher filters, exact-match character set). (None, None) = "no matcher
 # support"; there "If you add a `matcher` field to an event without matcher support, it is
 # silently ignored." FileChanged and StopFailure use the narrower exact set (letters, digits, _, |).
@@ -51,7 +50,7 @@ HOOK_EVENTS = {
     'MessageDisplay': (None, None),
 }
 TOOL_EVENTS = frozenset(e for e, (filters, _) in HOOK_EVENTS.items() if filters == 'tool name')
-# hooks.md "Hook handler fields" (fetched 2026-09-29).
+# hooks.md "Hook handler fields" (fetched 2026-09-29, re-verified 2026-09-30).
 COMMON_FIELDS = frozenset({'type', 'if', 'timeout', 'statusMessage', 'once'})
 TYPE_FIELDS = {
     'command': frozenset({'command', 'args', 'async', 'asyncRewake', 'shell'}),
@@ -128,7 +127,7 @@ def handler_issues(event, matcher, handler):
 
 
 MAX_OVERLAPS, MAX_DUPLICATES, MAX_SOURCES = 30, 20, 10
-# hooks.md "Bash" tool_input table (raw page fetched 2026-09-30): the only documented fields.
+# hooks.md "Bash" tool_input table (fetched 2026-09-29, re-verified 2026-09-30): the only documented fields.
 BASH_PARAMS = ('command', 'description', 'timeout', 'run_in_background')
 RULE_RE = re.compile(r'([^()]+?)(?:\((.*)\))?', re.S)
 BASH_RULE_RE = re.compile(r'Bash\((.*)\)', re.S)
@@ -176,7 +175,7 @@ def rule_covers(by, allow, same_file=True):
     Bash input-parameter rule (`Bash(timeout:*)`) is ambiguous, so only its raw text matches.
     Non-Bash specifiers are equal-text only, and not even then when `!` (gitignore negation
     denies nothing) or, across settings files, a leading single `/` (anchors at each file's own
-    directory, permissions.md fetched 2026-09-30) makes equal text mean different things.
+    directory, permissions.md fetched 2026-09-29, re-verified 2026-09-30) makes equal text mean different things.
     """
     b, a = _parse(by), _parse(allow)
     if not b or not a:

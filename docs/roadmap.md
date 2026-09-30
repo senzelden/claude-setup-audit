@@ -95,6 +95,10 @@ Hosted validation passed all eight jobs at `48d9d5d`:
 - **Deeper checks:** hook matcher validation, duplicate hooks/layer conflicts and permission
   wildcard placement are implemented (unreleased). Remaining: MCP exposure metadata and recurring
   tool-error clustering.
+  Follow-up: build_snapshot aborts when one settings file is malformed (e.g. permissions/hooks not
+  an object, `ask: 5`, `deny: [null]`, `allow: [{}]` raise TypeError in analyze_permissions,
+  summarize_settings, redact, harness.hook_index, hook_handler_entry); needs per-file coverage
+  records like invalid_settings.
   Verify proposed signals against current official documentation before implementation.
 - **Enterprise posture:** opt-in data-handling assessment that separates locally observable
   settings from provider/account/admin facts requiring verification. Keep training, retention,

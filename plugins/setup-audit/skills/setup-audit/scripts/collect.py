@@ -96,7 +96,8 @@ RISKY_RULES = [
     ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
 ]
 # permissions.md "Wildcard patterns" / "Match by input parameter" and errors.md "Has a wildcard before
-# the rest of the command", fetched 2026-09-29. See references/checklist.md SEC-wildcard-placement.
+# the rest of the command", fetched 2026-09-29, re-verified 2026-09-30.
+# See references/checklist.md SEC-wildcard-placement.
 PRIMARY_FIELD_RULE = re.compile(r"(?:(?:Bash|PowerShell)\(\s*command|(?:Read|Edit|Write)\(\s*file_path"
                                 r"|(?:Grep|Glob)\(\s*path|NotebookEdit\(\s*notebook_path|WebFetch\(\s*url)\s*:")
 FAIL_OPEN = ("colon-star-literal", "ignored-primary-field", "mcp-rule-with-parentheses")
@@ -153,6 +154,8 @@ def rule_shape_issues(perms):
         if flagged:
             out[name] = {k: v[:6] for k, v in sorted(flagged.items())}
     return out
+
+
 ONE_OFF_RE = re.compile(r".{120,}|/tmp/|\b\d{4,}\b|https?://\S+\?")
 CORRECTION_RE = re.compile(
     r"^(no\b|nope|stop\b|wait\b|don'?t\b|that'?s (wrong|not)|wrong\b|again\b|i said|why did you|"

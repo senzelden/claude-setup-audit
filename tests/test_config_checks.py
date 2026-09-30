@@ -52,6 +52,11 @@ class RuleShapes(unittest.TestCase):
             'ask': {'mcp-rule-with-parentheses': ['mcp__github__create_issue(repo:x)']}})
         many = {'allow': [f'Bash(tool{i} * main)' for i in range(8)]}
         self.assertEqual(len(collect.rule_shape_issues(many)['allow']['wildcard-before-subcommand']), 6)
+        deny = {'deny': [f'Bash(tool{i}:* push)' for i in range(8)]}
+        self.assertEqual(len(collect.rule_shape_issues(deny)['deny']['colon-star-literal']), 6)
+        long_rule = 'Bash(git:* ' + 'x' * 300 + ')'
+        (kept,) = collect.rule_shape_issues({'deny': [long_rule]})['deny']['colon-star-literal']
+        self.assertLessEqual(len(kept), 160)
         stored = collect.rule_shape_issues({'allow': ['Bash(sk-abcdefghijklmnopqrstuv * main)']})
         self.assertEqual(stored['allow']['wildcard-before-subcommand'], ['Bash([REDACTED] * main)'])
         self.assertEqual(collect.rule_shape_issues({'allow': ['Bash(git status)']}), {})
@@ -321,6 +326,15 @@ class HookDuplicates(unittest.TestCase):
                    {'plugin': 'b@m', 'path': 'pb', 'handlers': [start]}]
         self.assertEqual(self.dups(stack('global', plugins=plugins)), ([], 0))
 
+    def test_plugin_root_commands_group_within_one_plugin(self):
+        start = entry('SessionStart', None, command='${CLAUDE_PLUGIN_ROOT}/hooks/start.sh')
+        self.assertTrue(start['plugin_relative'])
+        plugin = {'plugin': 'a@m', 'path': 'pa', 'handlers': [start, start]}
+        found, omitted = self.dups(stack('global', plugins=[plugin]))
+        self.assertEqual(omitted, 0)
+        self.assertEqual([(d['effect'], [s['plugin'] for s in d['sources']]) for d in found],
+                         [('same_file', ['a@m', 'a@m'])])
+
     def test_reported_once_and_capped(self):
         lint = entry('PreToolUse', 'Bash', command='lint.sh')
         g = stack('global', sfile('managed', MANAGED, handlers=[lint]), sfile('user', USER, handlers=[lint]))
@@ -402,6 +416,39 @@ class ConfigConflictsEndToEnd(FakeHome):
             os.remove(os.path.join(self.home, rel))
         again = self.build('--scope', 'project', '--project', root)['config_conflicts']
         self.assertEqual((again['permission_overlaps'], again['hook_duplicates']), ([], []))
+
+    def test_project_scoped_plugin_of_another_directory_is_not_in_these_stacks(self):
+        root = self.fixture()
+        hooks = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'lint.sh CANARY-7f3a'}]}]}
+        self.write('.claude/settings.json', {'hooks': hooks, 'enabledPlugins': {'demo@market': True, 'other@market': True}})
+        demo = os.path.join(self.claude, 'plugins/cache/market/demo/1')
+        other = os.path.join(self.claude, 'plugins/cache/market/other/1')
+        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {
+            'demo@market': [{'scope': 'user', 'installPath': demo, 'version': '1'}],
+            'other@market': [{'scope': 'project', 'projectPath': os.path.join(self.home, 'other'),
+                              'installPath': other, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/market/other/1/hooks/hooks.json', {'hooks': hooks})
+        self.write('other/.claude/settings.json', {'enabledPlugins': {'other@market': True}})
+        snap = self.build('--scope', 'project', '--project', root, '--project', os.path.join(self.home, 'other'))
+        self.assertIn('other@market', [p['name'] for p in snap['extensions']['plugins']])
+        cc = snap['config_conflicts']
+        plugins = {d['stack']: [s['plugin'] for s in d['sources'] if s['layer'] == 'plugin']
+                   for d in cc['hook_duplicates']}
+        self.assertEqual(plugins['global'], ['demo@market'])
+        self.assertEqual(plugins.get('~/repo', []), [])
+        self.assertEqual(plugins['~/other'], ['demo@market', 'other@market'])
+
+    def test_coverage_is_partial_when_caps_omit_entries(self):
+        snap = {'collection_scope': {'requested': 'global'}, 'managed_settings': {'sources': []},
+                'usage': {'coverage': {}}, 'transcripts': {'coverage': {}},
+                'config_conflicts': {'hook_duplicates_omitted': 2, 'permission_overlaps_omitted': 1}}
+        source = next(s for s in collect.snapshot_coverage(snap, [self.home])['sources']
+                      if s['source'] == 'config_conflicts')
+        self.assertEqual((source['status'], source['omitted']), ('partial', 3))
+        snap['config_conflicts'] = {'hook_duplicates_omitted': 0, 'permission_overlaps_omitted': 0}
+        source = next(s for s in collect.snapshot_coverage(snap, [self.home])['sources']
+                      if s['source'] == 'config_conflicts')
+        self.assertEqual(source['status'], 'collected')
 
     def test_raw_rules_from_an_earlier_build_are_dropped(self):
         stale = '~/stale/.claude/settings.json'
