@@ -1,4 +1,6 @@
 """Bounded MCP/plugin provenance. Never connects, installs, or runs discovered components."""
+from collections import defaultdict
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -8,6 +10,42 @@ import inventory
 
 MAX_ENTRIES = 100
 MAX_PLUGINS = 50
+NAME_CAP = 120
+
+# mcp.md, fetched 2026-09-29: reserved built-in names ("including"; not exhaustive), remote types
+# (streamable-http is an alias of http), and the tool-name normalization for plugin servers.
+RESERVED_NAMES = frozenset({'workspace', 'claude-in-chrome', 'computer-use', 'Claude Preview', 'Claude Browser'})
+REMOTE_TYPES = frozenset({'http', 'streamable-http', 'sse', 'ws'})
+VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z_0-9]*)(?::-[^}]*)?\}')
+
+
+def tool_prefix(name, plugin=None):
+    """Server segment of mcp__<segment>__<tool>: chars outside [A-Za-z0-9_-] become '_'."""
+    norm = lambda s: re.sub(r'[^A-Za-z0-9_-]', '_', s)  # noqa: E731
+    return f'plugin_{norm(plugin)}_{norm(name)}' if plugin else norm(name)
+
+
+def endpoint_locality(url):
+    """Locality from the URL text alone; never resolves names."""
+    if '${' in url:
+        return 'dynamic'
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return 'invalid'
+    if not host:
+        return 'invalid'
+    if host == 'localhost' or host.endswith('.localhost'):
+        return 'loopback'
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return 'named_host'
+    if ip.is_loopback:
+        return 'loopback'
+    if ip.is_private or ip.is_link_local:
+        return 'private_address'
+    return 'public_address'
 
 
 def json_object(path, scope, sources):
@@ -25,7 +63,7 @@ def json_object(path, scope, sources):
     return data
 
 
-def mcp_summary(name, config, path, scope, redact, project=None):
+def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
     item = inventory.source(path, scope, 'collected', name=redact(name), project=project,
                             active_state='unknown', representation='selected_fields')
     if not isinstance(config, dict):
@@ -59,20 +97,80 @@ def mcp_summary(name, config, path, scope, redact, project=None):
         item[key + '_keys'] = sorted(values) if isinstance(values, dict) else []
         if isinstance(values, dict) and values:
             refs = sorted({m.group(1) for v in values.values() if isinstance(v, str)
-                           for m in re.finditer(r'\$\{([A-Za-z_][A-Za-z_0-9]*)(?::-[^}]*)?\}', v)})
+                           for m in VAR_RE.finditer(v)})
             item[key + '_variable_references'] = refs
             mechanisms.append(key + ('_references_or_literals' if refs else '_configured_values_omitted'))
     for key in ('oauth', 'headersHelper'):
         if key in config:
             mechanisms.append(key + '_configured')
     item['credential_mechanisms'] = mechanisms or ['not_observed_in_selected_fields']
+    declared = config.get('type')
+    declared = declared if declared is None or isinstance(declared, str) else '<invalid>'
+    has_url = 'url' in config
+    notes = []
+    if declared is None and has_url:
+        notes.append('url_without_type')
+    if declared == 'sdk':
+        notes.append('sdk_type_skipped')
+    if declared == 'sse':
+        notes.append('sse_deprecated')
+    if name in RESERVED_NAMES:
+        notes.append('reserved_name')
+    if declared in REMOTE_TYPES and url == '':
+        notes.append('empty_url_placeholder')
+    item['config_notes'] = notes
+    item['transport_class'] = ('skipped' if declared == 'sdk' or (declared is None and has_url) else
+                               'remote' if declared in REMOTE_TYPES else
+                               'local_process' if declared in (None, 'stdio') else 'unknown')
+    if isinstance(url, str) and url:
+        item['endpoint_locality'] = endpoint_locality(url)
+        try:
+            parts = urlsplit(url)
+            scheme, userinfo, query = parts.scheme, '@' in parts.netloc, bool(parts.query)
+        except ValueError:
+            scheme, userinfo, query = '', False, False
+        item['url_has_userinfo'], item['url_has_query'] = userinfo, query
+        item['plaintext_transport'] = scheme in ('http', 'ws') and item['endpoint_locality'] != 'loopback'
+        item['url_variable_references'] = sorted({m.group(1) for m in VAR_RE.finditer(url)})
+    for key in ('env', 'headers'):
+        values = config.get(key)
+        if isinstance(values, dict):
+            item[key + '_literal_keys'] = sorted(k for k, v in values.items()
+                                                 if isinstance(v, str) and v and not VAR_RE.search(v))
+    oauth = config.get('oauth')
+    if isinstance(oauth, dict):
+        item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth if isinstance(k, str))[:MAX_ENTRIES]
+        scopes = oauth.get('scopes')
+        item['oauth_scopes'] = (sorted({redact(t[:64]) for t in scopes.split()})[:20]
+                                if isinstance(scopes, str) else None)
+    item['tool_prefix'] = redact(tool_prefix(name, plugin))[:NAME_CAP]
+    if plugin:
+        item['plugin'] = redact(plugin)[:NAME_CAP]
     return item
 
 
-def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sources, settings, redact, hook_summary):
+def name_collisions(servers):
+    """Same name in local/project/user scope for one project (mcp.md: matched by name there)."""
+    rows = [s for s in servers if s.get('status') == 'collected' and s.get('scope') in ('user', 'local', 'project')]
+    shared = [s for s in rows if s['scope'] == 'user']
+    out = []
+    for project in sorted({s['project'] for s in rows if s.get('project')}):
+        group = defaultdict(list)
+        for s in shared + [s for s in rows if s['scope'] != 'user' and s.get('project') == project]:
+            group[s['name']].append(s)
+        for name in sorted(group):
+            scopes = sorted({s['scope'] for s in group[name]})
+            if len(scopes) > 1:
+                ends = {(s.get('transport'), s.get('endpoint_origin') or s.get('executable')) for s in group[name]}
+                out.append(dict(name=name, project=project, scopes=scopes, endpoint_origins_differ=len(ends) > 1))
+    return out[:MAX_ENTRIES]
+
+
+def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sources, settings, redact, hook_summary,
+                       git_status=None):
     sources, servers, plugins = [], [], []
 
-    def servers_from(data, path, scope, project=None, key='mcpServers', bare=False):
+    def servers_from(data, path, scope, project=None, key='mcpServers', bare=False, plugin=None):
         values = data.get(key, data if bare else {})
         if not isinstance(values, dict):
             sources.append(inventory.source(path, scope, 'unavailable', reason='invalid_server_map'))
@@ -81,7 +179,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
         names = sorted(values)
         if len(names) > remaining:
             sources.append(inventory.source(path, scope, 'partial', reason='server_limit', omitted=len(names)-remaining))
-        servers.extend(mcp_summary(n, values[n], path, scope, redact, project) for n in names[:remaining])
+        servers.extend(mcp_summary(n, values[n], path, scope, redact, project, plugin) for n in names[:remaining])
 
     user_path = os.path.join(home, '.claude.json')
     user = json_object(user_path, 'user', sources)
@@ -92,7 +190,12 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
         if isinstance(local, dict) and isinstance(local.get(root), dict):
             servers_from(local[root], user_path, 'local', root)
         path = os.path.join(root, '.mcp.json')
+        before = len(servers)
         servers_from(json_object(path, 'project', sources), path, 'project', root)
+        if git_status and len(servers) > before:
+            state = git_status(root, '.mcp.json')
+            for server in servers[before:]:
+                server['file_git_status'] = state
     if managed_dir:
         path = os.path.join(managed_dir, 'managed-mcp.json')
         servers_from(json_object(path, 'managed', sources), path, 'managed')
@@ -146,6 +249,8 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
         manifest_path = os.path.join(root, '.claude-plugin', 'plugin.json')
         manifest = json_object(manifest_path, 'plugin', sources)
         plugin['manifest_keys'] = sorted(manifest)
+        plugin_name = (manifest['name'] if isinstance(manifest.get('name'), str) and manifest['name']
+                       else name.split('@')[0])
         for kind, default in (('hooks', 'hooks/hooks.json'), ('mcpServers', '.mcp.json'),
                               ('skills', 'skills'), ('agents', 'agents'), ('commands', 'commands')):
             field = manifest.get(kind)
@@ -158,7 +263,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
                     inline.append(value)
             for data in inline:
                 if kind == 'mcpServers':
-                    servers_from(data, manifest_path, 'plugin', plugin['project'], bare=True)
+                    servers_from(data, manifest_path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
                 elif kind == 'hooks':
                     add_hooks(plugin, data, manifest_path, hook_summary)
             if len(set(paths)) > MAX_ENTRIES:
@@ -172,7 +277,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
                 if kind in ('hooks', 'mcpServers'):
                     data = json_object(path, 'plugin', sources)
                     if kind == 'mcpServers':
-                        servers_from(data, path, 'plugin', plugin['project'], bare=True)
+                        servers_from(data, path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
                     else:
                         add_hooks(plugin, data, path, hook_summary)
                 else:
@@ -180,6 +285,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
     sources.extend(inventory.source(p.get('source', registry_path), 'plugin', p['status']) for p in plugins)
     return dict(mcp_servers=servers, plugins=plugins, sources=sources,
+                mcp_name_collisions=name_collisions(servers),
                 limitations=['Activation, approval, runtime overrides, remote connectors and server policy remain unknown.',
                              'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
                              'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.'])

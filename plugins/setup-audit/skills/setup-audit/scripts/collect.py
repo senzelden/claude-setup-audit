@@ -1678,7 +1678,7 @@ def build_snapshot(a):
     snap["global"]["plugin_session_start_hooks"] = plugin_session_start_hooks(hook_index)
     snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
                                                        snap['managed_settings']['sources'], settings,
-                                                       redact, hook_handler_entry)
+                                                       redact, hook_handler_entry, git_status=git_status)
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["harness_overhead"] = harness.assemble(
