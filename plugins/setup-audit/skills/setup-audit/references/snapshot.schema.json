@@ -4,6 +4,248 @@
   "description": "Stable envelope and coverage/provenance contract. Family payloads allow additive fields; see snapshot-format.md.",
   "$defs": {
     "config_layer": {"enum": ["managed", "user", "project", "local", "plugin"]},
+    "mcp_server": {
+      "type": "object",
+      "required": [
+        "source",
+        "scope",
+        "status"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "collected",
+            "absent",
+            "partial",
+            "unavailable",
+            "not_checked"
+          ]
+        },
+        "eligible": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_date": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": [
+            "integer",
+            "boolean"
+          ],
+          "minimum": 0
+        },
+        "bytes_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transport_class": {
+          "enum": [
+            "local_process",
+            "remote",
+            "skipped",
+            "unknown"
+          ]
+        },
+        "config_notes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "url_without_type",
+              "sdk_type_skipped",
+              "sse_deprecated",
+              "reserved_name",
+              "empty_url_placeholder"
+            ]
+          }
+        },
+        "endpoint_locality": {
+          "enum": [
+            "loopback",
+            "private_address",
+            "public_address",
+            "named_host",
+            "dynamic",
+            "invalid"
+          ]
+        },
+        "plaintext_transport": {
+          "type": "boolean"
+        },
+        "url_has_userinfo": {
+          "type": "boolean"
+        },
+        "url_has_query": {
+          "type": "boolean"
+        },
+        "url_variable_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env_literal_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "headers_literal_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "oauth_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "oauth_scopes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "tool_prefix": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "file_git_status": {
+          "enum": [
+            "tracked",
+            "untracked",
+            "ignored",
+            "not-a-git-repo",
+            "unknown"
+          ]
+        },
+        "project_trust_accepted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "policy_observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "source",
+              "kind",
+              "value"
+            ],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "approval_enabled",
+                  "approval_rejected",
+                  "approval_enable_all",
+                  "policy_allowed_by_name",
+                  "policy_denied_by_name",
+                  "toggle_disabled",
+                  "toggle_enabled",
+                  "permission_allow",
+                  "permission_ask",
+                  "permission_deny",
+                  "permission_allow_any_server",
+                  "permission_ask_any_server",
+                  "permission_deny_any_server"
+                ]
+              },
+              "value": {
+                "type": [
+                  "boolean",
+                  "integer"
+                ]
+              }
+            }
+          }
+        },
+        "policy_observations_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "tool_error_row": {
+      "type": "object",
+      "required": [
+        "calls",
+        "errors",
+        "denied",
+        "failure_rate",
+        "categories"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denied": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "categories": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "top_error_tools": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        }
+      }
+    },
     "skill_listing_point": {
       "type": "object",
       "required": ["date", "skill_count", "chars"],
@@ -213,6 +455,71 @@
         "coverage"
       ],
       "properties": {
+        "tool_errors": {
+          "type": "object",
+          "required": [
+            "error_results_paired",
+            "error_results_unmatched",
+            "results_without_is_error",
+            "by_tool",
+            "by_mcp_server",
+            "omitted",
+            "min_calls_for_rate"
+          ],
+          "properties": {
+            "error_results_paired": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error_results_unmatched": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "results_without_is_error": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "by_tool": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tool_error_row"
+              }
+            },
+            "by_mcp_server": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tool_error_row"
+              }
+            },
+            "omitted": {
+              "type": "object",
+              "required": [
+                "tools",
+                "mcp_servers"
+              ],
+              "properties": {
+                "tools": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mcp_servers": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "min_calls_for_rate": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "categories_basis": {
+              "type": "string"
+            },
+            "scope_note": {
+              "type": "string"
+            }
+          }
+        },
         "coverage": {
           "type": "object",
           "additionalProperties": {
@@ -285,7 +592,92 @@
         "mcp_servers": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/source"
+            "$ref": "#/$defs/mcp_server"
+          }
+        },
+        "mcp_project_state": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "project",
+              "source",
+              "trust_accepted"
+            ],
+            "properties": {
+              "project": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "enabledMcpjsonServers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "disabledMcpjsonServers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "disabledMcpServers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "enabledMcpServers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "trust_accepted": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "mcp_name_collisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "project",
+              "scopes",
+              "endpoint_origins_differ"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "project": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "user",
+                    "local",
+                    "project"
+                  ]
+                }
+              },
+              "endpoint_origins_differ": {
+                "type": "boolean"
+              }
+            }
           }
         },
         "plugins": {

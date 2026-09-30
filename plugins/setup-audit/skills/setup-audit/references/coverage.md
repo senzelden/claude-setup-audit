@@ -173,8 +173,29 @@ grants; never execute a skill or its dynamic context to inspect it.
 version shape, credential mechanisms and source scope. Argument values and URL paths are
 omitted; environment/header keys and variable names are retained without their values.
 Neither MCP servers nor authentication helpers are run. Same names across scopes are separate
-observations, not a computed effective merge. Remote connectors and runtime overrides remain
-unverified. "Not observed in these transcripts" is not "unused" or grounds alone for removal.
+observations; `mcp_name_collisions` flags a name present in more than one scope for a project,
+comparing origins only, and is not a computed effective merge. Remote connectors and runtime
+overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds
+alone for removal.
+
+MCP exposure fields (`transport_class`, `endpoint_locality`, `plaintext_transport`, URL flags,
+literal-key lists, OAuth fields, `tool_prefix`, `file_git_status`) come from configuration text
+only. Locality needs no DNS, and nothing is connected, authenticated or executed. URL path,
+query, userinfo, argument, env, header, `clientId` and `headersHelper` values are never copied.
+Approvals, toggles, allow and deny policy, and permission rules are per-source observations
+(`policy_observations`), not effective state; `serverUrl`/`serverCommand` entries are counted,
+not evaluated. The `~/.claude.json` `projects[...]` approval lists (`enabledMcpjsonServers`,
+`disabledMcpjsonServers`) are an undocumented location observed on 2026-09-29; the
+`disabledMcpServers`/`enabledMcpServers` toggles and `hasTrustDialogAccepted` are documented
+there. `tool_prefix` uses the documented plugin normalization for every server. Documentation
+checked 2026-09-29: `mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
+
+Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
+`is_error: true` counts. Categories are heuristic text patterns observed 2026-09-29; the error
+text is not stored. Results are deduplicated by project directory, session id (file fallback)
+and tool id. Caps: 15 built-in tools (only those with errors), 15 MCP servers (with calls) and
+3 failing tools per server; `failure_rate` (excluding permission denials and user rejections)
+is null below 5 calls. The session-meta `tool_error_categories` remain separate and coarse.
 
 Plugin candidates come from `installed_plugins.json` records, not newest cache directories.
 User/managed installs and matching project/local installs are inspected. Enablement settings

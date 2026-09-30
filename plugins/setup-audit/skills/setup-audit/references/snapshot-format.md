@@ -24,6 +24,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (`file_size_estimate`).
+- `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
+  `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,
+  booleans, enums and OAuth scope tokens only; additive within snapshot v1.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

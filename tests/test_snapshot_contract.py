@@ -265,3 +265,48 @@ class SnapshotContract(FakeHome):
             mutate(altered["config_conflicts"])
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
+
+    def test_mcp_exposure_and_tool_errors_are_checked(self):
+        snap = self.snapshot()
+        snap["extensions"]["mcp_servers"] = [{
+            "source": "/h/.claude.json", "scope": "user", "status": "collected", "transport_class": "remote",
+            "config_notes": [], "endpoint_locality": "named_host", "plaintext_transport": False,
+            "oauth_scopes": None, "tool_prefix": "gh", "file_git_status": "tracked",
+            "project_trust_accepted": None,
+            "policy_observations": [{"source": "~/.claude/settings.json", "kind": "permission_allow", "value": 2}]}]
+        snap["extensions"]["mcp_project_state"] = [{"project": "/h/p", "source": "/h/.claude.json",
+                                                    "trust_accepted": None}]
+        snap["extensions"]["mcp_name_collisions"] = [{"name": "gh", "project": "/h/p", "scopes": ["local", "user"],
+                                                      "endpoint_origins_differ": True}]
+        snap["transcripts"]["tool_errors"] = {
+            "error_results_paired": 1, "error_results_unmatched": 0, "results_without_is_error": 0,
+            "by_tool": [{"tool": "Bash", "calls": 6, "errors": 1, "denied": 0, "failure_rate": 0.167,
+                         "categories": {"nonzero_exit": 1}}],
+            "by_mcp_server": [{"server": "gh", "calls": 1, "errors": 0, "denied": 0, "failure_rate": None,
+                               "categories": {}, "top_error_tools": []}],
+            "omitted": {"tools": 0, "mcp_servers": 0}, "min_calls_for_rate": 5}
+        contract.validate_snapshot(snap)
+        server = lambda s: s["extensions"]["mcp_servers"][0]  # noqa: E731
+        errors = lambda s: s["transcripts"]["tool_errors"]  # noqa: E731
+        for mutate in (lambda s: server(s).update(transport_class="bogus"),
+                       lambda s: server(s).update(endpoint_locality="moon"),
+                       lambda s: server(s).update(config_notes=["nope"]),
+                       lambda s: server(s).update(file_git_status="maybe"),
+                       lambda s: server(s).update(plaintext_transport="no"),
+                       lambda s: server(s).update(oauth_scopes="read"),
+                       lambda s: server(s).update(policy_observations_omitted=-1),
+                       lambda s: server(s)["policy_observations"][0].pop("kind"),
+                       lambda s: server(s)["policy_observations"][0].update(kind="bogus"),
+                       lambda s: server(s)["policy_observations"][0].update(value="2"),
+                       lambda s: s["extensions"]["mcp_project_state"][0].update(trust_accepted="yes"),
+                       lambda s: s["extensions"]["mcp_name_collisions"][0].update(scopes=["plugin"]),
+                       lambda s: errors(s)["by_tool"][0].update(failure_rate="x"),
+                       lambda s: errors(s)["by_tool"][0].update(failure_rate=True),
+                       lambda s: errors(s)["by_tool"][0].update(failure_rate=float("nan")),
+                       lambda s: errors(s)["by_tool"][0].update(calls=-1),
+                       lambda s: errors(s)["by_mcp_server"][0]["categories"].update(auth=-1),
+                       lambda s: errors(s).pop("omitted")):
+            altered = copy.deepcopy(snap)
+            mutate(altered)
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(altered)
