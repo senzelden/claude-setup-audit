@@ -2,7 +2,7 @@
 import unittest
 
 from test_collect import collect  # also puts the plugin scripts directory on sys.path
-import privacy  # noqa: E402
+import privacy
 
 AWS = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
 # (input, secret value, label that must survive, measured entropy in bits/char or None) -- T1-T10
@@ -52,6 +52,10 @@ MUST_NOT_FLAG = [  # N1-N27
     '[metadata-only: 143 chars]',
     'npx jest --passWithNoTests --coverage',
     'psql --password --host db',
+    'primaryKey: userAccountId2026',  # N28-N31 added 2026-09-30
+    'export AUTH_PROVIDER=GoogleOAuth2Provider',
+    'publicKey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE',
+    'sortKey=createdAtTimestamp2',
 ]
 
 
@@ -110,6 +114,16 @@ class ContextualDetection(unittest.TestCase):
     def test_contextual_search(self):
         self.assertTrue(privacy.contextual_search(f'AWS_SECRET_ACCESS_KEY={AWS}'))
         self.assertFalse(privacy.contextual_search('AWS_PROFILE=dev'))
+
+    def test_sanitize_leaves_references_and_spaced_values_alone(self):
+        env = {'POSTGRES_PASSWORD': '${POSTGRES_PASSWORD}', 'PGPASSWORD': '$(pass show pg)',
+               'DB_PASSWORD': '<set in vault>', 'API_KEY': '{{secrets.API_KEY_V2}}',
+               'GITHUB_PERSONAL_ACCESS_TOKEN': '${GITHUB_PAT_2026}',
+               'session': 'sess-2026-09-29 16:04 /home/u/proj'}
+        self.assertEqual(collect.sanitize({'env': env}), {'env': env})
+        self.assertEqual(collect.sanitize({'DB_PASSWORD': 'hunter22x'})['DB_PASSWORD'],
+                         privacy.CONTEXT_TOKEN)
+        self.assertTrue(privacy.contextual_secret('password', 'correct horse battery'))
 
     def test_sanitize_checks_json_key_value_pairs(self):
         out = collect.sanitize({'AWS_SECRET_ACCESS_KEY': AWS, 'session_cwd': '/tmp/app',

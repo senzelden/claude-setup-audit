@@ -203,15 +203,17 @@ value swallow the inner label and T10 fails). A hit replaces only the value with
   `path`, `dir`, `url`, `uri`, `env`, `var`, `type`, `kind`, `format`, `count`, `len`, `length`,
   `size`, `max`, `min`, `limit`, `ttl`, `sha`, `hash`, `digest`, `commit`, `rev`, `checksum`,
   `fingerprint`, `etag`, `hint`, `header`, `field`, `prefix`, `mode`, `source`, `ref`, `version`,
-  `expiry`, `expires`}.
+  `expiry`, `expires`, `public`, `provider`, `method`, `storage`, `primary`, `foreign`, `sort`,
+  `partition`} (last eight added 2026-09-30).
 
 **Value rules.** Exclusions apply to both classes: a value starting with `-` (the next flag;
-amended 2026-09-30, so `psql --password --host db` is not redacted), a reference (first char `_`, matching
-`_looks_like_reference`, since `$<{(` cannot occur in the value charset), a path (starts with `/`,
+amended 2026-09-30, so `psql --password --host db` is not redacted), a reference (first char in `_$<{(`, matching
+`_looks_like_reference`; amended 2026-09-30 because `sanitize()` passes raw JSON values, which can hold `${VAR}` or `<set>`), a path (starts with `/`,
 `~` or `.`, or ends with `\.[a-z]{1,5}`), or SCREAMING_SNAKE (`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$`).
 
 - **Password class:** length ≥ 6 and not excluded. No entropy test.
 - **Secret class:** 16 ≤ length ≤ 512, not excluded, and:
+  - the whole value is in the value charset (no spaces; amended 2026-09-30);
   - not a UUID (8-4-4-4-12 hex);
   - not word-like: split on `[-_.]`, every non-empty segment is all-lowercase letters or all digits,
     and at least two segments are alphabetic with length ≥ 3;
@@ -274,6 +276,10 @@ Must-not-flag. `redact(x) == x` (`SECRET_RE` leaves them too):
 | N25 | `[metadata-only: 143 chars]` | marker |
 | N26 | `npx jest --passWithNoTests --coverage` | password word not the last segment; value starts with `-` (added 2026-09-30) |
 | N27 | `psql --password --host db` | value starts with `-` (added 2026-09-30) |
+| N28 | `primaryKey: userAccountId2026` | qualifier `primary` (added 2026-09-30) |
+| N29 | `export AUTH_PROVIDER=GoogleOAuth2Provider` | qualifier `provider` (added 2026-09-30) |
+| N30 | `publicKey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE` | qualifier `public` (added 2026-09-30) |
+| N31 | `sortKey=createdAtTimestamp2` | qualifier `sort` (added 2026-09-30) |
 
 Accepted over-redaction, asserted so that the behaviour is deliberate: A1
 `cache_key=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08` is redacted (a

@@ -11,12 +11,14 @@ SECRET_WORDS = {'key', 'secret', 'token', 'auth', 'credential', 'credentials', '
 QUALIFIERS = {'id', 'ids', 'name', 'names', 'file', 'path', 'dir', 'url', 'uri', 'env', 'var', 'type',
               'kind', 'format', 'count', 'len', 'length', 'size', 'max', 'min', 'limit', 'ttl', 'sha',
               'hash', 'digest', 'commit', 'rev', 'checksum', 'fingerprint', 'etag', 'hint', 'header',
-              'field', 'prefix', 'mode', 'source', 'ref', 'version', 'expiry', 'expires'}
+              'field', 'prefix', 'mode', 'source', 'ref', 'version', 'expiry', 'expires', 'public',
+              'provider', 'method', 'storage', 'primary', 'foreign', 'sort', 'partition'}
 VALUE_CHARS = r'A-Za-z0-9+/_.~=-'
 CONTEXT_RE = re.compile(
     r'(?<![\w.-])(?:(?P<flag>--?[A-Za-z][\w.-]{0,63})(?:\s+|=)'
     r'|(?P<label>[A-Za-z][\w.-]{0,63})["\']?\s*[:=]\s*)'
     rf'["\']?(?P<value>[{VALUE_CHARS}]{{{PASSWORD_MIN_LEN},{CONTEXT_MAX_LEN}}})(?![:{VALUE_CHARS}])')
+VALUE_RE = re.compile(rf'[{VALUE_CHARS}]+')
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 SNAKE_RE = re.compile(r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\Z')
 FILE_END_RE = re.compile(r'\.[a-z]{1,5}\Z')
@@ -51,8 +53,9 @@ def _label_class(label):
 
 
 def _excluded(value):
-    # The next flag, a reference, a path, or a SCREAMING_SNAKE name (`$<{(` cannot occur in a value).
-    return (value.startswith(('-', '_', '/', '~', '.')) or FILE_END_RE.search(value) is not None
+    # The next flag, a reference (`$FOO`, `<set>`, `{{X}}`, `(cmd)`, `_x`; JSON values can hold
+    # these, text candidates cannot), a path, or a SCREAMING_SNAKE name.
+    return (value.startswith(('-', '_', '$', '<', '{', '(', '/', '~', '.')) or FILE_END_RE.search(value) is not None
             or SNAKE_RE.match(value) is not None)
 
 
@@ -69,7 +72,8 @@ def contextual_secret(label, value):
         return False
     if kind == 'password':
         return len(value) >= PASSWORD_MIN_LEN
-    if not CONTEXT_MIN_LEN <= len(value) <= CONTEXT_MAX_LEN or UUID_RE.match(value) or _word_like(value):
+    if (not CONTEXT_MIN_LEN <= len(value) <= CONTEXT_MAX_LEN or not VALUE_RE.fullmatch(value)
+            or UUID_RE.match(value) or _word_like(value)):
         return False
     has_digit = any(c.isdigit() for c in value)
     mixed_case = any(c.islower() for c in value) and any(c.isupper() for c in value)
