@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Contextual secret detection (both modes): a high-entropy value next to a key-like name
+  (`AWS_SECRET_ACCESS_KEY=...`, `--api-token ...`, `--password ...`) becomes `[REDACTED:context]`,
+  keeping the label. `secret-literal-in-rule` also fires on such rules, so their drift fingerprints
+  change once.
 - `manifest_unreadable` harness reason when a plugin's `plugin.json` exists but cannot be read.
 - Permission rule-shape checks (`permissions.rule_shape_issues`; `SEC-wildcard-placement`,
   `SEC-ineffective-deny`).

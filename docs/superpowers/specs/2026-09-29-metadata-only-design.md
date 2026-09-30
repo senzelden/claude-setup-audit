@@ -224,24 +224,24 @@ qualifier, UUID, path, SCREAMING_SNAKE, word-like, short) except N18/N19, which 
 guard on purpose. A shift of the threshold within 3.2–4.0 therefore cannot turn a structural
 negative into a hit.
 
-**Tuning set** (tests use exactly these strings; entropies marked ≈ are recorded by Task 1 from the
+**Tuning set** (tests use exactly these strings; entropies were recorded by Task 1 from the
 implementation):
 
 True positives. Each is missed by `SECRET_RE` alone and redacted by `redact()`, keeping its label:
 
 | # | Input | Why `SECRET_RE` misses it | H (bits/char) |
 |---|---|---|---|
-| T1 | `export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` | `secret` not followed by `[:=]` | ≈4.6 |
-| T2 | `STRIPE_SECRET_KEY=sk_prod_4eC39HqLyjWDarjtT1zdp7dc` | `sk_` is not `sk-` | ≈4.5 |
+| T1 | `export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` | `secret` not followed by `[:=]` | 4.663 |
+| T2 | `STRIPE_SECRET_KEY=sk_prod_4eC39HqLyjWDarjtT1zdp7dc` | `sk_` is not `sk-` | 4.601 |
 | T3 | `SECRET_KEY = "Zx9fK2mQ7vL1pR8tW3yB6nD4"` | compound label | 4.585 |
 | T4 | `curl --api-token 9fK2mQ7vL1pR8tW3yB6nD4hJ https://api.example.com` | space separator | 4.585 |
 | T5 | `mysql --password hunter22x -h db` | space separator (password class) | n/a |
-| T6 | `GITHUB_PAT=github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEF` | no `ghp_` prefix | ≈4.9 |
+| T6 | `GITHUB_PAT=github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEF` | no `ghp_` prefix | 5.338 |
 | T7 | `sessionKey: 7Hq2LmX9pRt4VzK8wN3b` | camelCase label | 4.322 |
 | T8 | `curl -H "X-Auth: 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c" https://x.example` | `auth` label | 3.906 |
-| T9 | `https://b.s3.amazonaws.com/f?X-Amz-Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024` | `signature` label | ≈3.8 |
-| T10 | `docker run -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY app` | flag value is a label | ≈4.6 |
-| T11 | JSON `{"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}` via `sanitize()` | normalized key not in `SECRET_KEY_NAMES` | ≈4.6 |
+| T9 | `https://b.s3.amazonaws.com/f?X-Amz-Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024` | `signature` label | 3.824 |
+| T10 | `docker run -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY app` | flag value is a label | 4.663 |
+| T11 | JSON `{"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}` via `sanitize()` | normalized key not in `SECRET_KEY_NAMES` | 4.663 |
 
 Must-not-flag. `redact(x) == x` (`SECRET_RE` leaves them too):
 
@@ -265,7 +265,7 @@ Must-not-flag. `redact(x) == x` (`SECRET_RE` leaves them too):
 | N16 | `fingerprint: SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8` | no secret word |
 | N17 | `signature_hash=9b74c9897bac770ffc029102a200c5de` | qualifier |
 | N18 | `session_key=aaaaaaaa11111111` | entropy 1.0 |
-| N19 | `auth_token_2=abababababababab12` | entropy ≈1.5 |
+| N19 | `auth_token_2=abababababababab12` | entropy 1.503 |
 | N20 | `KEYBINDINGS=vim` | short |
 | N21 | `/home/u/code/token-service/src/auth_middleware.py` | no separator |
 | N22 | `OPENAI_API_KEY=$(pass show openai)` | reference |

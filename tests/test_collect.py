@@ -56,6 +56,11 @@ class ReadOnlyDiagnostics(FakeHome):
 
 
 class RiskClassification(unittest.TestCase):
+    def test_contextual_literal_secret_flags_secret_literal_in_rule(self):
+        self.assertIn("secret-literal-in-rule",
+                      flags("Bash(export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY && aws s3 ls)"))
+        self.assertNotIn("secret-literal-in-rule", flags("Bash(export AWS_PROFILE=dev)"))
+
     def test_broad_rules_are_flagged(self):
         self.assertIn("network-wildcard", flags("Bash(curl:*)"))
         self.assertIn("interpreter-wildcard", flags("Bash(python3:*)"))

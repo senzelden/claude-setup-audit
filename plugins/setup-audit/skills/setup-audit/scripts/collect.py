@@ -33,6 +33,7 @@ import harness
 import clarity
 import config_checks
 import drift_log
+import privacy
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
 
@@ -77,6 +78,15 @@ SECRET_KEY_NAMES = {
     "secretkey", "clientsecret", "credential", "credentials", "privatekey",
 }
 
+class _AnyOf:
+    """`.search` over several matchers, so RISKY_RULES keeps its (name, rx) shape for callers."""
+    def __init__(self, *searches):
+        self._searches = searches
+
+    def search(self, text):
+        return any(s(text) for s in self._searches)
+
+
 # (flag, regex over the rule text). Ordered roughly by severity.
 RISKY_RULES = [
     ("wildcard-all", re.compile(r"^Bash(\((\*|:\*)\))?$")),
@@ -90,7 +100,7 @@ RISKY_RULES = [
     ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
     ("docker", re.compile(r"\bdocker\b")),
     ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),
-    ("secret-literal-in-rule", LITERAL_SECRET_RE),
+    ("secret-literal-in-rule", _AnyOf(LITERAL_SECRET_RE.search, privacy.contextual_search)),
     # A secret pulled out of .env onto the command line (not masking like sed 's/=.*/=<set>/' .env).
     ("secret-via-env-file", re.compile(r"\$\\?\(.*\.env\b|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\S*\s+\S*\.env\b")),
     ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
@@ -219,7 +229,7 @@ def load_json(path):
 
 
 def redact(text):
-    return SECRET_RE.sub("[REDACTED]", text)
+    return privacy.contextual_redact(SECRET_RE.sub("[REDACTED]", text))
 
 
 def _normalized_key(k):
@@ -257,6 +267,8 @@ def sanitize(obj):
             if (isinstance(k, str) and isinstance(v, str)
                     and _normalized_key(k) in SECRET_KEY_NAMES and not _looks_like_reference(v)):
                 out[key] = "[REDACTED]"
+            elif isinstance(k, str) and isinstance(v, str) and privacy.contextual_secret(k, v):
+                out[key] = privacy.CONTEXT_TOKEN
             else:
                 out[key] = sanitize(v)
         return out
