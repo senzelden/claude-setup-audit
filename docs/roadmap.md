@@ -70,6 +70,19 @@ Hosted validation passed all eight jobs at `a480dba`:
 Hosted validation passed all eight jobs at `48d9d5d`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/36622544147).
 
+## Shipped in 0.10.0: metadata-only privacy, sandbox apply and deeper checks
+
+- [x] Metadata-only collection (`privacy=metadata-only`, `collect.py --metadata-only`): free text
+  becomes `[metadata-only: N chars]` markers, unclassified strings are masked (fail closed) and
+  `coverage.privacy` records the mode. Contextual secret detection runs in both modes.
+- [x] Deterministic sandbox apply: `apply_ops.py` with allowlisted `sandbox.*` keys,
+  per-op preconditions, a carried file hash, backup, atomic write and verification.
+- [x] Deeper checks: permission wildcard placement, hook handler validation, duplicate hooks and
+  shadowed allow rules, MCP exposure metadata and recurring tool-error clustering.
+
+Hosted validation passed all eight jobs at `499217f`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/36731572402).
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
@@ -88,16 +101,13 @@ Hosted validation passed all eight jobs at `48d9d5d`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
-- **Privacy:** metadata-only collection and contextual secret detection implemented (unreleased).
-  Follow-ups: optional path/name hashing (`--hash-paths`), metadata-only export of an existing
-  snapshot, and fuller provenance for free-text evidence. Tune detection against realistic fixtures.
-- **Deterministic apply:** sandbox slice implemented (unreleased) (`apply_ops.py`, allowlisted `sandbox.*` keys).
-  Next: widen the allowlist key by key with doc-grounded types; a paid approved-apply eval for
-  sandbox ops needs separate approval; do not migrate the pruner or ledger flows without a design.
-- **Deeper checks:** hook matcher validation, duplicate hooks/layer conflicts and permission
-  wildcard placement, MCP exposure metadata and recurring tool-error clustering are implemented
-  (unreleased).
-  Follow-up: a ledger tool-error source and a drift signal for MCP failure rate.
+- **Privacy follow-ups:** optional path/name hashing (`--hash-paths`), metadata-only export of an
+  existing snapshot, and fuller provenance for free-text evidence. Tune detection against
+  realistic fixtures.
+- **Deterministic apply:** widen the allowlist key by key with doc-grounded types; a paid
+  approved-apply eval for sandbox ops needs separate approval; do not migrate the pruner or ledger
+  flows without a design.
+- **Deeper checks follow-ups:** a ledger tool-error source and a drift signal for MCP failure rate.
   Follow-up: build_snapshot aborts when one settings file is malformed (e.g. permissions/hooks not
   an object, `ask: 5`, `deny: [null]`, `allow: [{}]` raise TypeError in analyze_permissions,
   summarize_settings, redact, harness.hook_index, hook_handler_entry); needs per-file coverage

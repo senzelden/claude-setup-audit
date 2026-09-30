@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-30
+
 ### Fixed
 
 - A hand-edited drift log holding `NaN` or `Infinity` no longer makes the snapshot fail validation;
@@ -59,6 +61,21 @@ All notable changes to this project are documented here. The format follows
   (additive, still v1); the bundled validator supports the `number` type.
 - `HYG-hook-duplicates` no longer claims settings-file duplicates run twice (the hooks docs: they
   run once; plugin copies stay separate).
+
+### Validation and limits
+
+- 583 local regression tests pass, with 94% coverage of the bundled scripts. Hosted validation
+  passed all eight jobs at `499217f`, including Linux/macOS on Python 3.11/3.13/3.14, the
+  coverage floor and strict plugin validation. No paid model evaluations were run for this release.
+- Privacy limits: metadata-only keeps paths, names and counts (no hashing). Contextual detection
+  is best-effort: next to a key-like label it needs 16 or more characters with at least 3.5
+  bits/char of entropy (6 or more characters after a password label), so short or low-entropy
+  secrets can be missed and some high-entropy non-secrets are redacted.
+- Apply limits: `apply_ops.py` covers `sandbox.*` settings only; other approved changes keep the
+  existing guided flows.
+- A malformed value in one settings file (for example `permissions` that is not an object) can
+  still abort snapshot building instead of being recorded per file.
+- Tool-error categories are heuristic and no error text is stored.
 
 ## [0.9.0] - 2026-09-29
 
@@ -519,7 +536,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.6.0...v0.7.0
