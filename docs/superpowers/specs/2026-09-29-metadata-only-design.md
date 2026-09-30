@@ -156,6 +156,15 @@ is masked and every other class is kept.
 | `corrections` | `samples[].text` | free | mask |
 | `transcripts` | notes, `context_baseline_by_project_median`, `mcp_calls_by_server`, `mcp_configured_but_unused` | const, id | keep |
 | `transcripts.tool_errors` | `categories_basis`, `scope_note` (added 2026-09-30) | const | keep |
+| settings summary | `permissions.rule_shape_issues.{list}.{flag}[]` (added 2026-09-30) | free (redacted rule text); list and flag keys are enum | mask values, keep keys |
+| settings summary | `hook_handlers[].issues[]`, `.unknown_fields[]` (added 2026-09-30) | enum, id (user-authored field names) | keep |
+| settings summary | `mcp_policy.*` (server names, `"invalid"`) (added 2026-09-30) | id, enum | keep |
+| `config_conflicts` | `permission_overlaps[].allow.rule`, `.by.rule` (added 2026-09-30) | free (rule text) | mask |
+| `config_conflicts` | `permission_overlaps[].stack`, `.match`, `.allow.{layer,path}`, `.by.{list,layer,path}` (added 2026-09-30) | id, enum, path | keep |
+| `config_conflicts` | `hook_duplicates[].stack`, `.event`, `.matcher` (R19), `.type`, `.fingerprint`, `.effect`, `.sources[].{layer,path,plugin}` (added 2026-09-30; no command text) | id, enum, path, hash | keep |
+| `extensions.mcp_servers[]` | `transport_class`, `endpoint_locality`, `file_git_status`, `config_notes[]`, `tool_prefix`, `plugin`, `*_variable_references[]`, `env_literal_keys[]`, `headers_literal_keys[]`, `oauth_keys[]`, `oauth_scopes[]`, `policy_observations[].{source,kind}` (added 2026-09-30) | id, enum, path | keep |
+| `extensions` | `mcp_project_state[]`, `mcp_name_collisions[]` (added 2026-09-30) | path, id, enum | keep |
+| `transcripts.tool_errors` | `by_tool[].tool`, `by_mcp_server[].server`, `.top_error_tools[][0]` (added 2026-09-30; error text is never stored) | id | keep |
 | `previous_audits[]`, `generated`, `collection_scope.*` | — | path, date, enum | keep |
 | `instructions.entries[]`, `extensions.plugins[].components[]` | `source`, `scope`, `status`, `kind`, `relation`, `active_state`, `reason`, `frontmatter_status`, `estimate_basis` | path, enum | keep |
 | same | `excerpt` (up to 32 KiB of file text) | free | mask |

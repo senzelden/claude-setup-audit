@@ -312,7 +312,10 @@ def settings_with(tag, hooks=True):
             {'type': 'command', 'command': f'/nonexistent/zcmissingscript{tag}.sh'},
             {'type': 'http', 'url': f'https://hooks.example.com/zchttppath{tag}', 'headers': {'X-Token': '$TOK'}},
             {'type': 'prompt', 'prompt': f'zcprompthook{tag}'},
-            {'type': 'mcp_tool', 'server': f'srv{tag}', 'tool': 'check'}]}]}
+            {'type': 'mcp_tool', 'server': f'srv{tag}', 'tool': 'check'}]}],
+            'PostToolUse': [{'matcher': 'Edit|Write', 'hooks': [  # identical in every layer: a duplicate
+                {'type': 'command', 'command': 'echo samehook'},
+                {'type': 'command', 'command': 'echo weird', 'zzweirdfield': 1}]}]}
     return body
 
 
@@ -323,7 +326,10 @@ SETTINGS_NAMES = ('zcmodelsetting', 'zcstatusline', 'zcsandboxvalue', 'zcriskyru
 CANARIES = tuple(f'{name}{tag}' for tag in LAYER_TAGS for name in SETTINGS_NAMES) + (
     'zcfirstprompt', 'zcfrictionmost', 'zcfrictionone', 'zccorrection', 'zcmemorydesc', 'zcclaudemd', 'zcrulebody',
     'zcskilldesc', 'zcskillwhen', 'zcskilltools', 'zcskillbody', 'zclastupdate', 'zcpluginskill',
-    'zcpluginwhen', 'zcplugincmd', 'zcpluginhttp', 'zcpluginprompt', 'zcpluginhookfm', 'zcskillhooks')
+    'zcpluginwhen', 'zcplugincmd', 'zcpluginhttp', 'zcpluginprompt', 'zcpluginhookfm', 'zcskillhooks',
+    'zcshapepush', 'zcoverlapallow', 'zcoverlapby')  # rule text of rule_shape_issues and permission_overlaps
+# Never stored, in either mode: MCP arguments, header literals and URL paths, and tool-error text.
+NEVER_STORED = ('zcmcparg', 'zcmcpheader', 'zcmcpurlpath', 'zctoolerrortext')
 
 
 def leaves(obj, path=()):
@@ -391,9 +397,23 @@ class EndToEnd(PatchedHome):
             {'type': 'http', 'url': 'https://hooks.example.com/zcpluginhttp'},
             {'type': 'prompt', 'prompt': 'zcpluginprompt'}]}]}})
         self.write('.claude/settings.json', {**settings_with('g'), 'enabledPlugins': {'p@m': True},
-                   'permissions': {**settings_with('g')['permissions'],
-                                   'allow': ['Bash(sudo zcriskyruleg)',
+                   'enabledMcpjsonServers': ['pgsrv'], 'allowedMcpServers': [{'serverName': 'pgsrv'}],
+                   'permissions': {'deny': ['Bash(zcdenyruleg)', 'Bash(zcoverlapby:*)'],
+                                   'allow': ['Bash(sudo zcriskyruleg)', 'Bash(git:* zcshapepush)',
+                                             'Bash(zcoverlapby zcoverlapallow)',
                                              f'Bash(export AWS_SECRET_ACCESS_KEY={AWS} && aws s3 ls)']}})
+        self.write('code/app/.mcp.json', {'mcpServers': {
+            'pgsrv': {'type': 'http', 'url': 'https://mcp.example.com/${MCP_HOST}/zcmcpurlpath',
+                      'headers': {'X-Key': '${MCP_KEY}', 'X-Lit': 'zcmcpheader'},
+                      'oauth': {'clientId': 'abc', 'scopes': 'read write'}},
+            'localdb': {'command': 'npx', 'args': ['-y', 'pkg@1.0.0', 'zcmcparg'], 'env': {'DB': '${DB_URL}'}}}})
+        calls = [{'type': 'assistant', 'sessionId': 't1', 'timestamp': stamp, 'message': {'content': [
+            {'type': 'tool_use', 'id': f'u{i}', 'name': name, 'input': {}}]}}
+            for i, name in enumerate(('Bash', 'mcp__pgsrv__query'))]
+        calls += [{'type': 'user', 'sessionId': 't1', 'timestamp': stamp, 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': f'u{i}', 'is_error': True, 'content': 'Exit code 1 zctoolerrortext'}]}}
+            for i in range(2)]
+        self.write('.claude/projects/-code-app/t1.jsonl', '\n'.join(map(json.dumps, calls)))
         self.write('managed/managed-settings.json', settings_with('m'))
         self.write('code/app/.claude/settings.json', settings_with('p'))
         self.write('code/app/.claude/settings.local.json', settings_with('l'))
@@ -412,6 +432,7 @@ class EndToEnd(PatchedHome):
         full, _ = self.snapshots()
         text = json.dumps(full)
         self.assertEqual([c for c in CANARIES if c not in text], [])
+        self.assertEqual([c for c in NEVER_STORED if c in text], [])
         sections = {'g': full['global']['settings'], 'm': full['managed_settings']['settings'],
                     'p': next(iter(full['projects'].values()))['settings'],
                     'l': full['instructions']['settings_candidates']}
@@ -422,7 +443,7 @@ class EndToEnd(PatchedHome):
     def test_metadata_mode_carries_no_canary_and_no_secret(self):
         full, meta = self.snapshots()
         text = json.dumps(meta)
-        self.assertEqual([c for c in CANARIES if c in text], [])
+        self.assertEqual([c for c in CANARIES + NEVER_STORED if c in text], [])
         self.assertNotIn(AWS, text + json.dumps(full))
 
     def test_metadata_mode_keeps_structure(self):
@@ -445,6 +466,23 @@ class EndToEnd(PatchedHome):
                                and not privacy.MARKER_RE.match(v)
                                and not any(privacy.path_matches(path, pat) for pat in privacy.KEPT_STRING_FIELDS)})
         self.assertEqual(unclassified, [], 'classify these in the spec inventory, then mask or keep them')
+
+    def test_conflicts_and_rule_shapes_keep_ids_and_mask_rule_text(self):
+        full, meta = self.snapshots()
+        overlap = meta['config_conflicts']['permission_overlaps'][0]
+        self.assertTrue(privacy.MARKER_RE.match(overlap['allow']['rule']))
+        self.assertTrue(privacy.MARKER_RE.match(overlap['by']['rule']))
+        self.assertEqual((overlap['by']['list'], overlap['match']),
+                         ('deny', full['config_conflicts']['permission_overlaps'][0]['match']))
+        dupes = meta['config_conflicts']['hook_duplicates']
+        self.assertEqual(dupes, full['config_conflicts']['hook_duplicates'])
+        self.assertEqual((dupes[0]['event'], dupes[0]['matcher']), ('PostToolUse', 'Edit|Write'))
+        issues = meta['global']['settings'][0]['permissions']['rule_shape_issues']
+        self.assertEqual(list(issues['allow']), ['colon-star-literal'])
+        self.assertTrue(all(privacy.MARKER_RE.match(r) for r in issues['allow']['colon-star-literal']))
+        replaced = meta['coverage']['privacy']['replaced_fields']
+        self.assertGreater(replaced['permission_overlaps'], 0)
+        self.assertGreater(replaced['rule_shape_issues'], 0)
 
     def test_context_token_only_where_planted(self):
         full, _ = self.snapshots()
@@ -569,7 +607,7 @@ class Docs(unittest.TestCase):
         for bucket, ids in ((partial, ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
                                        'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
                                        'HYG-missing-hook-script', 'SEC-wildcard-placement',
-                                       'SEC-ineffective-deny', 'HYG-shadowed-allow')),
+                                       'SEC-ineffective-deny', 'HYG-shadowed-allow', 'SEC-secret-literal')),
                             (not_checked, ('SEC-docs-only-constraint', 'LRN-contradiction', 'LRN-enforce'))):
             for check in ids:
                 self.assertIn(check, bucket)

@@ -225,7 +225,8 @@ and `[REDACTED:context]` (`contextual`) tokens in the serialized snapshot.
 In metadata-only mode the collector adds the source `free_text_fields` with status `not_checked`
 and reason `metadata_only_mode`, plus a limitation saying that findings needing free text are not
 assessable. Free text (prompts, corrections, friction details, memory and skill descriptions,
-instruction excerpts, hook commands and targets, permission rule text, sandbox and other
+instruction excerpts, hook commands and targets, permission rule text (including `rule_shape_issues`
+and `config_conflicts.permission_overlaps` rules), sandbox and other
 structural values) is replaced by `[metadata-only: N chars]`, where N is the original length.
 Paths, names, counts, flags and enums stay, so a metadata-only snapshot is still not free of
 sensitive information; review it before sharing.

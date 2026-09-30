@@ -11,7 +11,8 @@ booleans only), SEC-hooks (type, matcher, origin, header keys; no command or pro
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
-HYG-shadowed-allow (rule text masked; flags and counts remain). **Not checked:**
+HYG-shadowed-allow (rule text masked; flags, layers, paths and match kinds remain), and
+SEC-secret-literal (flag and count only). **Not checked:**
 SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity pilot. **Unaffected:**
 readiness, cost metrics and harness overhead.
 

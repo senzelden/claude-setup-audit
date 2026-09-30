@@ -152,6 +152,16 @@ def mask_settings(s, counter):
     _mask_list(perms.get('deny'), counter, 'permission_deny')
     for rules in (perms.get('risky') or {}).values():
         _mask_list(rules, counter, 'permission_risky')
+    for flags in (perms.get('rule_shape_issues') or {}).values():
+        for rules in flags.values() if isinstance(flags, dict) else ():
+            _mask_list(rules, counter, 'rule_shape_issues')
+
+
+def mask_conflicts(conflicts, counter):
+    for overlap in (conflicts or {}).get('permission_overlaps') or []:
+        for side in ('allow', 'by'):
+            if isinstance(overlap.get(side), dict) and 'rule' in overlap[side]:
+                overlap[side]['rule'] = mask_value(overlap[side]['rule'], counter, 'permission_overlaps')
 
 
 def mask_frontmatter(fm, counter):
@@ -179,6 +189,7 @@ def mask_snapshot(snap):
     for s in summaries:
         if isinstance(s, dict):
             mask_settings(s, counter)
+    mask_conflicts(snap.get('config_conflicts'), counter)
     if 'last_update' in g:
         g['last_update'] = mask_leaves(g['last_update'], counter, 'last_update')
     usage = snap.get('usage') or {}
@@ -221,11 +232,11 @@ def path_matches(path, pattern):
 SETTINGS_PREFIXES = (('global', 'settings', '*'), ('managed_settings', 'settings', '*'),
                      ('projects', '*', 'settings', '*'), ('instructions', 'settings_candidates', '*'))
 HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
-                ('header_keys', '*'), ('allowed_env_vars', '*'))
+                ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
 SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
-                 ('other', 'autoUpdates')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
+                 ('other', 'autoUpdates'), ('mcp_policy', '**')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
 ENTRY_KEEP = tuple((k,) for k in ('source', 'scope', 'status', 'kind', 'relation', 'active_state',
                                   'reason', 'frontmatter_status', 'estimate_basis')) \
     + tuple(('frontmatter', k) for k in FRONTMATTER_KEEP)
@@ -235,6 +246,16 @@ SUBTREES = (('collection_scope', '**'), ('readiness', '**'), ('harness_overhead'
             ('instructions', 'contexts', '**'), ('instructions', 'agents_md_setting_observed', '**'),
             ('extensions', 'sources', '**'), ('global', 'plugin_session_start_hooks', '**'),
             ('memory', 'similar_across_projects', '**'))
+CONFLICT_KEEP = (
+    *(('config_conflicts', 'hook_duplicates', '*', k) for k in ('stack', 'event', 'matcher', 'type', 'fingerprint',
+                                                                'effect')),
+    *(('config_conflicts', 'hook_duplicates', '*', 'sources', '*', k) for k in ('layer', 'path', 'plugin')),
+    *(('config_conflicts', 'permission_overlaps', '*') + k for k in (('stack',), ('match',), ('by', 'list'),
+                                                                      ('allow', 'layer'), ('allow', 'path'),
+                                                                      ('by', 'layer'), ('by', 'path'))))
+MCP_ID_FIELDS = ('transport_class', 'endpoint_locality', 'file_git_status', 'tool_prefix', 'plugin')
+MCP_ID_LISTS = ('config_notes', 'url_variable_references', 'env_literal_keys', 'headers_literal_keys',
+                'oauth_keys', 'oauth_scopes')
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -254,6 +275,17 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           ('transcripts', 'mcp_configured_but_unused', '*'),
           ('transcripts', 'tool_errors', 'categories_basis'), ('transcripts', 'tool_errors', 'scope_note'),
           ('instructions', 'limitations', '*'), ('extensions', 'limitations', '*'),
+          *(('extensions', 'mcp_servers', '*', k) for k in MCP_ID_FIELDS),
+          *(('extensions', 'mcp_servers', '*', k, '*') for k in MCP_ID_LISTS),
+          *(('extensions', 'mcp_servers', '*', 'policy_observations', '*', k) for k in ('source', 'kind')),
+          *(('extensions', 'mcp_project_state', '*', k) for k in ('project', 'source')),
+          *(('extensions', 'mcp_project_state', '*', k, '*') for k in (
+                'enabledMcpServers', 'disabledMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers')),
+          ('extensions', 'mcp_name_collisions', '*', 'name'), ('extensions', 'mcp_name_collisions', '*', 'project'),
+          ('extensions', 'mcp_name_collisions', '*', 'scopes', '*'),
+          ('transcripts', 'tool_errors', 'by_tool', '*', 'tool'),
+          ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'server'),
+          ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'top_error_tools', '*', '*'),
           *(('extensions', 'mcp_servers', '*', k) for k in ('source', 'scope', 'status', 'name', 'project',
                 'active_state', 'representation', 'transport', 'executable', 'package_version_evidence',
                 'endpoint_origin', 'endpoint_detail', 'reason')),
@@ -263,7 +295,7 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
-KEPT_STRING_FIELDS = (SUBTREES + SINGLE
+KEPT_STRING_FIELDS = (SUBTREES + CONFLICT_KEEP + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP)
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)
