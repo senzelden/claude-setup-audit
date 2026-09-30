@@ -35,7 +35,7 @@ TRUE_POSITIVES = [
      'fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024', 'X-Amz-Signature=', 3.824),
     (f'docker run -e AWS_SECRET_ACCESS_KEY={AWS} app', AWS, 'AWS_SECRET_ACCESS_KEY=', 4.663),
 ]
-MUST_NOT_FLAG = [  # N1-N27
+MUST_NOT_FLAG = [  # N1-N31
     'git checkout 3f1c0a9b7e2d4c55a1b2c3d4e5f60718293a4b5c',
     'commit_sha=3f1c0a9b7e2d4c55a1b2c3d4e5f60718293a4b5c',
     'session_id=550e8400-e29b-41d4-a716-446655440000',
@@ -336,17 +336,6 @@ MCP_POLICY_INVALID = {key: 'not-valid' for key in privacy.MCP_POLICY_KEYS}  # ev
 NEVER_STORED = ('zcmcparg', 'zcmcpheader', 'zcmcpurlpath', 'zctoolerrortext')
 
 
-def leaves(obj, path=()):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            yield from leaves(v, path + (k,))
-    elif isinstance(obj, list):
-        for i, v in enumerate(obj):
-            yield from leaves(v, path + (i,))
-    else:
-        yield path, obj
-
-
 def shape(obj):
     """Keys and list lengths of `obj`, with every leaf value erased."""
     if isinstance(obj, dict):
@@ -470,12 +459,12 @@ class EndToEnd(PatchedHome):
 
     @staticmethod
     def kept(snap):
-        return sorted((pattern_of(p), v) for p, v in leaves(snap) if isinstance(v, str)
-                      and any(privacy.path_matches(p, k) for k in privacy.KEPT_STRING_FIELDS))
+        return sorted((pattern_of(p), v) for p, v in privacy.leaves(snap) if isinstance(v, str)
+                      and privacy.is_kept(p))
 
     def test_every_kept_pattern_added_by_the_sweep_is_reached(self):
         _, meta = self.snapshots()
-        paths = [p for p, v in leaves(meta) if isinstance(v, str) and not privacy.MARKER_RE.match(v)]
+        paths = [p for p, v in privacy.leaves(meta) if isinstance(v, str) and not privacy.MARKER_RE.match(v)]
         per_settings = privacy.MCP_POLICY_KEEP + tuple(('hook_handlers', '*', k, '*')
                                                        for k in ('issues', 'unknown_fields'))
         # A settings-summary pattern counts as reached when any of the four summary locations has a leaf.
@@ -488,10 +477,15 @@ class EndToEnd(PatchedHome):
 
     def test_every_string_leaf_is_classified(self):
         _, meta = self.snapshots()
-        unclassified = sorted({pattern_of(path) for path, v in leaves(meta) if isinstance(v, str)
+        unclassified = sorted({pattern_of(path) for path, v in privacy.leaves(meta) if isinstance(v, str)
                                and not privacy.MARKER_RE.match(v)
-                               and not any(privacy.path_matches(path, pat) for pat in privacy.KEPT_STRING_FIELDS)})
+                               and not privacy.is_kept(path)})
         self.assertEqual(unclassified, [], 'classify these in the spec inventory, then mask or keep them')
+        self.assertNotIn('unclassified', meta['coverage']['privacy']['replaced_fields'])
+
+    def test_full_mode_never_counts_unclassified(self):
+        full, _ = self.snapshots()
+        self.assertEqual(full['coverage']['privacy']['replaced_fields'], {})
 
     def test_conflicts_and_rule_shapes_keep_ids_and_mask_rule_text(self):
         full, meta = self.snapshots()
@@ -512,7 +506,7 @@ class EndToEnd(PatchedHome):
 
     def test_context_token_only_where_planted(self):
         full, _ = self.snapshots()
-        hits = [v for _, v in leaves(full) if isinstance(v, str) and privacy.CONTEXT_TOKEN in v]
+        hits = [v for _, v in privacy.leaves(full) if isinstance(v, str) and privacy.CONTEXT_TOKEN in v]
         self.assertTrue(hits)
         self.assertTrue(all('AWS_SECRET_ACCESS_KEY=' in v for v in hits), 'contextual false positive')
 
@@ -525,6 +519,44 @@ class EndToEnd(PatchedHome):
         self.assertEqual(set(types(full)), {'command', 'http', 'prompt', 'mcp_tool'})
         self.assertEqual({t: privacy.MARKER_RE.match(v) is not None for t, v in types(meta).items()},
                          {t: True for t in types(full)})
+
+
+class FailClosed(PatchedHome):
+    """Strings at unexpected places (malformed settings) are masked, never copied through."""
+    PLANTED = {
+        'enabledPlugins': {'zcbadplugin@m': 'zcplantedenabled'},
+        'permissions': {'additionalDirectories': 'zcplanteddirs'},
+        'cleanupPeriodDays': 'zcplantedcleanup', 'includeCoAuthoredBy': 'zcplantedcoauth',
+        'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'http', 'url': 'https://h.example.com/x', 'allowedEnvVars': 'zcplantedenv'}]}]}}
+
+    def test_malformed_values_are_masked_and_counted(self):
+        self.write('.claude/settings.json', self.PLANTED)
+        full = collect.build_snapshot(args())
+        meta = collect.build_snapshot(args(metadata_only=True))
+        self.assertIn('zcplantedenabled', json.dumps(full))  # the fixture reaches the snapshot
+        text = json.dumps(meta)
+        self.assertEqual([c for c in ('zcplantedenabled', 'zcplanteddirs', 'zcplantedcleanup', 'zcplantedcoauth',
+                                      'zcplantedenv') if c in text], [])
+        self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields']['unclassified'], 4)
+        self.assertEqual(full['coverage']['privacy']['replaced_fields'], {})
+
+    def test_each_malformed_value_alone_is_masked(self):
+        for key, value in (('cleanupPeriodDays', 'zcalone'), ('includeCoAuthoredBy', 'zcalone'),
+                           ('enabledPlugins', {'x@m': 'zcalone'}), ('permissions', {'additionalDirectories': 'zcalone'}),
+                           ('hooks', self.PLANTED['hooks'])):
+            with self.subTest(key=key):
+                self.write('.claude/settings.json', {key: value})
+                meta = collect.build_snapshot(args(metadata_only=True))
+                self.assertNotIn('zcalone', json.dumps(meta))
+                self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields'].get('unclassified', 0), 1)
+
+    def test_unit_mask_unclassified_keeps_markers_and_kept_fields(self):
+        snap = {'global': {'version': '1.2.3', 'surprise': 'abc', 'done': '[metadata-only: 3 chars]'}}
+        counts = privacy.mask_snapshot(snap)
+        self.assertEqual(snap['global'], {'version': '1.2.3', 'surprise': '[metadata-only: 3 chars]',
+                                          'done': '[metadata-only: 3 chars]'})
+        self.assertEqual(counts, {'unclassified': 1})
 
 
 class PathMatching(unittest.TestCase):
@@ -612,6 +644,12 @@ class Docs(unittest.TestCase):
         step5 = skill.split('## Step 5', 1)[1]
         self.assertIn('In metadata-only mode, run the `prune_permissions.py` / `apply_ops.py` dry runs', step5)
         self.assertIn(BANNER.split(' (')[0], self.read(self.SKILL, 'scripts', 'query_snapshot.py'))
+
+    def test_collector_failure_fallback_respects_metadata_only(self):
+        skill = self.read(self.SKILL, 'SKILL.md')
+        fallback = ' '.join(skill.split('**If this command', 1)[1].split('This fallback is read-only', 1)[0].split())
+        self.assertIn('With `privacy=metadata-only`, do not fall back to reading files', fallback)
+        self.assertIn('ask whether to continue with full-text reads or stop', fallback)
 
     def test_readme_lists_the_privacy_option(self):
         readme = self.read(self.ROOT, 'README.md')

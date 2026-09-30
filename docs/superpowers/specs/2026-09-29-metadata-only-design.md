@@ -432,6 +432,14 @@ Format: `Ruling: what — why — cost if wrong`.
     registry rule "every string leaf is a marker or classified" exceptionless — a few more bytes.
 19. **Ruling:** Hook matchers are kept as identifiers — they are tool-name patterns that plan 2A's
     matcher checks need — a matcher regex that names a project is visible.
+20. **Ruling (2026-09-30, final review):** Masking is the known-location pass plus a fail-closed pass.
+    After `mask_snapshot` masks the known free-text locations, it walks every string leaf and masks any
+    that is neither a marker nor matched by `KEPT_STRING_FIELDS`, counting it under the family
+    `unclassified` in `replaced_fields`. Malformed configs (a string where a list, flag or dict of
+    flags belongs) therefore cannot leak raw text. Dict keys stay unmasked. A legitimate snapshot
+    produces no `unclassified` count; the canary test asserts it. `missing_additional_dirs` is built
+    only from a list `additionalDirectories`, so a string cannot spread into per-character entries.
+    The collector-failure fallback in SKILL.md does not read files in metadata-only mode; it asks.
 
 ## Sweep of plans 2A, 2B and 3
 

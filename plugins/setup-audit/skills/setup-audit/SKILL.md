@@ -107,7 +107,9 @@ that the collector couldn't run (quote the error after redacting secret values) 
 files directly instead of the collector's redacted, pre-classified snapshot. Don't retry the same
 failing command in a loop. Then keep going with Read/Glob against the same files the collector
 would have read (settings files, CLAUDE.md, memory, permission rules) — a degraded audit is much
-more useful than none, and the checklist findings still apply.
+more useful than none, and the checklist findings still apply. With `privacy=metadata-only`, do not
+fall back to reading files: tell the user the collector couldn't run and ask whether to continue with
+full-text reads or stop.
 
 This fallback is read-only analysis, not permission to replace an apply procedure. If an
 approved change requires a named helper, successful dry run, or other execution prerequisite

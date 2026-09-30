@@ -210,7 +210,35 @@ def mask_snapshot(snap):
     for plugin in (snap.get('extensions') or {}).get('plugins') or []:
         for comp in plugin.get('components') or []:
             _entry(comp, counter)
+    mask_unclassified(snap, counter)
     return dict(counter)
+
+
+def leaves(obj, path=()):
+    """Yield (path, value) for every non-container leaf; list indices are ints."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from leaves(v, path + (k,))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from leaves(v, path + (i,))
+    else:
+        yield path, obj
+
+
+def is_kept(path):
+    return any(path_matches(path, pat) for pat in KEPT_STRING_FIELDS)
+
+
+def mask_unclassified(snap, counter):
+    """Fail closed: mask every string leaf that is neither a marker nor a kept field (dict keys stay)."""
+    for path, v in list(leaves(snap)):
+        if isinstance(v, str) and not MARKER_RE.match(v) and not is_kept(path):
+            parent = snap
+            for p in path[:-1]:
+                parent = parent[p]
+            if parent[path[-1]] is v:  # a shared object may already have been masked
+                parent[path[-1]] = mask_value(v, counter, 'unclassified')
 
 
 def path_matches(path, pattern):

@@ -227,8 +227,12 @@ and reason `metadata_only_mode`, plus a limitation saying that findings needing 
 assessable. Free text (prompts, corrections, friction details, memory and skill descriptions,
 instruction excerpts, hook commands and targets, permission rule text (including `rule_shape_issues`
 and `config_conflicts.permission_overlaps` rules), sandbox and other
-structural values) is replaced by `[metadata-only: N chars]`, where N is the original length.
-Paths, names, counts, flags and enums stay, so a metadata-only snapshot is still not free of
+structural values) is replaced by `[metadata-only: N chars]`, where N is the collected length (after
+redaction and truncation). Masking has two passes: known free-text locations, then a fail-closed pass
+that masks any other string the collector emitted at an unexpected place (for example a string where a
+list or flag belongs in a malformed config), counted under the `unclassified` family of
+`replaced_fields`. Paths, names, counts, flags and enums stay, and `claude_md_dead_refs` (path-like
+tokens taken from CLAUDE.md text) are kept, so a metadata-only snapshot is still not free of
 sensitive information; review it before sharing.
 
 The contextual detector runs in both modes. A high-entropy value next to a key-like name

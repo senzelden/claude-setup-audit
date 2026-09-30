@@ -15,7 +15,10 @@ All notable changes to this project are documented here. The format follows
 
 - `collect.py --metadata-only` replaces free text (prompts, rules, hook commands, descriptions, excerpts)
   with `[metadata-only: N chars]` markers, and every snapshot now records `coverage.privacy` (mode,
-  replaced fields, redaction counts). It cannot be combined with `--clarity-pilot`.
+  replaced fields, redaction counts). It cannot be combined with `--clarity-pilot`. It fails closed:
+  any string at a location the collector does not classify (for example a malformed config value) is
+  masked too and counted as `unclassified`. If the collector cannot run, the audit does not fall back
+  to reading files in this mode; it asks first.
 - Contextual secret detection (both modes): a high-entropy value next to a key-like name
   (`AWS_SECRET_ACCESS_KEY=...`, `--api-token ...`, `--password ...`) becomes `[REDACTED:context]`,
   keeping the label. `secret-literal-in-rule` also fires on such rules, so their drift fingerprints

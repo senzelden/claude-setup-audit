@@ -371,6 +371,8 @@ def analyze_permissions(perms):
     allow = perms.get("allow", []) or []
     flags = defaultdict(list)
     one_offs = 0
+    additional_dirs = perms.get("additionalDirectories")
+    additional_dirs = additional_dirs if isinstance(additional_dirs, list) else []  # a string would iterate as characters
     for rule in allow:
         for name, rx in RISKY_RULES:
             if rx.search(rule):
@@ -384,8 +386,8 @@ def analyze_permissions(perms):
         "deny": [redact(r) for r in perms.get("deny", []) or []],
         "default_mode": perms.get("defaultMode"),
         "additional_dirs": perms.get("additionalDirectories", []),
-        "missing_additional_dirs": [p for p in perms.get("additionalDirectories", []) or []
-                                    if not os.path.isdir(os.path.expanduser(p))],
+        "missing_additional_dirs": [p for p in additional_dirs
+                                    if isinstance(p, str) and not os.path.isdir(os.path.expanduser(p))],
         "one_off_rules": one_offs,
         "risky": {k: v[:6] for k, v in flags.items()},
         "rule_shape_issues": rule_shape_issues(perms),
