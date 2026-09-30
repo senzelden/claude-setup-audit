@@ -273,3 +273,78 @@ class PermissionOverlapEdges(unittest.TestCase):
         self.assertEqual(self.overlaps(stack('~/app', deny, allow)), ([], 0))
         plain = sfile('project', PROJECT, deny=['Read(*.env)'])
         self.assertEqual(len(self.overlaps(stack('~/app', plain, allow))[0]), 1)
+
+
+def entry(event, matcher, **handler):
+    handler.setdefault('type', 'command')
+    return collect.hook_handler_entry(event, matcher, handler)
+
+
+class HookDuplicates(unittest.TestCase):
+    def dups(self, *stacks):
+        return config_checks.hook_duplicates(list(stacks), collect.redact)
+
+    def test_effects_follow_the_docs(self):
+        lint = entry('PreToolUse', 'Bash', command='lint.sh CANARY-cmd-7f3a')
+        found, omitted = self.dups(stack('~/app', sfile('user', USER, handlers=[lint]),
+                                         sfile('project', PROJECT, handlers=[lint])))
+        self.assertEqual(omitted, 0)
+        self.assertEqual(found, [{'stack': '~/app', 'event': 'PreToolUse', 'matcher': 'Bash', 'type': 'command',
+                                  'fingerprint': lint['fingerprint'], 'effect': 'deduplicated',
+                                  'sources': [{'layer': 'user', 'path': USER, 'plugin': None},
+                                              {'layer': 'project', 'path': PROJECT, 'plugin': None}]}])
+        self.assertNotIn('CANARY-cmd-7f3a', str(found))
+        plugin = {'plugin': 'demo@m', 'path': '~/.claude/plugins/c/hooks/hooks.json', 'handlers': [lint]}
+        found, _ = self.dups(stack('global', sfile('user', USER, handlers=[lint]), plugins=[plugin]))
+        self.assertEqual(found[0]['effect'], 'separate_copies')
+        self.assertEqual(found[0]['sources'][1], {'layer': 'plugin', 'path': plugin['path'], 'plugin': 'demo@m'})
+        found, _ = self.dups(stack('global', sfile('user', USER, handlers=[lint, lint])))
+        self.assertEqual(found[0]['effect'], 'same_file')
+
+    def test_identity(self):
+        local = '~/.claude/settings.local.json'
+        found, _ = self.dups(stack('global', sfile('user', USER, handlers=[entry('Stop', None, command='x')]),
+                                   sfile('local', local, handlers=[entry('Stop', '*', command='x')])))
+        self.assertEqual(found[0]['matcher'], '*')
+        for a, b in ((entry('PreToolUse', 'Bash', command='x'), entry('PreToolUse', 'Bash|Edit', command='x')),
+                     (entry('PreToolUse', 'Bash', command='x', timeout=5), entry('PreToolUse', 'Bash', command='x'))):
+            self.assertEqual(self.dups(stack('global', sfile('user', USER, handlers=[a]),
+                                             sfile('local', local, handlers=[b]))), ([], 0))
+
+    def test_plugin_root_commands_group_only_within_their_plugin(self):
+        start = entry('SessionStart', None, command='${CLAUDE_PLUGIN_ROOT}/hooks/start.sh')
+        plugins = [{'plugin': 'a@m', 'path': 'pa', 'handlers': [start]},
+                   {'plugin': 'b@m', 'path': 'pb', 'handlers': [start]}]
+        self.assertEqual(self.dups(stack('global', plugins=plugins)), ([], 0))
+
+    def test_reported_once_and_capped(self):
+        lint = entry('PreToolUse', 'Bash', command='lint.sh')
+        g = stack('global', sfile('managed', MANAGED, handlers=[lint]), sfile('user', USER, handlers=[lint]))
+        a = stack('~/app', sfile('managed', MANAGED, handlers=[lint]), sfile('user', USER, handlers=[lint]),
+                  sfile('project', PROJECT))
+        found, _ = self.dups(g, a)
+        self.assertEqual([d['stack'] for d in found], ['global'])
+        files = [sfile('user', f'f{i}', handlers=[entry('PreToolUse', 'Bash', command=f'c{j}') for j in range(25)])
+                 for i in range(2)]
+        self.assertEqual([len(x) if isinstance(x, list) else x for x in self.dups(stack('global', *files))], [20, 5])
+        found, _ = self.dups(stack('global', *[sfile('user', f'f{i}', handlers=[lint]) for i in range(12)]))
+        self.assertEqual(len(found[0]['sources']), 10)
+
+    def test_list_matcher_is_stored_as_json_not_a_python_repr(self):
+        h = entry('PreToolUse', ['Edit', 'Bash'], command='x')
+        found, _ = self.dups(stack('global', sfile('user', USER, handlers=[h]),
+                                   sfile('project', PROJECT, handlers=[h])))
+        self.assertEqual(found[0]['matcher'], '["Bash","Edit"]')
+
+    def test_malformed_shapes_do_not_crash(self):
+        lint = entry('Stop', None, command='x')
+        odd = {'layer': 'user', 'path': USER, 'handlers': None}
+        junk = sfile('project', PROJECT, handlers=['nope', None, {'event': 'Stop'}, lint, lint])
+        found, _ = self.dups({'name': 'g', 'settings': [odd, 'x', junk], 'plugins': [None, {'handlers': 3}]})
+        self.assertEqual([d['effect'] for d in found], ['same_file'])
+        self.assertEqual(self.dups({'name': 'g', 'settings': None, 'plugins': None}), ([], 0))
+
+    def test_conflicts_section_shape(self):
+        section = config_checks.conflicts([stack('global', sfile('user', USER))], collect.redact)
+        self.assertEqual(section, {'stacks': 1, 'hook_duplicates': [], 'hook_duplicates_omitted': 0,
+                                   'permission_overlaps': [], 'permission_overlaps_omitted': 0})

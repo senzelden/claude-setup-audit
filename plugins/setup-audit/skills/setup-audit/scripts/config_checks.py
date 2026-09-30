@@ -261,3 +261,64 @@ def permission_overlaps(stacks, redact, cap=MAX_OVERLAPS):
                                      'rule': redact(by)[:160]},
                               'match': match})
     return found[:cap], max(0, len(found) - cap)
+
+
+def _matcher_text(matcher):
+    """Display form of a normalized matcher; list matchers become sorted compact JSON."""
+    matcher = normalize_matcher(matcher)
+    if isinstance(matcher, list):
+        return json.dumps(sorted(matcher, key=str), separators=(',', ':'), ensure_ascii=False, default=str)
+    return str(matcher)
+
+
+def _hook_members(stack):
+    """(layer, path, plugin, handler) for every well-formed handler entry in a stack."""
+    def dicts(items):
+        return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+    members = []
+    for f in dicts(stack.get('settings')):
+        members += [(f.get('layer'), f.get('path'), None, h) for h in dicts(f.get('handlers'))]
+    for p in dicts(stack.get('plugins')):
+        members += [('plugin', p.get('path'), p.get('plugin'), h) for h in dicts(p.get('handlers'))]
+    return [m for m in members if isinstance(m[3].get('fingerprint'), str)]
+
+
+def hook_duplicates(stacks, redact, cap=MAX_DUPLICATES):
+    """Identical handlers in more than one place within a stack; each group reported once.
+
+    hooks.md: "If you define the same handler in more than one settings file, it runs once. A
+    plugin's or skill's copy of the same handler stays separate." Handlers that reference
+    CLAUDE_PLUGIN_* expand per plugin, so they group only within their own plugin.
+    """
+    seen, found = set(), []
+    for stack in stacks:
+        groups = {}
+        for member in _hook_members(stack):
+            h = member[3]
+            key = (h['fingerprint'], member[2] if h.get('plugin_relative') else None)
+            groups.setdefault(key, []).append(member)
+        for key, group in groups.items():
+            if len(group) < 2:
+                continue
+            ids = tuple(sorted((str(layer), str(path), str(plugin or '')) for layer, path, plugin, _ in group))
+            if (key, ids) in seen:
+                continue
+            seen.add((key, ids))
+            paths = {path for _, path, _, _ in group}
+            effect = ('same_file' if len(paths) == 1 else
+                      'separate_copies' if any(layer == 'plugin' for layer, *_ in group) else 'deduplicated')
+            first = group[0][3]
+            found.append({'stack': stack.get('name'), 'event': redact(str(first.get('event')))[:200],
+                          'matcher': redact(_matcher_text(first.get('matcher')))[:200],
+                          'type': redact(str(first.get('type')))[:200], 'fingerprint': key[0], 'effect': effect,
+                          'sources': [{'layer': layer, 'path': path, 'plugin': plugin}
+                                      for layer, path, plugin, _ in group][:MAX_SOURCES]})
+    return found[:cap], max(0, len(found) - cap)
+
+
+def conflicts(stacks, redact):
+    """The snapshot's config_conflicts section."""
+    hooks, hooks_omitted = hook_duplicates(stacks, redact)
+    perms, perms_omitted = permission_overlaps(stacks, redact)
+    return {'stacks': len(stacks), 'hook_duplicates': hooks, 'hook_duplicates_omitted': hooks_omitted,
+            'permission_overlaps': perms, 'permission_overlaps_omitted': perms_omitted}
