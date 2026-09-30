@@ -90,7 +90,7 @@ Hosted validation passed all eight jobs at `48d9d5d`:
   eval-runner compatibility and model-quality evidence remain separate work.
 - **Privacy:** metadata-only collection/export, contextual secret detection and fuller
   provenance for free-text evidence. Tune detection against realistic fixtures.
-- **Deterministic apply:** sandbox slice shipped (`apply_ops.py`, allowlisted `sandbox.*` keys).
+- **Deterministic apply:** sandbox slice implemented (unreleased) (`apply_ops.py`, allowlisted `sandbox.*` keys).
   Next: widen the allowlist key by key with doc-grounded types; a paid approved-apply eval for
   sandbox ops needs separate approval; do not migrate the pruner or ledger flows without a design.
 - **Deeper checks:** hook matcher validation, duplicate hooks/layer conflicts and permission

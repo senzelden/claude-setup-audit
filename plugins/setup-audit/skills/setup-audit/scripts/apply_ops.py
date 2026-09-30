@@ -399,6 +399,8 @@ def plan_target(target):
         p.update(status='planned' if changed else 'unchanged', _new=new, _text=dump(new) if changed else None)
     except OpsError as exc:
         p.update(status='rejected', reason=exc.reason)
+    except RecursionError:  # loads, but too deeply nested to copy, dump or fingerprint
+        p.update(status='rejected', reason='invalid_json')
     return p
 
 
@@ -522,6 +524,11 @@ def run(raw, apply=False, backup_dir=None):
             for p, t in zip(plans, targets):
                 if p['status'] in ('planned', 'unchanged'):
                     _block(p, 'expect_file_missing' if 'expect_file' not in t else 'not_applied_other_target_failed')
+        elif any(p['status'] == 'planned' and t['expect_file'] != p['file_sha256'] for p, t in zip(plans, targets)):
+            for p, t in zip(plans, targets):
+                if p['status'] in ('planned', 'unchanged'):
+                    stale = p['status'] == 'planned' and t['expect_file'] != p['file_sha256']
+                    _block(p, 'changed_since_plan' if stale else 'not_applied_other_target_failed')
         else:
             try:
                 directory = _prepare_backup_dir(backup_dir) if any(p['status'] == 'planned' for p in plans) else None

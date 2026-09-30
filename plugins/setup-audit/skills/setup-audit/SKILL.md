@@ -348,8 +348,8 @@ than manually editing `sandbox` keys.
    last (a separate ops file after the other sandbox keys) and probe it afterwards: a write
    outside the project should be blocked, and package caches the user needs should be writable
    (`sandbox.filesystem.allowWrite`). Once the sandbox is on it protects settings files, so a
-   later `--apply` from a sandboxed Bash call fails with `backup_failed` or `write_failed`:
-   report it blocked; running outside the sandbox needs the user's approval at the permission
+   later `--apply` from a sandboxed Bash call fails with `backup_dir_unusable`, `backup_failed`
+   or `write_failed`: report it blocked; running outside the sandbox needs the user's approval at the permission
    prompt.
 8. **Record and verify.** Append each result to `applied` in audit.json and to an "Applied" section
    in the report: files, backup paths, the verification you ran, and how to revert. For `apply_ops.py`, take the backup paths and

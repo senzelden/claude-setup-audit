@@ -66,6 +66,16 @@ Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same,
 `wildcard_ignored_on_linux` for an entry with `*`, `?` or `[` once a trailing `/**` is removed);
 `port` (integer 1-65535, not boolean); `str_to_str_list`; `credential_files`; `credential_env`.
 
+- `str_to_str_list`: an object whose keys are non-empty strings and whose values are `str_list`.
+- `credential_files`: an array of objects with `path` (non-empty string) and `mode` (`deny` or
+  `mask`). A `mask` entry may add `extract` (non-empty string), `onExtractNoMatch` (`warn`, `deny`
+  or `error`), `decode` (`jwt`), `maskClaims` (non-empty `str_list`, needs `decode`),
+  `maskDuplicates` (bool) and `injectHosts` (`str_list`). A `deny` entry takes no other field; any
+  other field is `invalid_value`.
+- `credential_env`: the same with `name` instead of `path` and no `maskDuplicates`. `extract`
+  together with `decode` is `invalid_value`, as is `decode` with an `onExtractNoMatch` other than
+  `warn`.
+
 | Key | Kind | Files | Notes |
 |---|---|---|---|
 | `sandbox.enabled` | bool | user, project, local |  |
@@ -114,10 +124,15 @@ Target status: `planned`, `unchanged`, `rejected`, and after `--apply` `applied`
 `verify_failed`. Exit codes: 0 when every target is `planned`, `unchanged` or `applied`; 1 for any
 other status or an invalid ops file (JSON still printed); 2 for usage errors such as `--apply`
 without `--backup-dir`. Validation is all-or-nothing across targets; writes are per target.
+`--apply` writes nothing at all when any target is rejected, lacks `expect_file` or has a stale
+`expect_file` (that target is `changed_since_plan`, the others `not_applied_other_target_failed`).
+
+Top-level `applied` only echoes the mode (whether `--apply` was given). A write happened only where
+a target's `status` is `applied` and `verified` is `true`; never claim success from `applied`.
 
 - `invalid_ops_file`: the ops file is missing, too large, not valid JSON (duplicate keys and non-finite numbers included) or structurally wrong; nothing is read (exit 1, top-level `error`).
 - `duplicate_path`: the same path appears twice in one target.
-- `duplicate_target`: the same file appears in two targets.
+- `duplicate_target`: the same file appears in two targets, including two spellings that resolve to one file (top-level `error`, no targets listed).
 - `relative_path`: `file` is neither absolute nor `~/`-relative.
 - `managed_refused`: the target is managed settings (managed directory, `managed-settings.json`, `managed-settings.d`); checked before any read.
 - `target_not_settings`: the target is not a user, project or local settings file.
@@ -137,20 +152,21 @@ without `--backup-dir`. Validation is all-or-nothing across targets; writes are 
 - `type_conflict`: an intermediate path element exists but is not an object.
 - `op_rejected`: target status when any of its op rows is rejected.
 - `expect_file_missing`: `--apply` without `expect_file` on a target.
-- `not_applied_other_target_failed`: `--apply` wrote nothing because another target was rejected.
+- `not_applied_other_target_failed`: `--apply` wrote nothing because another target was rejected or had a stale `expect_file`.
 - `changed_since_plan`: the file hash or identity differs from the plan, a file was created after planning, or the target disappeared or stopped being a regular file.
 - `backup_failed`: the backup could not be written; the target is untouched.
 - `write_failed`: the write failed (a failed exclusive create is cleaned up); the backup is kept.
 - `verify_failed`: the re-read document differs from the planned one; no automatic restore, the output names the backup.
-- `backup_dir_symlink`: `--backup-dir` is a symlink; nothing is written.
-- `backup_dir_unusable`: `--backup-dir` cannot be created; nothing is written.
+- `backup_dir_symlink`: `--backup-dir` is a symlink; nothing is written (top-level `error`, and on the planned targets).
+- `backup_dir_unusable`: `--backup-dir` cannot be created; nothing is written (top-level `error`, and on the planned targets).
 
 ## Protected paths
 
 Sandboxing docs (fetched 2026-09-29): "Inside the directories that sandboxed commands can write to,
 the sandbox still denies writes to the files Claude Code loads configuration and code from". With
-the sandbox on, `--apply` from a sandboxed Bash call therefore fails with `backup_failed` or
-`write_failed`; report it blocked. Running outside the sandbox needs the user's approval.
+the sandbox on, `--apply` from a sandboxed Bash call therefore usually fails earlier with
+`backup_dir_unusable` (top-level `error`, because the backup directory is under `~/.claude/backups`),
+or else with `backup_failed` or `write_failed`; report it blocked. Running outside the sandbox needs the user's approval.
 
 ## Verification and revert
 

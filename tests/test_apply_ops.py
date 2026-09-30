@@ -285,6 +285,11 @@ class Planning(FakeHome):
         self.settings('{"a": ' + '9' * 5000 + '}')
         self.assertEqual(self.plan(op('sandbox.enabled', True))['reason'], 'invalid_json')
 
+    def test_deeply_nested_target_is_invalid_json_not_a_traceback(self):
+        self.settings('{"a": ' + '[' * 600 + ']' * 600 + '}')
+        p = self.plan(op('sandbox.enabled', True))
+        self.assertEqual((p['status'], p['reason']), ('rejected', 'invalid_json'))
+
     def test_too_large(self):
         self.settings('{"a": "' + 'x' * apply_ops.MAX_TARGET_BYTES + '"}')
         self.assertEqual(self.plan(op('sandbox.enabled', True))['reason'], 'too_large')
@@ -525,6 +530,18 @@ class Run(FakeHome):
         self.assertEqual((Path(self.a).read_bytes(), Path(self.b).read_bytes()), before)
         self.assertFalse(os.path.exists(self.backups))
 
+    def test_stale_expect_file_on_one_target_writes_nothing_anywhere(self):
+        before = (Path(self.a).read_bytes(), Path(self.b).read_bytes())
+        out = apply_ops.run(self.ops(
+            self.target('~/a/.claude/settings.local.json', op('sandbox.enabled', True, {'value': False}), expect_file=sha(self.a)),
+            self.target('~/b/.claude/settings.local.json', op('sandbox.failIfUnavailable', True), expect_file='sha256:' + '0' * 64)),
+            apply=True, backup_dir=self.backups)
+        self.assertEqual([(t['status'], t['reason']) for t in out['targets']],
+                         [('blocked', 'not_applied_other_target_failed'), ('blocked', 'changed_since_plan')])
+        self.assertFalse(out['ok'])
+        self.assertEqual((Path(self.a).read_bytes(), Path(self.b).read_bytes()), before)
+        self.assertFalse(os.path.exists(self.backups))
+
     def test_apply_requires_expect_file(self):
         before = Path(self.a).read_bytes()
         out = apply_ops.run(self.ops(self.target('~/a/.claude/settings.local.json',
@@ -616,6 +633,16 @@ class Cli(FakeHome):
                          (1, 'blocked', 'changed_since_plan'))
         self.assertEqual(Path(path).read_bytes(), modified)
         self.assertEqual(os.listdir(backups) if os.path.isdir(backups) else [], [])
+
+    def test_claude_dir_option_sets_the_user_target_location(self):
+        other = os.path.join(self.home, 'other-claude')
+        os.makedirs(other)
+        Path(other, 'settings.json').write_text(apply_ops.dump({}))
+        target = {'file': os.path.join(other, 'settings.json'), 'ops': [op('sandbox.enabled', True)]}
+        code, out, _ = self.call('--ops', self.ops_file([target]), '--claude-dir', other)
+        self.assertEqual((code, out['targets'][0]['kind']), (0, 'user'))
+        code, out, _ = self.call('--ops', self.ops_file([target]))
+        self.assertNotEqual(out['targets'][0].get('kind'), 'user')
 
     def test_usage_errors_exit_2(self):
         ops = self.ops_file([{'file': '~/.claude/settings.json', 'ops': [op('sandbox.enabled', True)]}])
