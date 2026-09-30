@@ -176,6 +176,9 @@ class ExposureFields(FakeHome):
         s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % var, 'env': env, 'headers': env}})['a']
         self.assertEqual((len(s['env_literal_keys']), len(s['headers_literal_keys'])), (100, 100))
         self.assertEqual([len(v) for v in s['url_variable_references']], [120])
+        secret = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2'
+        s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % secret}})['a']
+        self.assertNotIn(secret, json.dumps(s))
 
 
 def parsed(*argv):
@@ -224,8 +227,14 @@ class PolicyObservations(FakeHome):
         rules = collect.mcp_permission_rules({
             'allow': ['mcp__github__get_*', 'mcp__github', 'mcp__*', 'Bash(ls)', 'mcp__plugin_demo_db__query',
                       'mcp__', 7],
-            'deny': ['mcp__slack__post(channel:x)']})
+            'deny': ['mcp__slack__post']})
         self.assertEqual(rules, {'allow': {'*': 1, 'github': 2, 'plugin_demo_db': 1}, 'deny': {'slack': 1}})
+
+    def test_permission_rules_with_parentheses_are_skipped_like_claude_code(self):
+        # permissions.md: loading a settings file "skips any `mcp__` rule that has parentheses".
+        rules = collect.mcp_permission_rules({
+            'allow': ['mcp__gh__x(arg)', 'mcp__gh'], 'deny': ['mcp__slack__post(channel:x)']})
+        self.assertEqual(rules, {'allow': {'gh': 1}})
 
     def test_permission_rules_tolerate_malformed_shapes(self):
         self.assertEqual(collect.mcp_permission_rules(['mcp__a']), {})

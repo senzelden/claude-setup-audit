@@ -192,8 +192,9 @@ checked 2026-09-29: `mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permis
 
 Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
 `is_error: true` counts. Categories are heuristic text patterns observed 2026-09-29; the error
-text is not stored. Results are deduplicated by project directory, session id (file fallback)
-and tool id. Caps: 15 built-in tools (only those with errors), 15 MCP servers (with calls) and
+text is not stored. Calls and paired errors are deduplicated by project directory, session id
+(file fallback) and tool id; `results_without_is_error` and `error_results_unmatched` count each
+occurrence, so resumed copies of a session can inflate them. Caps: 15 built-in tools (only those with errors), 15 MCP servers (with calls) and
 3 failing tools per server; `failure_rate` (excluding permission denials and user rejections)
 is null below 5 calls. The session-meta `tool_error_categories` remain separate and coarse.
 

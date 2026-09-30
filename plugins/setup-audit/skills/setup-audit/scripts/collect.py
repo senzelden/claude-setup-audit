@@ -342,9 +342,10 @@ def mcp_permission_rules(perms):
         counts = Counter()
         rules = perms.get(kind)
         for rule in rules if isinstance(rules, list) else []:
-            if not isinstance(rule, str):
+            # permissions.md: settings loading skips any mcp__ rule with parentheses.
+            if not isinstance(rule, str) or "(" in rule:
                 continue
-            tool = rule.split("(", 1)[0].strip()
+            tool = rule.strip()
             if tool.startswith("mcp__"):
                 segment = tool.split("__")[1]
                 if segment:

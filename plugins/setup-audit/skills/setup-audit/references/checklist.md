@@ -93,7 +93,7 @@ the collector snapshot.
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
-  `@latest` packages.
+  `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
 - **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
   `settings[].mcp_policy`; static, never connected, no values stored). Weigh, citing field and
   source:
