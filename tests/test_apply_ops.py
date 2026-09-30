@@ -327,3 +327,130 @@ class Planning(FakeHome):
         self.plan(op('sandbox.enabled', True, {'value': False}))
         self.assertEqual(before, (sorted(os.listdir(os.path.dirname(path))), Path(path).read_bytes(),
                                   os.stat(path).st_mtime_ns))
+
+
+class Apply(FakeHome):
+    FILE = '~/p/.claude/settings.local.json'
+
+    def setUp(self):
+        super().setUp()
+        self.path = os.path.join(self.home, 'p', '.claude', 'settings.local.json')
+        self.backups = os.path.join(self.home, 'backups')
+        os.makedirs(self.backups, mode=0o700)
+
+    def seed(self, doc=None, text=None):
+        self.write('p/.claude/settings.local.json',
+                   text if text is not None else apply_ops.dump(doc or {'sandbox': {'enabled': False}}))
+        return Path(self.path).read_bytes()
+
+    def plan(self, *ops, file=None):
+        return apply_ops.plan_target({'file': file or self.FILE,
+                                      'ops': list(ops) or [op('sandbox.enabled', True, {'value': False})]})
+
+    def listing(self):
+        return sorted(os.listdir(self.backups))
+
+    def test_apply_backs_up_writes_and_verifies(self):
+        original = self.seed({'model': 'x', 'sandbox': {'enabled': False}})
+        p = self.plan()
+        apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['verified'], p['created']), ('applied', True, False))
+        self.assertEqual(json.loads(Path(self.path).read_text()), {'model': 'x', 'sandbox': {'enabled': True}})
+        backup = os.path.join(self.backups, os.path.basename(p['backup']))
+        self.assertEqual(Path(backup).read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(os.stat(backup).st_mode), 0o600)
+        self.assertEqual(os.listdir(os.path.dirname(self.path)), ['settings.local.json'])  # no temp left
+
+    def test_stale_expect_file_writes_nothing(self):
+        original = self.seed()
+        p = self.plan()
+        apply_ops.apply_target(p, 'sha256:' + '0' * 64, self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'changed_since_plan'))
+        self.assertEqual(Path(self.path).read_bytes(), original)
+        self.assertEqual(self.listing(), [])
+
+    def test_file_changed_after_plan_is_blocked(self):
+        self.seed()
+        p = self.plan()
+        Path(self.path).write_text('{"sandbox": {"enabled": null}}\n')
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+        apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'changed_since_plan'))
+        self.assertEqual(Path(self.path).read_text(), '{"sandbox": {"enabled": null}}\n')
+        self.assertEqual(self.listing(), [])
+
+    def test_target_swapped_for_symlink_is_blocked(self):
+        self.seed()
+        p = self.plan()
+        sentinel = self.write('sentinel.json', '{"keep": true}')
+        os.unlink(self.path)
+        os.symlink(sentinel, self.path)
+        apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'symlink'))
+        self.assertEqual(Path(sentinel).read_text(), '{"keep": true}')
+
+    def test_backup_failure_leaves_target_untouched(self):
+        original = self.seed()
+        p = self.plan()
+        with mock.patch.object(apply_ops.safe_write, 'backup_from_fd', side_effect=OSError('disk full')):
+            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'backup_failed'))
+        self.assertEqual(Path(self.path).read_bytes(), original)
+
+    def test_write_failure_keeps_backup(self):
+        original = self.seed()
+        p = self.plan()
+        with mock.patch.object(apply_ops.safe_write, 'atomic_write', side_effect=OSError('read-only')):
+            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'write_failed'))
+        self.assertEqual(Path(self.path).read_bytes(), original)
+        self.assertEqual(len(self.listing()), 1)
+
+    def test_verify_mismatch_is_reported(self):
+        self.seed()
+        p = self.plan()
+
+        def diverge(target, text, prefix, encoding):
+            Path(target).write_text('{"sandbox": {"enabled": true}, "other": 1}\n')
+        with mock.patch.object(apply_ops.safe_write, 'atomic_write', side_effect=diverge):
+            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+        self.assertEqual((p['status'], p['reason'], p['verified']), ('verify_failed', 'verify_failed', False))
+        self.assertTrue(p['backup'])
+
+    def test_missing_file_is_created_exclusively(self):
+        os.makedirs(os.path.dirname(self.path))
+        p = self.plan(op('sandbox.enabled', True))
+        apply_ops.apply_target(p, 'absent', self.backups)
+        self.assertEqual((p['status'], p['created'], p['backup']), ('applied', True, None))
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+        self.assertEqual(json.loads(Path(self.path).read_text()), {'sandbox': {'enabled': True}})
+
+    def test_exclusive_creation_loses_to_a_file_created_after_planning(self):
+        os.makedirs(os.path.dirname(self.path))
+        p = self.plan(op('sandbox.enabled', True))
+        Path(self.path).write_text('{}\n')
+        apply_ops.apply_target(p, 'absent', self.backups)
+        self.assertEqual((p['status'], p['reason']), ('blocked', 'changed_since_plan'))
+        self.assertEqual(Path(self.path).read_text(), '{}\n')
+
+    def test_backups_are_distinct_and_leave_existing_files_alone(self):
+        outside = self.write('outside.txt', 'untouched')
+        os.symlink(outside, os.path.join(self.backups, 'trap.bak'))
+        Path(self.backups, 'keep.bak').write_text('old backup')
+        other = self.write('q/.claude/settings.local.json', apply_ops.dump({'sandbox': {'enabled': False}}))
+        self.seed()
+        made = []
+        for file in (self.FILE, '~/q/.claude/settings.local.json', self.FILE):
+            ops = ([op('sandbox.enabled', False, {'value': True})] if len(made) == 2 else [])
+            p = self.plan(*ops, file=file)
+            before = Path(apply_ops.expand(file)).read_bytes()   # same target again, same second
+            apply_ops.apply_target(p, p['file_sha256'], self.backups)
+            self.assertEqual(p['status'], 'applied')
+            backup = os.path.join(self.backups, os.path.basename(p['backup']))
+            self.assertEqual(Path(backup).read_bytes(), before)
+            made.append(p['backup'])
+        self.assertEqual(len(set(made)), 3)
+        self.assertEqual(Path(outside).read_text(), 'untouched')
+        self.assertEqual(Path(self.backups, 'keep.bak').read_text(), 'old backup')
+        self.assertEqual(json.loads(Path(other).read_text()), {'sandbox': {'enabled': True}})

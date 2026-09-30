@@ -400,3 +400,65 @@ def plan_target(target):
     except OpsError as exc:
         p.update(status='rejected', reason=exc.reason)
     return p
+
+
+def _block(p, why, status='blocked'):
+    p.update(status=status, reason=why)
+
+
+def _create(path, text):
+    """Exclusive creation: never replaces a file that appeared after planning."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(fd, 'wb', closefd=False) as stream:
+            stream.write(text.encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(fd)
+
+
+def apply_target(p, expect_file, backup_dir):
+    path = p['_path']
+    if expect_file != p['file_sha256']:
+        return _block(p, 'changed_since_plan')
+    if p['_identity'] is None:
+        try:
+            _create(path, p['_text'])
+        except FileExistsError:
+            return _block(p, 'changed_since_plan')
+        except OSError:
+            return _block(p, 'write_failed')
+        p['created'] = True
+    else:
+        try:
+            fd, st = safe_write.open_no_symlink(path)
+        except safe_write.SymlinkRefused:
+            return _block(p, 'symlink')
+        except OSError:
+            return _block(p, 'changed_since_plan')
+        try:
+            if safe_write.identity_of(st) != p['_identity']:
+                return _block(p, 'changed_since_plan')
+            try:
+                backup = safe_write.backup_from_fd(fd, path, backup_dir, collect.HOME)
+            except OSError:
+                return _block(p, 'backup_failed')
+        finally:
+            os.close(fd)
+        p['backup'] = tilde(backup)
+        try:
+            safe_write.atomic_write(path, p['_text'], prefix='.apply_ops.', encoding='utf-8')
+        except OSError:
+            return _block(p, 'write_failed')
+    try:
+        raw, _ = _read(path)
+        ok = raw is not None and ledger.fingerprint(_parse(raw)) == ledger.fingerprint(p['_new'])
+    except OpsError:
+        ok = False
+    p['verified'] = ok
+    if ok:
+        p.update(status='applied', reason='')
+    else:
+        _block(p, 'verify_failed', status='verify_failed')
