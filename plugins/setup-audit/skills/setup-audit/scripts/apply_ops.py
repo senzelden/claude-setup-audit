@@ -201,7 +201,7 @@ def load_ops(raw):
         raise OpsError('invalid_ops_file')
     try:
         doc = report_state.load_json(raw.decode('utf-8'))
-    except (report_state.ReportError, UnicodeDecodeError, RecursionError):
+    except (report_state.ReportError, UnicodeDecodeError, RecursionError, ValueError):
         raise OpsError('invalid_ops_file') from None
     if not (isinstance(doc, dict) and set(doc) == {'version', 'targets'} and type(doc['version']) is int
             and doc['version'] == 1 and isinstance(doc['targets'], list) and 1 <= len(doc['targets']) <= MAX_TARGETS):

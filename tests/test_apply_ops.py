@@ -151,7 +151,8 @@ class OpsFile(unittest.TestCase):
         for doc in cases:
             self.assertEqual(self.load(doc), 'invalid_ops_file', doc)
         for raw in (None, b'\xff\xfe', b'{"version": 1, "version": 1, "targets": []}', b'[1]',
-                    b' ' * (1024 * 1024 + 1)):
+                    b' ' * (1024 * 1024 + 1),
+                    b'{"version": 1, "targets": [], "x": ' + b'9' * 5000 + b'}'):
             self.assertEqual(reason(apply_ops.load_ops, raw), 'invalid_ops_file', raw[:40] if raw else raw)
 
     def test_duplicate_path_and_target(self):
