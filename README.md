@@ -29,10 +29,26 @@ Proposals are applied only when you approve them, with backups and verification.
 
 ## Install
 
+Setup Audit is listed in the Anthropic plugin directory (Claude Code, Cowork and the Claude
+apps). In Claude Code, search for `setup-audit` on the **Discover** tab of `/plugin`, or run:
+
+```
+/plugin install setup-audit@anthropic-plugin-directory
+```
+
+To install straight from this repository instead, for example to get a release before the
+directory picks it up:
+
 ```
 /plugin marketplace add senzelden/claude-setup-audit
 /plugin install setup-audit@claude-setup-audit
 ```
+
+Install from one source only. Both provide the same `setup-audit` skill.
+
+The Update and Uninstall commands below use the repository marketplace. For a directory install,
+replace `@claude-setup-audit` with `@anthropic-plugin-directory` and skip the marketplace refresh
+and removal steps.
 
 ### Requirements
 

@@ -124,9 +124,12 @@ Hosted validation passed all eight jobs at `499217f`:
 
 ## Distribution follow-up
 
-The 2026-09-16 handoff records community review approval but no entry in Anthropic's community
-mirror. Recheck the live listing before adding community install instructions. Direct marketplace
-installation remains documented in the README. This is external follow-up, not a release blocker.
+Resolved 2026-10-19: 0.10.0 is live in the built-in Anthropic plugin directory as
+`setup-audit@anthropic-plugin-directory` (Claude Code, Cowork, Claude apps), served from
+`github.com/senzelden/claude-setup-audit#plugins/setup-audit` at the release commit. A test
+install resolved to `0.10.0-08ea532e416f`. It is not in the `anthropics/claude-plugins-community`
+GitHub marketplace, which has had no new community entries since July 2026, so that repo is not
+a useful listing check. The README documents both install paths.
 
 - The README now has update and uninstall instructions and a sample report.
 
