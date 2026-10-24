@@ -270,7 +270,7 @@ MCP_POLICY_KEEP = (  # collect.mcp_policy: names, or the string "invalid" in pla
     *(('mcp_policy', k, 'server_names', '*') for k in ('allowedMcpServers', 'deniedMcpServers')))
 HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
                 ('on_failure',), ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
-SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
+SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'), ('shape_issues', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
                  ('other', 'autoUpdates')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)

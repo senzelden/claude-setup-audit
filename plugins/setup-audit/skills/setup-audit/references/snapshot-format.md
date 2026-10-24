@@ -42,6 +42,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   - `*_omitted` counts.
 
   Settings summaries also carry:
+  - `shape_issues` when present: sorted key paths whose value had the wrong type and was dropped
+    (`permissions`, `permissions.allow`, `hooks`, `env`, ...); a managed file with any is `partial`
+    with reason `invalid_entries`;
   - `permissions.rule_shape_issues`;
   - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only),
     `issues`/`unknown_fields`/`plugin_relative` when present.

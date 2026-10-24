@@ -295,6 +295,14 @@ metric that motivated it, so the next run can check whether it moved.
 
 ## Hygiene (`HYG-`)
 
+- **HYG-settings-shape** (`settings[].shape_issues`, key paths only): a value of the wrong type,
+  e.g. `permissions` that isn't an object or a `deny` list holding a non-string. The collector
+  drops it and reads the rest. Claude Code either skips the entry (Settings Warning) or the whole
+  file (Settings Error) and offers to continue without it; `-p` runs skip it silently (settings
+  docs "Fix a broken settings file", fetched 2026-10-24). Which one happened isn't observable here,
+  so ask the user to check `/status` or `claude doctor`. High severity when the key is
+  `permissions` or `hooks`, since the skipped part can be a deny rule or guard hook; managed files
+  keep enforcing the rest (`coverage` reason `invalid_entries`).
 - **HYG-missing-hook-script** (`missing_hook_scripts`): a hook points at a file that doesn't exist.
   High severity for PreToolUse, because it can block every call.
 - **HYG-dead-refs** (`claude_md_dead_refs`): CLAUDE.md names paths that don't exist. Before reporting,

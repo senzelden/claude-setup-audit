@@ -555,13 +555,19 @@ class FailClosed(PatchedHome):
 
     def test_each_malformed_value_alone_is_masked(self):
         for key, value in (('cleanupPeriodDays', 'zcalone'), ('includeCoAuthoredBy', 'zcalone'),
-                           ('enabledPlugins', {'x@m': 'zcalone'}), ('permissions', {'additionalDirectories': 'zcalone'}),
-                           ('hooks', self.PLANTED['hooks'])):
+                           ('enabledPlugins', {'x@m': 'zcalone'}), ('hooks', self.PLANTED['hooks'])):
             with self.subTest(key=key):
                 self.write('.claude/settings.json', {key: value})
                 meta = collect.build_snapshot(args(metadata_only=True))
                 self.assertNotIn('zcalone', json.dumps(meta))
                 self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields'].get('unclassified', 0), 1)
+
+    def test_wrongly_typed_value_is_dropped_not_leaked(self):
+        self.write('.claude/settings.json', {'permissions': {'additionalDirectories': 'zcalone'}})
+        for metadata_only in (True, False):
+            snap = collect.build_snapshot(args(metadata_only=metadata_only))
+            self.assertNotIn('zcalone', json.dumps(snap))
+            self.assertEqual(snap['global']['settings'][0]['shape_issues'], ['permissions.additionalDirectories'])
 
     def test_unit_mask_unclassified_keeps_markers_and_kept_fields(self):
         snap = {'global': {'version': '1.2.3', 'surprise': 'abc', 'done': '[metadata-only: 3 chars]'}}

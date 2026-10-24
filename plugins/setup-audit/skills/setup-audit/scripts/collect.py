@@ -405,7 +405,9 @@ def hook_handler_entry(event, matcher, x):
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
         target = x.get("url", "")
-        extra = {"header_keys": sorted(x.get("headers") or {}), "allowed_env_vars": x.get("allowedEnvVars"),
+        headers = x.get("headers")
+        extra = {"header_keys": sorted(headers) if isinstance(headers, dict) else [],
+                 "allowed_env_vars": x.get("allowedEnvVars"),
                  "target_origin": extensions.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
     elif kind == "mcp_tool":
         target = f"{x.get('server', '?')}:{x.get('tool', '?')}"
@@ -415,6 +417,7 @@ def hook_handler_entry(event, matcher, x):
     else:
         target, extra = x.get("command", ""), {}
     issues, unknown = config_checks.handler_issues(event, matcher, x)
+    target = target if isinstance(target, str) else ""
     entry = {"event": event, "matcher": matcher, "type": kind, "target": redact(target)[:200], **extra,
              "fingerprint": config_checks.handler_fingerprint(event, matcher, x)}
     if kind in ("command", "http") and config_checks.on_failure(x):
@@ -434,23 +437,69 @@ _RAW_PERMISSIONS = {}
 LAYER_RANK = {"user": 0, "project": 1, "local": 2, "managed": 3}  # settings precedence, lowest first
 
 
+# Shapes the summary relies on. Claude Code skips a value of another shape, or the whole file as a
+# Settings Error (settings.md "Fix a broken settings file", fetched 2026-10-24).
+SETTINGS_OBJECT_KEYS = ("permissions", "hooks", "env", "enabledPlugins", "sandbox", "modelSettings")
+SETTINGS_RULE_LISTS = ("allow", "ask", "deny", "additionalDirectories")
+
+
+def settings_shape(d):
+    """(copy of d without wrongly typed values, sorted key paths of what was dropped)."""
+    d, issues = dict(d), set()
+    for key in SETTINGS_OBJECT_KEYS:
+        if d.get(key) is not None and not isinstance(d[key], dict):
+            del d[key]
+            issues.add(key)
+    if isinstance(d.get("permissions"), dict):
+        perms = d["permissions"] = dict(d["permissions"])
+        for key in SETTINGS_RULE_LISTS:
+            value = perms.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                del perms[key]
+                issues.add(f"permissions.{key}")
+            elif not all(isinstance(r, str) for r in value):
+                perms[key] = [r for r in value if isinstance(r, str)]
+                issues.add(f"permissions.{key}")
+    if isinstance(d.get("hooks"), dict):
+        hooks = {}
+        for event, groups in d["hooks"].items():
+            if not isinstance(groups, list):
+                issues.add("hooks")
+                continue
+            kept = []
+            for group in groups:
+                inner = group.get("hooks", []) if isinstance(group, dict) else None
+                if not isinstance(inner, list) or not all(isinstance(x, dict) for x in inner):
+                    issues.add("hooks")
+                if isinstance(group, dict):
+                    kept.append({**group, "hooks": [x for x in inner if isinstance(x, dict)]
+                                 if isinstance(inner, list) else []})
+            hooks[event] = kept
+        d["hooks"] = hooks
+    return d, sorted(issues)
+
+
 def summarize_settings(path, data=None, managed=False):
-    d = load_json(path) if data is None else data
-    if d is None:
+    raw = load_json(path) if data is None else data
+    if raw is None:
         return None
+    d, shape_issues = settings_shape(raw)
     hooks = d.get("hooks", {}) or {}
     handlers = [(ev, h.get("matcher"), x) for ev, lst in hooks.items() for h in lst for x in h.get("hooks", [])]
     hook_handlers = [hook_handler_entry(ev, matcher, x) for ev, matcher, x in handlers]
     # missing_hook_scripts needs the raw (unredacted, untruncated) command to expand path
     # placeholders and check the filesystem; only command hooks name a local path at all.
-    raw_commands = [x.get("command", "") for _, _, x in handlers if x.get("type", "command") == "command"]
+    raw_commands = [x["command"] for _, _, x in handlers
+                    if x.get("type", "command") == "command" and isinstance(x.get("command"), str)]
     perms = d.get("permissions", {}) or {}
     # Project settings live in <project>/.claude/; user settings in ~/.claude (no project dir).
     settings_dir = os.path.dirname(os.path.abspath(path))
     project_dir = None if managed or settings_dir == CLAUDE else os.path.dirname(settings_dir)
     summary = {
         "path": path.replace(HOME, "~"),
-        "keys": sorted(d.keys()),
+        "keys": sorted(raw.keys()),
         "model": d.get("model"),
         "model_settings": d.get("modelSettings"),
         "env_keys": sorted((d.get("env") or {}).keys()),
@@ -470,6 +519,8 @@ def summarize_settings(path, data=None, managed=False):
         "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
                                      "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
     }
+    if shape_issues:
+        summary["shape_issues"] = shape_issues
     # Raw rules for config_stacks(); never part of a summary, which is serialized.
     _RAW_PERMISSIONS[summary["path"]] = {k: [r for r in (perms.get(k) if isinstance(perms.get(k), list) else [])
                                             if isinstance(r, str)] for k in ("allow", "ask", "deny")}
@@ -520,6 +571,9 @@ def collect_managed_settings():
             summary["scope"] = "managed"
             out["settings"].append(summary)
             info.update(status="collected", presence="present", representation="selected_fields")
+            if summary.get("shape_issues"):
+                # managed-settings.md: Claude Code drops invalid entries and enforces the rest.
+                info.update(status="partial", reason="invalid_entries")
         except FileNotFoundError:
             # A dangling symlink is unavailable, not evidence of absence.
             info.update(status="unavailable" if os.path.lexists(path) else "absent",

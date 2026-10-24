@@ -30,9 +30,17 @@ class ManagedSettings(FakeHome):
         self.assertNotIn('touch NEVER', json.dumps(result))
 
     def test_invalid_and_oversized_files(self):
-        for content in ('{', '[]', '{"hooks": 1}', '{"permissions":{"allow":[1]}}'):
+        for content in ('{', '[]'):
             self.write('managed-settings.json', content)
             self.assertEqual(self.scan()['sources'][0]['reason'], 'invalid_settings')
+        # Wrongly typed entries drop only themselves; the rest of the file is still collected.
+        for content, issues in (('{"hooks": 1, "model": "m"}', ['hooks']),
+                                ('{"permissions":{"allow":[1, "Read"]}, "model": "m"}', ['permissions.allow'])):
+            self.write('managed-settings.json', content)
+            result = self.scan()
+            self.assertEqual((result['sources'][0]['status'], result['sources'][0]['reason']),
+                             ('partial', 'invalid_entries'))
+            self.assertEqual((result['settings'][0]['model'], result['settings'][0]['shape_issues']), ('m', issues))
         self.write('managed-settings.json', ' ' * 20)
         with mock.patch.object(collect, 'MANAGED_MAX_BYTES', 10):
             self.assertEqual(self.scan()['sources'][0]['reason'], 'byte_limit')

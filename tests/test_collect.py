@@ -678,6 +678,73 @@ class ScopedCollection(FakeHome):
         self.assertEqual(c["samples"][0]["project"], "/home/x/repo-a")
 
 
+class MalformedSettings(unittest.TestCase):
+    """A wrongly typed value drops that value, never the snapshot (settings.md "Fix a broken settings file")."""
+    CASES = (
+        ({'permissions': 5}, ['permissions']),
+        ({'hooks': []}, ['hooks']),
+        ({'permissions': {'ask': 5}}, ['permissions.ask']),
+        ({'permissions': {'deny': [None, 'Bash(rm *)']}}, ['permissions.deny']),
+        ({'permissions': {'allow': [{}], 'additionalDirectories': 'x'}},
+         ['permissions.additionalDirectories', 'permissions.allow']),
+        ({'hooks': {'Stop': 'x'}}, ['hooks']),
+        ({'hooks': {'Stop': ['x']}}, ['hooks']),
+        ({'hooks': {'Stop': [{'hooks': ['x']}]}}, ['hooks']),
+        ({'hooks': {'Stop': [{'hooks': 'x'}]}}, ['hooks']),
+        ({'env': ['A']}, ['env']),
+        ({'sandbox': 'on'}, ['sandbox']),
+        ({'enabledPlugins': ['a']}, ['enabledPlugins']),
+        ({'modelSettings': 3}, ['modelSettings']),
+    )
+    HANDLERS = ({'command': 5}, {'type': 'http', 'url': 5, 'headers': 'x'}, {'type': 'prompt', 'prompt': 5},
+                {'type': 'mcp_tool', 'server': 5, 'tool': None}, {'type': 5})
+
+    def test_each_shape_is_dropped_and_named(self):
+        for data, issues in self.CASES:
+            with self.subTest(data=data):
+                s = collect.summarize_settings('/tmp/x/settings.json', data=data)
+                self.assertEqual(s['shape_issues'], issues)
+                self.assertEqual(s['keys'], sorted(data))
+                json.dumps(s)
+
+    def test_valid_entries_survive(self):
+        s = collect.summarize_settings('/tmp/x/settings.json', data={
+            'permissions': {'deny': [None, 'Bash(rm *)'], 'allow': ['Read']}, 'env': {'A': '1'}})
+        self.assertEqual(s['permissions']['deny_count'], 1)
+        self.assertEqual(s['env_keys'], ['A'])
+        clean = collect.summarize_settings('/tmp/x/settings.json', data={'permissions': {'allow': ['Read']}})
+        self.assertNotIn('shape_issues', clean)
+
+    def test_odd_handler_field_types_do_not_raise(self):
+        for handler in self.HANDLERS:
+            with self.subTest(handler=handler):
+                data = {'hooks': {'PreToolUse': [{'matcher': 5, 'hooks': [handler]}]}}
+                s = collect.summarize_settings('/tmp/x/settings.json', data=data)
+                self.assertEqual(len(s['hook_handlers']), 1)
+                json.dumps(s)
+
+    def test_collector_cli_completes_with_a_malformed_user_file(self):
+        import subprocess
+        script = os.path.join(os.path.abspath(SCRIPTS), "collect.py")
+        for data, issues in self.CASES + tuple(({'hooks': {'Stop': [{'hooks': [h]}]}}, None) for h in self.HANDLERS):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as tmp:
+                cfg = os.path.join(tmp, "cfg")
+                os.makedirs(cfg)
+                with open(os.path.join(cfg, "settings.json"), "w") as f:
+                    json.dump(data, f)
+                out = os.path.join(tmp, "snap.json")
+                for extra in ([], ["--metadata-only"]):
+                    result = subprocess.run(
+                        [sys.executable, "-B", script, "--claude-dir", cfg, "--days", "1", "--out", out, *extra],
+                        capture_output=True, text=True, timeout=180,
+                        env={**os.environ, "HOME": tmp, "CLAUDE_CONFIG_DIR": cfg})
+                    self.assertEqual(result.returncode, 0, result.stderr[-500:])
+                    with open(out) as f:
+                        snap = json.load(f)
+                    if issues:
+                        self.assertEqual(snap["global"]["settings"][0]["shape_issues"], issues)
+
+
 class ScopeCLI(unittest.TestCase):
     def run_collect(self, cfg, *extra_args):
         import subprocess
