@@ -164,7 +164,7 @@ SETTINGS = {
     'permissions': {'allow': ['Bash(sudo ls)', 'Bash(curl:*)'], 'deny': ['Bash(rm -rf /)', 'Read(.env)'],
                     'defaultMode': 'acceptEdits', 'additionalDirectories': ['~/shared']},
     'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
-        {'type': 'command', 'command': 'echo hi'},
+        {'type': 'command', 'command': 'echo hi', 'onFailure': 'block'},
         {'type': 'http', 'url': 'https://hooks.example.com/x', 'headers': {'X-Token': '$T'}},
         {'type': 'prompt', 'prompt': 'judge this'},
         {'type': 'mcp_tool', 'server': 'srv', 'tool': 'check'}]}]},
@@ -183,9 +183,10 @@ class MaskingUnits(unittest.TestCase):
         privacy.mask_settings(s, c)
         self.assertTrue(all(privacy.MARKER_RE.match(v) for v in s['hook_commands']))
         self.assertEqual(len(s['hook_commands']), len(before['hook_commands']))
+        self.assertEqual(before['hook_handlers'][0]['on_failure'], 'block')
         for h, b in zip(s['hook_handlers'], before['hook_handlers']):
             self.assertTrue(privacy.MARKER_RE.match(h['target']))
-            for k in ('event', 'matcher', 'type', 'server', 'tool', 'target_origin', 'header_keys'):
+            for k in ('event', 'matcher', 'type', 'server', 'tool', 'target_origin', 'header_keys', 'on_failure'):
                 self.assertEqual(h.get(k), b.get(k))
         self.assertEqual(sorted(s['permissions']['risky']), sorted(before['permissions']['risky']))
         for flag, rules in s['permissions']['risky'].items():

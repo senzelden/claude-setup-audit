@@ -138,6 +138,18 @@ class HookHandlerChecks(unittest.TestCase):
         self.assertEqual(check('Stop', 'Bash', {'type': 'command', 'command': 'x', 'colour': 'r'}),
                          (['matcher_ignored', 'unknown_fields'], ['colour']))
 
+    def test_on_failure_field(self):
+        # hooks.md "Command hook fields" / "HTTP hook fields" (2.1.295+): command and http only.
+        check = config_checks.handler_issues
+        for kind, target in (('command', {'command': 'x'}), ('http', {'url': 'u'})):
+            for value in ('block', 'continue'):
+                self.assertEqual(check('PreToolUse', 'Bash', {'type': kind, **target, 'onFailure': value}), ([], []))
+            self.assertEqual(check('PreToolUse', 'Bash', {'type': kind, **target, 'onFailure': 'stop'}),
+                             (['invalid_on_failure'], []))
+        self.assertEqual(check('Stop', None, {'type': 'prompt', 'prompt': 'p', 'onFailure': 'block'}),
+                         (['unknown_fields'], ['onFailure']))
+        self.assertEqual(check('Stop', None, {'command': 'x', 'onFailure': True}), (['invalid_on_failure'], []))
+
     def test_non_string_type_is_an_unknown_type(self):
         self.assertEqual(config_checks.handler_issues('Stop', None, {'type': ['command']}),
                          (['unknown_type'], []))

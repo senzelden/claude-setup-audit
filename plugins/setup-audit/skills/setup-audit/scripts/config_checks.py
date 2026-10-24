@@ -50,11 +50,11 @@ HOOK_EVENTS = {
     'MessageDisplay': (None, None),
 }
 TOOL_EVENTS = frozenset(e for e, (filters, _) in HOOK_EVENTS.items() if filters == 'tool name')
-# hooks.md "Hook handler fields" (fetched 2026-09-29, re-verified 2026-09-30).
+# hooks.md "Hook handler fields" (fetched 2026-09-29, re-verified 2026-10-24: onFailure, 2.1.295+).
 COMMON_FIELDS = frozenset({'type', 'if', 'timeout', 'statusMessage', 'once'})
 TYPE_FIELDS = {
-    'command': frozenset({'command', 'args', 'async', 'asyncRewake', 'shell'}),
-    'http': frozenset({'url', 'headers', 'allowedEnvVars'}),
+    'command': frozenset({'command', 'args', 'async', 'asyncRewake', 'shell', 'onFailure'}),
+    'http': frozenset({'url', 'headers', 'allowedEnvVars', 'onFailure'}),
     'mcp_tool': frozenset({'server', 'tool', 'input'}),
     'prompt': frozenset({'prompt', 'model'}),
     'agent': frozenset({'prompt', 'model'}),
@@ -123,7 +123,15 @@ def handler_issues(event, matcher, handler):
         unknown = sorted(str(k) for k in handler if k not in COMMON_FIELDS | TYPE_FIELDS[kind])[:10]
         if unknown:
             issues.append('unknown_fields')
+        if 'onFailure' in TYPE_FIELDS[kind] and 'onFailure' in handler and on_failure(handler) is None:
+            issues.append('invalid_on_failure')
     return issues, unknown
+
+
+def on_failure(handler):
+    """The documented onFailure value of a command/http handler, else None (hooks.md)."""
+    value = handler.get('onFailure')
+    return value if value in ('continue', 'block') else None
 
 
 MAX_OVERLAPS, MAX_DUPLICATES, MAX_SOURCES = 30, 20, 10

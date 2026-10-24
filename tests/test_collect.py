@@ -1129,6 +1129,16 @@ class HookHandlerIdentifiers(unittest.TestCase):
                          'dynamic_or_unknown')
         self.assertNotIn('target_origin', collect.hook_handler_entry('Stop', None, {'command': 'x'}))
 
+    def test_on_failure_recorded_for_command_and_http(self):
+        entry = collect.hook_handler_entry
+        self.assertEqual(entry('PreToolUse', 'Bash', {'command': 'x', 'onFailure': 'block'})['on_failure'], 'block')
+        self.assertEqual(entry('Stop', None, {'type': 'http', 'url': 'u', 'onFailure': 'continue'})['on_failure'],
+                         'continue')
+        self.assertNotIn('on_failure', entry('PreToolUse', 'Bash', {'command': 'x'}))
+        bad = entry('PreToolUse', 'Bash', {'command': 'x', 'onFailure': 'stop'})
+        self.assertNotIn('on_failure', bad)
+        self.assertEqual(bad['issues'], ['invalid_on_failure'])
+
     def test_non_string_identifiers_and_backslash_url(self):
         mcp = collect.hook_handler_entry('Stop', None, {'type': 'mcp_tool', 'server': 3, 'tool': None})
         self.assertEqual((mcp['server'], mcp['tool']), (None, None))

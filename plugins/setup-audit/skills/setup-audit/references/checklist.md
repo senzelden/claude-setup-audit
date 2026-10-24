@@ -8,7 +8,7 @@ the collector snapshot.
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
 caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed on
 `permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys and
-booleans only), SEC-hooks (type, matcher, origin, header keys; no command or prompt),
+booleans only), SEC-hooks (type, matcher, origin, header keys, on_failure; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
@@ -94,6 +94,12 @@ readiness, cost metrics and harness overhead.
   weigh each differently rather than reporting all hooks generically:
   - `command`: local execution boundary. Flag ones that fetch remote code, write outside the
     project, or match every tool with a slow command.
+  - Guards fail open by default: when a `command` or `http` hook can't start, times out or exits
+    with an unexpected code, the action goes ahead on most events. For a `PreToolUse` or
+    `PermissionRequest` hook that exists to block something, propose `"onFailure": "block"`
+    unless `on_failure` already says `block` (hooks docs "Block the action when a hook fails",
+    fetched 2026-10-24; Claude Code 2.1.295+). Don't propose it for loggers or formatters: a
+    broken one would then block every matching call.
   - `http`: a network egress point — every matching event's JSON is POSTed to that URL. Flag an
     unfamiliar host, a matcher wide enough to send most tool calls, and whether `header_keys` /
     `allowed_env_vars` on the handler (names only, never values) suggest a secret is being
@@ -314,7 +320,7 @@ metric that motivated it, so the next run can check whether it moved.
   dead allow, or narrow the deny/ask if the allow was intended; never propose loosening a managed
   rule.
 - **HYG-hook-config** (`hook_handlers[].issues` / `unknown_fields`, the same fields on
-  `extensions.plugins[].components[].handlers[]`, static; hooks docs fetched 2026-09-30): hook
+  `extensions.plugins[].components[].handlers[]`, static; hooks docs fetched 2026-10-24): hook
   configuration that doesn't do what it reads.
   - Never fires: `unknown_event` (not a documented event; check case, e.g. `pretooluse`),
     `if_never_runs` (`if` on a non-tool event), `mcp_server_only_matcher` (`mcp__server` without
@@ -325,7 +331,8 @@ metric that motivated it, so the next run can check whether it moved.
   - Unclear: `invalid_regex` (doesn't compile; checked with Python `re`, JS-only constructs skipped;
     what Claude Code does with it is undocumented, so say "invalid", not "ignored"),
     `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
-    handler type; name the field, don't claim it's ignored).
+    handler type; name the field, don't claim it's ignored), `invalid_on_failure` (`onFailure` on a
+    `command`/`http` hook that is neither `"continue"` nor `"block"`).
   A guard that never fires (a `PreToolUse` or security hook) is high severity; the rest is hygiene.
 - **HYG-mcp-config** (`config_notes`, `extensions.mcp_name_collisions`): `url_without_type`
   (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`

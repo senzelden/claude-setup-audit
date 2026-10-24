@@ -43,7 +43,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 
   Settings summaries also carry:
   - `permissions.rule_shape_issues`;
-  - handler `fingerprint`, and `issues`/`unknown_fields`/`plugin_relative` when present.
+  - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only),
+    `issues`/`unknown_fields`/`plugin_relative` when present.
 
   Additive within snapshot v1.
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.
