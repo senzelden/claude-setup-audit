@@ -1,6 +1,7 @@
 """Mods inventory: a static, bounded scan of a plugin's hooks.json `modules` entry. Fake homes only."""
 import os
 import copy
+from contextlib import ExitStack
 from unittest import mock
 
 from test_collect import FakeHome, collect
@@ -153,23 +154,87 @@ class ModInventory(FakeHome):
         self.assertNotIn('SECRET', str(snap))
 
     def test_scanning_never_executes_or_imports(self):
+        import importlib, os as _os, runpy, subprocess
         marker = os.path.join(self.home, 'ran')
         self.mod_file('hooks/mod.js', f"require('fs').writeFileSync({marker!r}, '1')")
         self.hooks({'modules': ['mod.js']})
-        with mock.patch.object(extensions, 'subprocess', create=True) as sp:
+        targets = [(subprocess, n) for n in ('run', 'Popen', 'call', 'check_call', 'check_output')]
+        targets += [(_os, n) for n in ('system', 'posix_spawn', 'execv', 'execve', 'execvp', 'execl', 'popen')
+                    if hasattr(_os, n)]
+        targets += [(importlib, 'import_module'), (runpy, 'run_path'), (runpy, 'run_module')]
+        calls = []
+        with ExitStack() as stack:
+            for mod, name in targets:
+                stack.enter_context(mock.patch.object(
+                    mod, name, side_effect=lambda *a, _n=name, **k: calls.append(_n)))
             self.scan()
+        self.assertEqual(calls, [])
         self.assertFalse(os.path.exists(marker))
-        sp.run.assert_not_called()
+
+    def test_member_on_calls_are_not_mod_events(self):
+        self.mod_file('hooks/mod.js', "child.on('exit', () => 1);\nemitter.on(\"data\", f);\n"
+                      "x.$on('dollar', f);\nmyon('word', f);\nexport default ({on}) => { on('tool.call', () => 1); };")
+        self.hooks({'modules': ['mod.js']})
+        mod, _ = self.mod()
+        self.assertEqual(mod['events'], ['tool.call'])
+
+
+GUARD = 'cc-plugin-sec-default@builtin'
+
+
+def guard_cfg(**options):
+    return {'pluginConfigs': {GUARD: {'options': options}}}
 
 
 class ModSettings(FakeHome):
-    def test_mod_policy_keys_are_booleans_only(self):
-        path = self.write('.claude/settings.json', {
-            'allowManagedModsOnly': True, 'prependPlugins': ['SECRETPLUGIN@m'], 'appendPlugins': []})
-        s = collect.summarize_settings(path, managed=True)
-        self.assertEqual(s['mods'], {'allow_managed_mods_only': True, 'prepend_plugins': True,
-                                      'append_plugins': False})
-        self.assertNotIn('SECRETPLUGIN', str(s))
-        plain = collect.summarize_settings(self.write('.claude/s2.json', {'model': 'x'}))
-        self.assertEqual(plain['mods'], {'allow_managed_mods_only': False, 'prepend_plugins': False,
-                                          'append_plugins': False})
+    def summary(self, data, managed, name='settings.json'):
+        return collect.summarize_settings(self.write('.claude/' + name, data), managed=managed)['mods']
+
+    def test_documented_nested_shape_in_managed_file(self):
+        m = self.summary(guard_cfg(allowManagedModsOnly=True, allowModsToOverrideDenyRules=False), True)
+        self.assertIs(m['allow_managed_mods_only'], True)
+        self.assertIs(m['allow_mods_override_deny_rules'], False)
+        self.assertFalse(m['guard_options_ignored'])
+
+    def test_override_deny_rules_recorded(self):
+        m = self.summary(guard_cfg(allowModsToOverrideDenyRules=True), True)
+        self.assertIs(m['allow_mods_override_deny_rules'], True)
+        self.assertIsNone(m['allow_managed_mods_only'])
+
+    def test_non_bool_and_unset_are_none(self):
+        m = self.summary(guard_cfg(allowManagedModsOnly='true', allowModsToOverrideDenyRules=1), True)
+        self.assertIsNone(m['allow_managed_mods_only'])
+        self.assertIsNone(m['allow_mods_override_deny_rules'])
+        self.assertIsNone(self.summary({'model': 'x'}, True, 's2.json')['allow_managed_mods_only'])
+
+    def test_same_entry_in_non_managed_file_is_not_effective(self):
+        for name in ('settings.json', 'settings.local.json'):
+            m = self.summary(guard_cfg(allowManagedModsOnly=True, allowModsToOverrideDenyRules=True), False, name)
+            self.assertIsNone(m['allow_managed_mods_only'])
+            self.assertIsNone(m['allow_mods_override_deny_rules'])
+            self.assertTrue(m['guard_options_ignored'])
+        self.assertFalse(self.summary({'model': 'x'}, False, 's3.json')['guard_options_ignored'])
+
+    def test_top_level_key_is_not_read(self):
+        m = self.summary({'allowManagedModsOnly': True, 'allowModsToOverrideDenyRules': True}, True)
+        self.assertIsNone(m['allow_managed_mods_only'])
+        self.assertIsNone(m['allow_mods_override_deny_rules'])
+
+    def test_wrong_plugin_config_id_is_not_read(self):
+        data = {'pluginConfigs': {'sec-default@builtin': {'options': {
+            'allowManagedModsOnly': True, 'allowModsToOverrideDenyRules': True}}}}
+        m = self.summary(data, True)
+        self.assertIsNone(m['allow_managed_mods_only'])
+        self.assertIsNone(m['allow_mods_override_deny_rules'])
+        self.assertFalse(m['guard_options_ignored'])
+
+    def test_prepend_plugins_guard_naming(self):
+        for ids, named in ((['a@m', 'sec-default@builtin'], True), (['cc-plugin-sec-default@builtin'], True),
+                           (['SECRETPLUGIN@m'], False)):
+            m = self.summary({'prependPlugins': ids, 'appendPlugins': []}, True)
+            self.assertIs(m['prepend_names_guard'], named)
+            self.assertTrue(m['prepend_plugins'])
+            self.assertFalse(m['append_plugins'])
+            self.assertNotIn('SECRETPLUGIN', str(m))
+        self.assertIsNone(self.summary({'model': 'x'}, True, 's2.json')['prepend_names_guard'])
+        self.assertIsNone(self.summary({'prependPlugins': ['sec-default@builtin']}, False, 's3.json')['prepend_names_guard'])

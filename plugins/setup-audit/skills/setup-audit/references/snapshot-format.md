@@ -33,7 +33,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `extensions.plugins[].components[].mod` (hooks components of a plugin with `hooks.json`
   `modules`): optional; `module` (declared relative path), `exists`, `bytes`, `events[]`, `calls[]`
   (identifier-shaped names from a heuristic scan), `truncated`, and `reason` when unread.
-  `settings[].mods`: `allow_managed_mods_only`, `prepend_plugins`, `append_plugins` booleans.
+  `settings[].mods`: `prepend_plugins`, `append_plugins`, `guard_options_ignored` booleans;
+  `allow_managed_mods_only`, `allow_mods_override_deny_rules` and `prepend_names_guard`
+  true/false/null (null: unset, non-boolean or not a managed file). Guard options are read only from
+  `pluginConfigs["cc-plugin-sec-default@builtin"].options` in managed settings; no plugin ids are kept.
   Additive within snapshot v1.
 - `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
   `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,

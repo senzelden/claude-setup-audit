@@ -493,6 +493,35 @@ def _settings_layer(path):
     return "user" if norm(os.path.dirname(path)) == norm(CLAUDE) else "project"
 
 
+GUARD_ID = "cc-plugin-sec-default@builtin"
+GUARD_OPTIONS = (("allowManagedModsOnly", "allow_managed_mods_only"),
+                 ("allowModsToOverrideDenyRules", "allow_mods_override_deny_rules"))
+GUARD_PREPEND_NAMES = ("sec-default@builtin", GUARD_ID)
+
+
+def mods_policy(d, managed):
+    """Mods policy booleans (mods-admin "Set options on the built-in guard", fetched 2026-10-25).
+
+    The guard options live only at pluginConfigs["cc-plugin-sec-default@builtin"].options and count
+    only in managed settings; elsewhere they neither set nor loosen anything, so a non-managed file
+    only gets `guard_options_ignored`. Booleans only: plugin ids are never kept.
+    """
+    pc = d.get("pluginConfigs")
+    entry = pc.get(GUARD_ID) if isinstance(pc, dict) else None
+    options = entry.get("options") if isinstance(entry, dict) else None
+    options = options if isinstance(options, dict) else {}
+    prepend = d.get("prependPlugins")
+    mods = {"prepend_plugins": bool(prepend), "append_plugins": bool(d.get("appendPlugins"))}
+    for key, name in GUARD_OPTIONS:
+        value = options.get(key)
+        mods[name] = value if managed and isinstance(value, bool) else None
+    # Only a managed prependPlugins list replaces the default load order, so only it can drop the guard.
+    mods["prepend_names_guard"] = (any(x in GUARD_PREPEND_NAMES for x in prepend if isinstance(x, str))
+                                   if managed and isinstance(prepend, list) and prepend else None)
+    mods["guard_options_ignored"] = (not managed) and any(k in options for k, _ in GUARD_OPTIONS)
+    return mods
+
+
 def summarize_settings(path, data=None, managed=False):
     raw = load_json(path) if data is None else data
     if raw is None:
@@ -523,10 +552,7 @@ def summarize_settings(path, data=None, managed=False):
         "hook_handlers": hook_handlers,
         "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
-        # Mods policy (mods-admin, fetched 2026-10-25): booleans only; plugin lists are not kept here.
-        "mods": {"allow_managed_mods_only": d.get("allowManagedModsOnly") is True,
-                 "prepend_plugins": bool(d.get("prependPlugins")),
-                 "append_plugins": bool(d.get("appendPlugins"))},
+        "mods": mods_policy(d, managed),
         "sandbox": d.get("sandbox"),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),

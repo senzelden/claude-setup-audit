@@ -239,8 +239,11 @@ can add names; indirect or dynamic use is missed), capped at 512 KB and 50 names
 them as API vocabulary. A mod that registers `settings.read` can rewrite merged settings, so the
 collected files are not the effective settings (reported as an extensions limitation). The
 authoritative list is `claude plugin validate <dir>`, which collection never runs. Mods docs
-fetched 2026-10-25. `settings[].mods` records `allowManagedModsOnly` and the presence of
-`prependPlugins`/`appendPlugins` as booleans.
+fetched 2026-10-25. `settings[].mods` records, as booleans, the guard options
+`allowManagedModsOnly` and `allowModsToOverrideDenyRules` (read only from
+`pluginConfigs["cc-plugin-sec-default@builtin"].options` in managed settings; a non-managed entry
+is only flagged as ignored), whether a managed `prependPlugins` names the guard, and the presence
+of `prependPlugins`/`appendPlugins`.
 Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 

@@ -390,7 +390,7 @@ MOD_NAME_CAP = 64
 MOD_NAME = re.compile(r'[A-Za-z][\w.]*')
 # Heuristic text patterns (mods reference "The hook function", mods-admin "Review what a mod can do",
 # fetched 2026-10-25): on('<event>' and $.<namespace>.<method>. Comments and strings can add names.
-MOD_EVENT = re.compile(r"""\bon\(\s*(['"`])([^'"`\n]{1,%d})\1""" % MOD_NAME_CAP)
+MOD_EVENT = re.compile(r"""(?<![\w.$])on\s*\(\s*(['"`])([^'"`\n]{1,%d})\1""" % MOD_NAME_CAP)
 MOD_CALL = re.compile(r'\$\.([A-Za-z]\w*(?:\.[A-Za-z]\w*)+)')
 MOD_SETTINGS_LIMITATION = ('A mod that registers settings.read can rewrite merged settings, so the collected settings '
                            'files are not the effective settings.')

@@ -135,10 +135,20 @@ readiness, cost metrics and harness overhead.
     `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
     `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
     the collected files are then not the effective settings, see coverage).
-  - `settings[].mods.allow_managed_mods_only` (managed) stops user-installed mods from loading;
-    mention once when unset and any mod is installed. `prepend_plugins` / `append_plugins` change
-    plugin load order, so a mod can run before or after others; report presence only.
-  - Names can include extras from comments or strings, and a mod with `reason`
+  - Guard options (mods-admin "Set options on the built-in guard", fetched 2026-10-25) are read
+    only at `pluginConfigs["cc-plugin-sec-default@builtin"].options` and only from managed settings;
+    `settings[].mods` records them as `true`/`false`/null (unset or non-boolean) for managed files only.
+    - `allow_managed_mods_only` true stops user-installed mods from loading. When it is not true,
+      mention that once per audit, and only when a mod is installed or managed settings exist.
+    - `allow_mods_override_deny_rules` true in managed settings is a finding: a user's mod that
+      approves tool calls can approve a call a `deny` rule refuses, so deny rules no longer bind mods.
+    - `prepend_names_guard` false (a managed `prependPlugins` list without `sec-default@builtin` or
+      `cc-plugin-sec-default@builtin`): the guard does not load, so neither option applies.
+    - `guard_options_ignored` true (HYG note, not protection): a user, project or local file carries the
+      guard entry, which neither sets nor loosens an option. Its value is deliberately not recorded.
+    - `prepend_plugins` / `append_plugins` change plugin load order; report presence only.
+  - The scan is heuristic: names can include extras from comments or strings, member calls such as
+    `child.on(...)` are skipped but indirect or dynamic use is missed, and a mod with `reason`
     (`outside_plugin_root`, `not_regular_file`, `absent`, `unsupported_extension`,
     `unreadable`, `invalid_modules`) was not read, and `mod.truncated` means a cap cut the scan. For the authoritative list tell the user to run
     `claude plugin validate <dir>` themselves; collection never runs it.
