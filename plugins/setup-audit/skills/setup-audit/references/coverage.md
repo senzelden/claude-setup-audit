@@ -231,6 +231,16 @@ User/managed installs and matching project/local installs are inspected. Enablem
 are reported as per-source observations, with active state unknown. Only paths within plugin
 storage and components within their install are read. Default/custom skills, agents, commands,
 hooks and MCP definitions are inspected; other manifest keys are inventoried, not implemented.
+Mods: when a plugin's `hooks/hooks.json` has `modules`, the first module path (inside the plugin
+root, no symlinks, regular file, `.js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx`) is text-scanned, never
+imported or run, for `on('<event>'` and `$.<ns>.<method>` names: a heuristic (comments and strings
+can add names; indirect or dynamic use is missed), capped at 512 KB and 50 names per list
+(`mod.truncated`). Only identifier-shaped names are kept, never source text; metadata-only keeps
+them as API vocabulary. A mod that registers `settings.read` can rewrite merged settings, so the
+collected files are not the effective settings (reported as an extensions limitation). The
+authoritative list is `claude plugin validate <dir>`, which collection never runs. Mods docs
+fetched 2026-10-25. `settings[].mods` records `allowManagedModsOnly` and the presence of
+`prependPlugins`/`appendPlugins` as booleans.
 Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 

@@ -30,6 +30,11 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (`file_size_estimate`).
+- `extensions.plugins[].components[].mod` (hooks components of a plugin with `hooks.json`
+  `modules`): optional; `module` (declared relative path), `exists`, `bytes`, `events[]`, `calls[]`
+  (identifier-shaped names from a heuristic scan), `truncated`, and `reason` when unread.
+  `settings[].mods`: `allow_managed_mods_only`, `prepend_plugins`, `append_plugins` booleans.
+  Additive within snapshot v1.
 - `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
   `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,
   booleans, enums and OAuth scope tokens only; additive within snapshot v1.

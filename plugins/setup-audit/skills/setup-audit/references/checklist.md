@@ -122,6 +122,26 @@ readiness, cost metrics and harness overhead.
 
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
+- **SEC-mods** (`extensions.plugins[].components[].mod`, `settings[].mods`; mods overview "What a
+  mod can reach", mods-admin "Review what a mod can do", fetched 2026-10-25): a mod is a plugin
+  whose `hooks/hooks.json` has `modules`. Its module runs unsandboxed with the user's permissions,
+  so weigh `mod.calls` and `mod.events` (names from a heuristic text scan, never executed):
+  - calls: `fs.read` / `fs.write` (files), `process.run` / `process.spawn` (commands),
+    `http.fetch` (network egress), `env.get` / `env.set` (environment, possible secrets),
+    `settings.read`, `mcp.call`, `model.complete` (spends tokens), `prompt.submit` and
+    `session.send` (acts as the user). A `process.*` or `http.fetch` call next to `fs.read` or
+    `env.get` is the exfiltration shape; a read-only status panel is not.
+  - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call, past
+    `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
+    `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
+    the collected files are then not the effective settings, see coverage).
+  - `settings[].mods.allow_managed_mods_only` (managed) stops user-installed mods from loading;
+    mention once when unset and any mod is installed. `prepend_plugins` / `append_plugins` change
+    plugin load order, so a mod can run before or after others; report presence only.
+  - Names can include extras from comments or strings, and a mod with `reason`
+    (`outside_plugin_root`, `not_regular_file`, `absent`, `unsupported_extension`,
+    `unreadable`, `invalid_modules`) was not read, and `mod.truncated` means a cap cut the scan. For the authoritative list tell the user to run
+    `claude plugin validate <dir>` themselves; collection never runs it.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
 - **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
