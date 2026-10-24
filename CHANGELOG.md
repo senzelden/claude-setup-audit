@@ -6,6 +6,49 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-25
+
+Brings the checks in line with Claude Code 2.1.286 to 2.1.310 (docs fetched 2026-10-24).
+
+### Fixed
+
+- One settings file with a wrongly typed value (`permissions` not an object, `ask: 5`,
+  `deny: [null]`, hook groups that aren't objects, `env` as a list, odd handler field types) no
+  longer aborts the snapshot. The value is dropped, its key path is recorded in
+  `settings[].shape_issues`, the rest is collected, and `HYG-settings-shape` reports it. A managed
+  file with such entries is now `partial` with reason `invalid_entries` instead of unreadable.
+- `HYG-hook-config` no longer reports the documented `onFailure` field (Claude Code 2.1.295+,
+  `command` and `http` hooks) as unknown. A documented value is recorded as `on_failure`; any
+  other value is `invalid_on_failure`, and a `block` where the docs say it does nothing (background
+  hooks, `Stop`, `SubagentStop`, `TaskCompleted`, `TeammateIdle`) is `on_failure_no_effect`.
+  Command hook entries record `background` for `async`/`asyncRewake`.
+- `prune_permissions.py` no longer raises on wrongly typed permission values; it plans only over
+  string rules and leaves the rest of the file as it was.
+- `COST-app-caching` cites the current cache minimums (512 tokens on Opus 5.5, Sonnet 5.5 and
+  Haiku 5.5) and cache-read prices (0.05x on Opus 5.5 and Sonnet 5.5, 0.025x on Fable 5.1).
+
+### Added
+
+- `SEC-hooks` proposes `"onFailure": "block"` for `PreToolUse`/`PermissionRequest` guard hooks,
+  which otherwise let the action through when they fail.
+- `sandbox.allowNestedUserNamespaces` (Claude Code 2.1.305+): `apply_ops.py` allowlists it as a
+  user-scope boolean, and `SEC-sandbox` reports a user or managed `true` as high severity.
+
+### Changed
+
+- CI validates the plugin with Claude Code 2.1.310.
+
+### Validation and limits
+
+- 591 local regression tests pass, with 95% coverage of the bundled scripts; the suite also passes
+  with the Claude Code Bash sandbox on. Hosted validation passed all eight jobs at `0022836`
+  ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/40137328278)), including
+  Linux/macOS on Python 3.11/3.13/3.14, the coverage floor and strict plugin validation with
+  Claude Code 2.1.310. No paid model evaluations were run for this release.
+- Settings shape checks cover the types the collector relies on, not the full settings schema;
+  whether Claude Code skipped an entry or the whole file isn't observable from the files alone.
+  Mods (JS plugin hook modules) and `prompt_snapshot` transcript records are not yet read.
+
 ## [0.10.0] - 2026-09-30
 
 ### Fixed
@@ -537,6 +580,7 @@ Found in the first end-to-end run, before this release was tagged:
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
 [Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...HEAD
+[0.10.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.7.0...v0.8.0

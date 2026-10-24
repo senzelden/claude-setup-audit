@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated 2026-09-29. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
+Updated 2026-10-25. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
 
 ## Shipped in 0.5.0
@@ -83,6 +83,17 @@ Hosted validation passed all eight jobs at `48d9d5d`:
 Hosted validation passed all eight jobs at `499217f`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/36731572402).
 
+## Shipped in 0.10.1: docs drift to Claude Code 2.1.310
+
+- [x] Documented `onFailure` hook field accepted and checked; guard hooks get a fail-closed proposal.
+- [x] `sandbox.allowNestedUserNamespaces` allowlisted and flagged.
+- [x] Cache minimums and prices for the 5.5 models.
+- [x] One malformed settings file no longer aborts the snapshot (`shape_issues`, HYG-settings-shape).
+- [x] CI pin 2.1.310.
+
+Hosted validation passed all eight jobs at `0022836`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/40137328278).
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
@@ -101,6 +112,12 @@ Hosted validation passed all eight jobs at `499217f`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
+- **Claude Code 2.1.286-2.1.310 follow-ups:** measure per-request harness overhead from the new
+  transcript `prompt_snapshot` attachments (system prompt and tools of each request, ~38% of one
+  local transcript's bytes; also a scan-budget concern); inventory plugin mods (JS hook modules,
+  including `settings.read` rewriting merged settings) beyond `hooks.json`; idle compaction
+  (`idleCompaction`) and per-model auto-compact as cost levers; project settings that can no
+  longer set Chrome, `CLAUDE_CODE_DISABLE_ATTACHMENTS` or `axScreenReader`.
 - **Privacy follow-ups:** optional path/name hashing (`--hash-paths`), metadata-only export of an
   existing snapshot, and fuller provenance for free-text evidence. Tune detection against
   realistic fixtures.
@@ -108,10 +125,6 @@ Hosted validation passed all eight jobs at `499217f`:
   approved-apply eval for sandbox ops needs separate approval; do not migrate the pruner or ledger
   flows without a design.
 - **Deeper checks follow-ups:** a ledger tool-error source and a drift signal for MCP failure rate.
-  Follow-up: build_snapshot aborts when one settings file is malformed (e.g. permissions/hooks not
-  an object, `ask: 5`, `deny: [null]`, `allow: [{}]` raise TypeError in analyze_permissions,
-  summarize_settings, redact, harness.hook_index, hook_handler_entry); needs per-file coverage
-  records like invalid_settings.
   Verify proposed signals against current official documentation before implementation.
 - **Enterprise posture:** opt-in data-handling assessment that separates locally observable
   settings from provider/account/admin facts requiring verification. Keep training, retention,
