@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      CLAUDE_VERSION: '2.1.273'
+      CLAUDE_VERSION: '2.1.310'
       DISABLE_AUTOUPDATER: '1'
     steps:
       - uses: actions/checkout@v7

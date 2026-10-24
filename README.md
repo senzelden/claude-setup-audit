@@ -56,7 +56,7 @@ and removal steps.
   see the [roadmap](docs/roadmap.md).
 - Python 3.11 or newer. The bundled scripts use only the standard library. CI tests 3.11, 3.13
   and 3.14.
-- Claude Code with plugin support. CI validates the plugin with Claude Code 2.1.273.
+- Claude Code with plugin support. CI validates the plugin with Claude Code 2.1.310.
 
 ## Update
 

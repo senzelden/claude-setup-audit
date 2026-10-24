@@ -24,7 +24,7 @@ collector fixture, exercises all scopes with/without the clarity pilot, and chec
 regressions against both validators. Cross-field scope consistency is an additional runtime
 invariant, beyond the JSON Schema.
 
-A separate Linux CI job installs Claude Code **2.1.273**, disables automatic updates, and runs
+A separate Linux CI job installs Claude Code **2.1.310**, disables automatic updates, and runs
 these commands with a temporary home/config directory and no account credentials:
 
 ```sh
@@ -34,9 +34,10 @@ claude plugin validate plugins/setup-audit --strict
 
 Keep the CLI pin explicit and update it after local verification. This job checks marketplace
 and plugin manifests; it makes no model calls and does not test runtime audit behavior.
-On the locally verified 2.1.273 build, direct skill-directory validation reports a missing
-manifest despite broader support described in the CLI help/docs. Do not count that as skill
-validation coverage; recheck when updating the pin.
+On the locally verified 2.1.273 and 2.1.310 builds (2.1.310 rechecked 2026-10-24), direct
+skill-directory validation reports a missing manifest despite broader support described in the
+CLI help/docs. Do not count that as skill validation coverage; recheck when updating the pin.
+2.1.310 also prints a plugin-directory `ICON_MISSING` warning that does not change the result.
 Passing macOS CI does not establish complete macOS integration or Windows support.
 
 Version-sensitive commands checked 2026-09-16 against the installed CLI help and official
