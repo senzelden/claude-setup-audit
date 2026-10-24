@@ -21,6 +21,33 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   Hook handler entries carry `server`, `tool` (mcp_tool) and `target_origin` (http) so masked
   targets stay identifiable. Contextual detection replaces a labelled literal secret with
   `[REDACTED:context]` in every mode. Additive within snapshot v1.
+- `coverage.privacy` also carries `hashed_paths: true`, `hashed_path_families` (family -> count of
+  hashed values and keys) and `hash_salt` (`per_run` or `file`) when collected with `--hash-paths`
+  (works with or without `--metadata-only`); the keys are absent otherwise. The salt is never stored.
+  Path-like kept strings become `h:<12 hex>`, the first 48 bits of HMAC-SHA256(salt, normalized value);
+  `~/x` and `<home>/x` hash equal, so the same path gets the same tag everywhere in one snapshot and
+  joins (`projects` and `readiness` keys, `coverage.projects_collected`, session and correction
+  project fields, a root's transcript key and `memory.by_project`) keep working. Whole values are
+  hashed: no basename, extension or depth survives, and the tags of a project root and of files under
+  it are unrelated. Any other occurrence of the home directory, the config directory, a collected
+  project root or their dash-encoded forms inside a remaining string (full-mode free text such as hook
+  commands) is replaced by the same tags. Fixed vocabulary (event names, model ids, setting keys,
+  scopes, enums) and plugin, skill, agent and MCP server names are never hashed. Families
+  (`privacy.PATH_FAMILIES` holds the patterns):
+
+  | Family | Hashed |
+  |---|---|
+  | `project_roots` | project root directories: projects/readiness keys, session and correction project paths, coverage.projects_collected, collection_scope.project, session and worktree roots |
+  | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
+  | `config_files` | settings, instruction, managed and MCP config file paths, previous audit file names, the drift log path and the /insights report path |
+  | `plugin_paths` | plugin install roots and plugin component files |
+  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, SDK call-site file names, MCP executables |
+
+  Consumers: tags join within one snapshot. Across audits they match only with the same
+  `--hash-salt-file` (the compare-between-audits check needs equal `projects_collected`, so a
+  per-run salt turns comparison off with "Collected projects differ"). `prune_permissions.py
+  --snapshot` and project-scoped `ledger.py` refuse a hashed snapshot (they open or match real paths);
+  `query_snapshot.py` prints a `hashed paths` line first. Additive within snapshot v1.
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
   post-fix `matches`, `sessions_matched`, `sessions_scanned`, `complete`, `from`, `to`, `selector_sha`.
   Counts only; additive within snapshot v1.

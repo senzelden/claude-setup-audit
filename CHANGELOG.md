@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `collect.py --hash-paths` (with or without `--metadata-only`) replaces path-like kept strings with salted
+  `h:<12 hex>` tags; `--hash-salt-file` makes tags stable across audits. Recorded in `coverage.privacy`
+  (`hashed_paths`, `hashed_path_families`, `hash_salt`). `prune_permissions.py --snapshot` and project-scoped
+  `ledger.py` refuse hashed snapshots; `query_snapshot.py` prints a notice.
+
 ## [0.10.1] - 2026-10-25
 
 Brings the checks in line with Claude Code 2.1.286 to 2.1.310 (docs fetched 2026-10-24).

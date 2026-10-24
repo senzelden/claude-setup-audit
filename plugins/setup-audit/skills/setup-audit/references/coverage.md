@@ -276,6 +276,18 @@ list or flag belongs in a malformed config), counted under the `unclassified` fa
 tokens taken from CLAUDE.md text) are kept, so a metadata-only snapshot is still not free of
 sensitive information; review it before sharing.
 
+`--hash-paths` (with or without `--metadata-only`) additionally replaces path-like kept strings with
+`h:<12 hex>` tags (HMAC-SHA256 truncated; families listed in `snapshot-format.md`) after every
+collection join, and records `hashed_paths`, `hashed_path_families` and `hash_salt` (`per_run`, or
+`file` for `--hash-salt-file`; the salt itself is never written) in `coverage.privacy`, plus a
+limitation. The salt file must already exist, hold at least 16 bytes after trimming whitespace, and is
+never created by the collector. This hides usernames, project names and file names that live in paths;
+it does not hide names the collector keeps by design (plugin, skill, agent and MCP server names) and
+does not mask full-mode free text beyond replacing known home and project directories inside it.
+What degrades: the report cannot name a project or file (cite the tag), and tags cannot be opened,
+compared with another audit's tags (unless the same salt file is reused) or fed to
+`prune_permissions.py --snapshot` or a project-scoped ledger entry.
+
 The contextual detector runs in both modes. A high-entropy value next to a key-like name
 (`AWS_SECRET_ACCESS_KEY=...`, `--api-token ...`, `sessionKey: ...`) or a `--password` value becomes
 `[REDACTED:context]`, keeping the label. It ignores hashes, UUIDs, paths, references, word-like

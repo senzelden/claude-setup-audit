@@ -42,6 +42,7 @@ because that section holds the options to offer (e.g. for env variables Claude's
 | `mode` | `audit` (read-only report) · `propose` (report + exact diffs, then ask) · `apply` (propose, then apply approved items) | `propose` |
 | `clarity` | `off` or `pilot` (explicit instruction-clarity review; communication/correctness) | `off` |
 | `privacy` | `full` or `metadata-only` (free text replaced by length markers; paths and names kept) | `full` |
+| `hash_paths` | `off` or `on` (path-like values become `h:<12 hex>` tags; combine with either privacy mode; opt-in, `on` only when asked, e.g. "hide my usernames and project names") | `off` |
 | `report_dir` | where reports and `audit.json` live (also where the previous run is looked up) | `~/.claude/audits` |
 
 Use `<report_dir>/decisions.yaml`, if it exists. It records
@@ -78,6 +79,12 @@ local settings; it does not scan unrelated project trees:
   scopes — the collector refuses them together.
 
 With `clarity=pilot`, add `--clarity-pilot` to this command; otherwise omit it.
+
+With `hash_paths=on`, add `--hash-paths`; add `--hash-salt-file <existing file>` only when the user supplies a salt
+file (stable tags across audits, needed to compare audits). Never create or print a salt. A hashed
+snapshot has no real paths: cite tags, say findings are tag-based, and do not offer apply steps
+that need a file path (`apply_ops.py`, `prune_permissions.py --snapshot`, project-scoped ledger entries) from it;
+recollect without `--hash-paths` for those, with the user's agreement.
 
 With `privacy=metadata-only`, add `--metadata-only`. It cannot be combined with `clarity=pilot`;
 tell the user and run with clarity off.

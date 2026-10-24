@@ -118,6 +118,7 @@ directly:
 | `mode` | `audit` (read-only) · `propose` (report + diffs, then ask) · `apply` | `propose` |
 | `clarity` | `off` or `pilot` (instruction-clarity review candidates) | `off` |
 | `privacy` | `full` · `metadata-only` (free text replaced by length markers; paths and names kept) | `full` |
+| `hash_paths` | `off` · `on` (path-like values become `h:<12 hex>` tags; works with either privacy mode) | `off` |
 | `report_dir` | where reports and trend data are kept | `~/.claude/audits` |
 
 **Cost:** the local snapshot is a deterministic script that takes a few seconds. The model's
@@ -201,6 +202,9 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
   markers, so those checks are partial or not checked. Paths, names and counts are still collected.
   Secret detection (patterns plus a contextual detector that yields `[REDACTED:context]`) runs in both
   modes and is best-effort. It cannot be combined with `clarity=pilot`.
+- **Hashed paths** (`hash_paths=on`, or `collect.py --hash-paths [--hash-salt-file FILE]`): project roots, config
+  file paths, transcript keys and file names become salted `h:<12 hex>` tags that still join within one snapshot;
+  a per-run salt by default, or your own existing salt file for tags that match across audits.
 
 ## Measured, not guessed
 
