@@ -340,6 +340,9 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
+          # Mod API vocabulary (event and call names matching a strict identifier pattern); module path is masked.
+          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
+          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
 KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP + MCP_POLICY_KEEP)

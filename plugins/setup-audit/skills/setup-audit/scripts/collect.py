@@ -523,6 +523,10 @@ def summarize_settings(path, data=None, managed=False):
         "hook_handlers": hook_handlers,
         "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
+        # Mods policy (mods-admin, fetched 2026-10-25): booleans only; plugin lists are not kept here.
+        "mods": {"allow_managed_mods_only": d.get("allowManagedModsOnly") is True,
+                 "prepend_plugins": bool(d.get("prependPlugins")),
+                 "append_plugins": bool(d.get("appendPlugins"))},
         "sandbox": d.get("sandbox"),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),
