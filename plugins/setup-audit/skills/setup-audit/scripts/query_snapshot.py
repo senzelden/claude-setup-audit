@@ -22,6 +22,8 @@ from snapshot_contract import SnapshotError, validate_snapshot
 
 PRIVACY_BANNER = ('privacy mode: metadata-only (free text replaced by [metadata-only: N chars] markers; '
                   'do not reconstruct it)')
+HASHED_BANNER = ('hashed paths: h:<12 hex> tags replace paths (equal tags are equal paths in this snapshot only; '
+                 'do not try to recover the originals)')
 
 
 def main():
@@ -44,6 +46,8 @@ def main():
     privacy = coverage.get('privacy') if isinstance(coverage, dict) else None
     if isinstance(privacy, dict) and privacy.get('mode') == 'metadata-only':
         print(PRIVACY_BANNER)
+    if isinstance(privacy, dict) and privacy.get('hashed_paths'):
+        print(HASHED_BANNER)
     trail = []
     for step in a.path:
         trail.append(step)

@@ -1,6 +1,10 @@
 """Privacy helpers: contextual secret detection (both modes) and metadata-only masking. Stdlib only."""
+import hmac
 import math
+import os
+import posixpath
 import re
+import secrets
 from collections import Counter
 
 CONTEXT_TOKEN = '[REDACTED:context]'
@@ -349,3 +353,203 @@ KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + SINGLE
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)
     + tuple(('extensions', 'plugins', '*', 'components', '*', 'handlers', '*') + h for h in HANDLER_KEEP))
+
+
+# --- --hash-paths -------------------------------------------------------------------------------
+# Path-like kept strings become `h:<12 hex>` = HMAC-SHA256(salt, normalized value) truncated to 48 bits.
+# Whole values are hashed (no per-component or extension-preserving hashing): a component hash would
+# still reveal depth and common basenames, and the joins that matter go through the same function.
+# Not hashed: fixed vocabulary (event names, model ids, setting keys, scopes, enum values), plugin, skill,
+# agent and MCP server names, and free text (hook commands, rule text), which --metadata-only masks and
+# which in full mode only has known home and project prefixes replaced (scrub_known_paths).
+TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
+SALT_MIN_BYTES = 16
+SALT_READ_LIMIT = 1 << 20
+
+
+class SaltError(ValueError):
+    """The salt file is missing, unreadable, empty or too short."""
+
+
+def resolve_salt(path):
+    """(salt bytes, 'per_run' | 'file'). A salt file must already exist; this never creates one."""
+    if path is None:
+        return secrets.token_bytes(32), 'per_run'
+    path = os.path.abspath(os.path.expanduser(path))
+    try:
+        with open(path, 'rb') as f:
+            raw = f.read(SALT_READ_LIMIT)
+    except OSError as exc:
+        raise SaltError(f'cannot read salt file {path}: {exc.strerror or type(exc).__name__}; '
+                        'create it yourself (collect.py never writes it)') from None
+    salt = raw.strip()
+    if not salt:
+        raise SaltError(f'salt file {path} is empty')
+    if len(salt) < SALT_MIN_BYTES:
+        raise SaltError(f'salt file {path} holds fewer than {SALT_MIN_BYTES} bytes of salt')
+    return salt, 'file'
+
+
+class PathHasher:
+    """Callable str -> tag. Equal normalized inputs give equal tags; `~/x` and `<home>/x` are equal."""
+
+    def __init__(self, salt, home):
+        self.salt, self.home = salt, home.rstrip('/') if home else ''
+
+    def normalize(self, value):
+        if value == '~' or value.startswith('~/'):
+            value = self.home + value[1:]
+        return posixpath.normpath(value) if '/' in value else value
+
+    def __call__(self, value):
+        if TAG_RE.match(value):
+            return value
+        digest = hmac.new(self.salt, self.normalize(value).encode('utf-8', 'surrogatepass'), 'sha256')
+        return 'h:' + digest.hexdigest()[:12]
+
+
+def path_like(value):
+    return '/' in value or '\\' in value or value.startswith('~')
+
+
+_SETTINGS = tuple(p for p in SETTINGS_PREFIXES)
+_PROJECT_STRINGS = (
+    ('collection_scope', 'project'), ('coverage', 'projects_collected', '*'),
+    ('usage', 'heaviest_sessions', '*', 'project'), ('usage', 'most_friction_sessions', '*', 'project'),
+    ('usage', 'sessions_per_project', '*', '*'), ('corrections', 'by_project', '*', '*'),
+    ('corrections', 'samples', '*', 'project'),
+    ('extensions', 'mcp_servers', '*', 'project'), ('extensions', 'mcp_name_collisions', '*', 'project'),
+    ('extensions', 'mcp_project_state', '*', 'project'), ('extensions', 'plugins', '*', 'project'),
+    *(('instructions', 'contexts', '*', k) for k in ('session_cwd', 'worktree_root', 'main_checkout')))
+_FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed only when path-like
+    *(p + ('path',) for p in _SETTINGS),
+    ('config_conflicts', 'hook_duplicates', '*', 'sources', '*', 'path'),
+    ('config_conflicts', 'permission_overlaps', '*', 'allow', 'path'),
+    ('config_conflicts', 'permission_overlaps', '*', 'by', 'path'),
+    ('instructions', 'entries', '*', 'source'), ('instructions', 'sources', '*', 'source'),
+    ('managed_settings', 'sources', '*', 'source'), ('extensions', 'sources', '*', 'source'),
+    ('coverage', 'sources', '*', 'source'),
+    ('extensions', 'mcp_servers', '*', 'source'), ('extensions', 'mcp_project_state', '*', 'source'),
+    ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
+    ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
+    ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'))
+# One row per family: `leaves` are hashed whenever they hold a string; `maybe` only when the string is path-like
+# (the field also carries fixed vocabulary); `keys` are dict containers whose keys are hashed.
+PATH_FAMILIES = {
+    'project_roots': {
+        'doc': 'project root directories: projects/readiness keys, session and correction project paths, '
+               'coverage.projects_collected, collection_scope.project, session and worktree roots',
+        'leaves': _PROJECT_STRINGS,
+        'maybe': (('config_conflicts', 'hook_duplicates', '*', 'stack'),
+                  ('config_conflicts', 'permission_overlaps', '*', 'stack')),
+        'keys': (('projects',), ('readiness',))},
+    'transcript_keys': {
+        'doc': 'transcript directory keys (dash-encoded project paths): memory and per-project transcript maps',
+        'leaves': (('transcripts', 'context_baseline_by_project_median', '*', '*'),),
+        'keys': (('memory', 'by_project'), ('transcripts', 'env_error_hits_by_project'),
+                 ('transcripts', 'test_run_seconds_by_project'))},
+    'config_files': {
+        'doc': 'settings, instruction, managed and MCP config file paths, previous audit file names, the '
+               'drift log path and the /insights report path',
+        'leaves': (), 'maybe': _FILE_SOURCES},
+    'plugin_paths': {
+        'doc': 'plugin install roots and plugin component files',
+        'leaves': (), 'maybe': (('extensions', 'plugins', '*', 'source'),
+                                ('extensions', 'plugins', '*', 'components', '*', 'source'))},
+    'referenced_files': {
+        'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '
+               'scripts, additional directories, memory file names, SDK call-site file names, MCP executables',
+        'leaves': (*(('projects', '*', 'claude_md_dead_refs', '*'),),
+                   *(p + ('missing_hook_scripts', '*') for p in _SETTINGS),
+                   *(p + ('permissions', k, '*') for p in _SETTINGS for k in ('additional_dirs', 'missing_additional_dirs')),
+                   ('memory', 'by_project', '*', 'entries', '*', 'file'),
+                   ('readiness', '*', 'app_caching', 'uncached_files', '*'),
+                   ('readiness', '*', 'app_caching', 'possible_cache_breakers', '*', '*')),
+        'maybe': (('extensions', 'mcp_servers', '*', 'executable'),)},
+}
+
+
+def _transcript_key(root):
+    return re.sub(r'[^A-Za-z0-9]', '-', root)
+
+
+def path_needles(home, extra_dirs, roots):
+    """Absolute and dash-encoded directories whose occurrences inside any string are replaced."""
+    found = set()
+    for d in [home, *extra_dirs, *roots]:
+        if not d or not isinstance(d, str):
+            continue
+        found.update((d, _transcript_key(d)))
+        if home and d.startswith(home.rstrip('/') + '/'):
+            found.add('~' + d[len(home.rstrip('/')):])
+    return sorted(n for n in found if len(n) >= 4 and n.strip('/-') != '')
+
+
+def scrub_known_paths(snap, hasher, needles):
+    """Replace every occurrence of a known home or project directory in any string leaf or dict key."""
+    needles = sorted((n for n in needles if len(n) >= 4 and n.strip('/-') != ''), key=len, reverse=True)
+    if not needles:
+        return 0
+    rx = re.compile('|'.join(re.escape(n) for n in needles))
+    count = [0]
+
+    def sub(text):
+        if TAG_RE.match(text) or MARKER_RE.match(text):
+            return text
+        new = rx.sub(lambda m: hasher(m.group(0)), text)
+        count[0] += new != text
+        return new
+
+    def walk(o):
+        if isinstance(o, str):
+            return sub(o)
+        if isinstance(o, dict):
+            return {sub(k) if isinstance(k, str) else k: walk(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):  # the collector still holds tuples (Counter.most_common)
+            return [walk(v) for v in o]
+        return o
+
+    for key in list(snap):
+        snap[key] = walk(snap[key])
+    return count[0]
+
+
+def hash_paths(snap, hasher, roots, extra_dirs=()):
+    """Hash the path families in place, then scrub known directories out of everything else.
+
+    Returns {family: count of hashed values and keys, ...} for every family (zero included)."""
+    counts = Counter({f: 0 for f in PATH_FAMILIES})
+    rows = [(f, pat, maybe) for f, spec in PATH_FAMILIES.items()
+            for maybe, pats in ((False, spec.get('leaves', ())), (True, spec.get('maybe', ())))
+            for pat in pats]
+    key_rows = [(f, pat) for f, spec in PATH_FAMILIES.items() for pat in spec.get('keys', ())]
+    encoded = {_transcript_key(r): r for r in roots}
+
+    def leaf(path, v):
+        for family, pat, maybe in rows:
+            if path_matches(path, pat) and not MARKER_RE.match(v) and (not maybe or path_like(v)):
+                counts[family] += 1
+                return hasher(v)
+        return v
+
+    def walk(o, path):
+        if isinstance(o, str):
+            return leaf(path, o)
+        if isinstance(o, (list, tuple)):
+            return [walk(v, path + (i,)) for i, v in enumerate(o)]
+        if not isinstance(o, dict):
+            return o
+        fam = next((f for f, pat in key_rows if path_matches(path, pat)), None)
+        out = {}
+        for k, v in o.items():
+            new = walk(v, path + (k,))
+            if fam and isinstance(k, str) and not MARKER_RE.match(k):
+                counts[fam] += 1
+                k = hasher(encoded[k]) if fam == 'transcript_keys' and k in encoded else hasher(k)
+            out[k] = new
+        return out
+
+    for key in list(snap):
+        snap[key] = walk(snap[key], (key,))
+    scrub_known_paths(snap, hasher, path_needles(hasher.home, extra_dirs, roots))
+    return dict(counts)

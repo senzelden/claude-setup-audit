@@ -1020,7 +1020,10 @@
             "free_text": {"enum": ["collected", "replaced"]},
             "marker": {"type": "string"},
             "replaced_fields": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
-            "redactions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+            "redactions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "hashed_paths": {"type": "boolean"},
+            "hashed_path_families": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "hash_salt": {"enum": ["per_run", "file"]}
           }
         }
       }

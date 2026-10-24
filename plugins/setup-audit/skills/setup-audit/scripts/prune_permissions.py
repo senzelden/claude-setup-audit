@@ -56,7 +56,11 @@ def is_one_off(rule):
 def settings_files(snapshot):
     files = [os.path.join(collect.CLAUDE, n) for n in ("settings.json", "settings.local.json")]
     if snapshot:
-        for entry in json.load(open(snapshot))["projects"].values():
+        with open(snapshot) as f:
+            data = json.load(f)
+        if ((data.get("coverage") or {}).get("privacy") or {}).get("hashed_paths"):
+            sys.exit("snapshot has hashed paths, so its settings files cannot be opened; recollect without --hash-paths")
+        for entry in data["projects"].values():
             files += [os.path.expanduser(s["path"]) for s in entry.get("settings", [])]
     else:
         for root in collect.discover_projects():

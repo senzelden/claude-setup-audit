@@ -398,6 +398,10 @@ def snapshot_scope(snapshot):
     require(isinstance(snapshot, dict) and isinstance(snapshot.get('collection_scope'), dict),
             'snapshot scope is missing', input='snapshot')
     cs = snapshot['collection_scope']
+    privacy = (snapshot.get('coverage') or {}).get('privacy')
+    if cs.get('requested') == 'project' and isinstance(privacy, dict) and privacy.get('hashed_paths'):
+        raise LedgerError('a hashed-path snapshot cannot scope a project ledger entry; recollect without --hash-paths',
+                          input='snapshot')
     try:
         scope = dict(scope=cs['requested'], project=cs.get('project'), window_days=snapshot['window_days'])
         validate_scope(scope)
