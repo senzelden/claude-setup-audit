@@ -27,7 +27,8 @@ import ledger  # noqa: E402  (fingerprint: one canonical-JSON hash across helper
 import report_state  # noqa: E402  (load_json: rejects duplicate keys and non-finite numbers)
 import safe_write  # noqa: E402
 
-# Keys, types and scopes from the raw settings reference, fetched 2026-09-29.
+# Keys, types and scopes from the raw settings reference, fetched 2026-09-29. Key list and scopes
+# re-verified 2026-10-24, which added sandbox.allowNestedUserNamespaces (2.1.305+).
 DOCS_FETCHED = '2026-09-29'
 DOCS_SOURCES = ('https://code.claude.com/docs/en/settings-reference.md',
                 'https://code.claude.com/docs/en/sandboxing.md',
@@ -43,6 +44,7 @@ SANDBOX_KEYS = {
     'sandbox.enableWeakerNestedSandbox': ('bool', ANY),
     'sandbox.enableWeakerNetworkIsolation': ('bool', ANY),
     'sandbox.allowAppleEvents': ('bool', USER),
+    'sandbox.allowNestedUserNamespaces': ('bool', USER),
     'sandbox.ignoreViolations': ('str_to_str_list', ANY),
     'sandbox.filesystem.allowWrite': ('path_list', ANY),
     'sandbox.filesystem.denyWrite': ('path_list', ANY),

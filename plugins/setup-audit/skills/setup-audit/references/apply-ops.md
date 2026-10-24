@@ -86,6 +86,7 @@ Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same,
 | `sandbox.enableWeakerNestedSandbox` | bool | user, project, local |  |
 | `sandbox.enableWeakerNetworkIsolation` | bool | user, project, local |  |
 | `sandbox.allowAppleEvents` | bool | user |  |
+| `sandbox.allowNestedUserNamespaces` | bool | user | a project `true` is ignored; set refused in project/local files |
 | `sandbox.ignoreViolations` | str_to_str_list | user, project, local |  |
 | `sandbox.filesystem.allowWrite` | path_list | user, project, local | warns `wildcard_ignored_on_linux` |
 | `sandbox.filesystem.denyWrite` | path_list | user, project, local | warns `wildcard_ignored_on_linux` |

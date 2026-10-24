@@ -84,6 +84,12 @@ readiness, cost metrics and harness overhead.
   - `sandbox.failIfUnavailable`: unset or `false` means Claude Code warns and *runs unsandboxed*
     when the sandbox can't start (e.g. bubblewrap missing on Linux) — worth flagging wherever
     `SEC-auto-mode` also fires, since that's exactly when silent unsandboxed fallback matters most
+  - `sandbox.allowNestedUserNamespaces: true` (Linux/WSL2, 2.1.305+) turns off a security
+    boundary: the docs say code from a sandboxed command can end up running outside the sandbox,
+    so none of its restrictions can be relied on, and in auto-allow mode such a command runs
+    without a prompt. High severity when it is `true` in user settings; a project `true` is
+    ignored, so report that as ineffective rather than as exposure. For rootless Podman or
+    Buildah the docs point to `excludedCommands` instead (settings reference, fetched 2026-10-24).
   - filesystem write/read exceptions and the network allowlist: broad entries undermine the
     boundary the sandbox exists for; note when a permission `allow` rule grants something the
     sandbox would otherwise have blocked, since that rule is now the only remaining control

@@ -93,7 +93,8 @@ class Values(unittest.TestCase):
         self.assertEqual(reason(apply_ops.check_key, 'sandbox.netwrok.allowedDomains', 'user'), 'unknown_key')
 
     def test_scope_rules(self):
-        for key in ('sandbox.network.strictAllowlist', 'sandbox.filesystem.disabled', 'sandbox.allowAppleEvents'):
+        for key in ('sandbox.network.strictAllowlist', 'sandbox.filesystem.disabled', 'sandbox.allowAppleEvents',
+                    'sandbox.allowNestedUserNamespaces'):
             self.assertEqual(reason(apply_ops.check_key, key, 'local'), 'scope_not_honored')
             self.assertEqual(reason(apply_ops.check_key, key, 'project'), 'scope_not_honored')
             self.assertEqual(apply_ops.check_key(key, 'user'), 'bool')
@@ -107,7 +108,7 @@ class Values(unittest.TestCase):
             self.assertTrue(key.startswith('sandbox.'), key)
             self.assertIn(kind, kinds)
             self.assertTrue(scopes <= apply_ops.ANY and scopes)
-        self.assertEqual(len(apply_ops.SANDBOX_KEYS), 25)
+        self.assertEqual(len(apply_ops.SANDBOX_KEYS), 26)
         self.assertEqual(len(apply_ops.EXCLUDED_KEYS), 9)
 
 
