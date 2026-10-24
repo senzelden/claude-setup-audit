@@ -564,6 +564,10 @@
                   "tokens": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "cache_read_tokens": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 }
               }
@@ -597,6 +601,10 @@
                   "minimum": 0
                 },
                 "tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cache_read_tokens": {
                   "type": "integer",
                   "minimum": 0
                 }

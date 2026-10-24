@@ -227,14 +227,21 @@ readiness, cost metrics and harness overhead.
   (`transcripts_not_read`) only `model_spawning_hooks` is observed; record no transcript metrics.
 - **COST-subagents** (`usage.subagent_session_share`, Agent tool counts, `transcripts.subagent_models`
   and `request_params.agent`; the transcript fields are measured but read undocumented shapes): many
-  small agents re-reading context, or a top-tier model on mechanical agents. Name how many subagent
-  tokens ran on a top-tier model (`rows[].actual_model`) and why, from `requested_model`:
-  - Set (e.g. `opus`): Claude passed it for that call. The per-invocation parameter outranks everything
-    except a mod's `agent.spawn` hook. Fix: CLAUDE.md guidance on when to pass `model`, or
-    `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, which makes Claude unable to pass one.
+  small agents re-reading context, or a top-tier model on mechanical agents. `tokens` is volume
+  (input + cache creation + cache read + output), not spend, and cache reads usually dominate it while
+  billing at a fraction of base input (0.1x; see `COST-cache-health`). Judge cost on
+  `tokens - cache_read_tokens` (input + cache writes + output) and never present either number as a
+  share of spend. Name how many subagent tokens ran on a top-tier model (`rows[].actual_model`) and
+  why, from `requested_model` (the sibling meta file's `model` value):
+  - A model name (e.g. `opus`): Claude passed it for that call. The per-invocation parameter outranks
+    everything except a mod's `agent.spawn` hook. Fix: CLAUDE.md guidance on when to pass `model`, or
+    `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` together with `CLAUDE_CODE_SUBAGENT_MODEL` set to the wanted
+    model (FORCE alone runs subagents on the main model), which makes Claude unable to pass one.
+  - `inherit`, usually `agent_type: fork`: a fork, which runs on the main model. It is not a per-call
+    choice of Claude's, and `_FORCE` does not change it.
   - Null with a cheaper `actual_model`: the definition's `model:` frontmatter or
     `CLAUDE_CODE_SUBAGENT_MODEL` applied; the snapshot cannot say which.
-  - Null with the main model's `actual_model`: no frontmatter and no variable (or `inherit`); built-in
+  - Null with the main model's `actual_model`: no frontmatter `model:` (or one set to `inherit`) and no variable; built-in
     Explore and Plan ignore the variable, and forks inherit the main model. Fix for custom or plugin
     agents: frontmatter `model:`; for Explore and Plan: `_FORCE=1` (with the variable set).
   - `configured.model_env` true with top-tier rows is the case to explain: since 2.1.251 the variable is

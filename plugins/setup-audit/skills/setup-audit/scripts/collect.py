@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -558,7 +559,6 @@ def collect_managed_settings():
             # Nonblocking open prevents discovered FIFOs from stalling collection.
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as f:
-                import stat
                 if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
                     info["reason"] = "not_regular_file"
                     return info
@@ -1135,7 +1135,11 @@ def read_agent_meta(path):
     if os.path.islink(meta):
         return "unusable", {}
     try:
-        with open(meta, "rb") as f:
+        # Nonblocking open: a FIFO planted at the path must not stall collection.
+        fd = os.open(meta, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return "unusable", {}
             data = f.read(AGENT_META_LIMIT + 1)
     except FileNotFoundError:
         return "absent", {}
@@ -1153,11 +1157,11 @@ def _request_stats():
                 "ttl": Counter()} for c in REQUEST_CLASSES}
 
 
-def request_record(record, path, stats, seen):
+def request_record(record, path, project, stats, seen):
     """Count one api-request record's fixed parameters (never system prompt, messages, blobs or hashes)."""
     rid, session = record.get("id"), record.get("sessionId")
     if isinstance(rid, str) and rid:  # a resumed copy repeats the session id and request id
-        key = (os.path.dirname(path), session if isinstance(session, str) and session else path, rid)
+        key = (project, session if isinstance(session, str) and session else path, rid)
         if key in seen:
             return
         seen.add(key)
@@ -1207,13 +1211,14 @@ def subagent_summary(rows, files, absent, unusable):
         "rows": [{"agent_type": k[0], "requested_model": k[1], "actual_model": k[2], **v} for k, v in kept],
         "files": files, "meta_absent": absent, "meta_unusable": unusable,
         "omitted": {"rows": len(rest), "spawns": sum(v["spawns"] for _, v in rest),
-                    "tokens": sum(v["tokens"] for _, v in rest)},
+                    "tokens": sum(v["tokens"] for _, v in rest),
+                    "cache_read_tokens": sum(v["cache_read_tokens"] for _, v in rest)},
         "configured": {k: False for k in SUBAGENT_ENV},
         "basis": ("Observed, undocumented <agent>.meta.json beside subagent transcripts (2.1.310, 2026-10-25); "
                   "description and toolUseId are never read into the snapshot. requested_model is the model "
-                  "Claude passed for the call (null when none); actual_model is the majority model of the "
-                  "file's assistant messages; tokens are input + cache creation + cache read + output, "
-                  "deduplicated by message id. configured reports env key names in collected settings only."),
+                  "Claude passed for the call (null when none; inherit for forks, which run on the main model); actual_model is the majority model of the "
+                  "file's assistant messages; tokens are input + cache creation + cache read + output "
+                  "(volume, not spend), cache_read_tokens the cache-read part, deduplicated by message id. configured reports env key names in collected settings only."),
     }
 
 
@@ -1270,7 +1275,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         seen_ids, in_window, listed, entry_seen = set(), False, False, False
         last_t = last_model = last_msg_id = None
         compacted = False
-        agent_models, agent_tokens, agent_ids, active = Counter(), 0, set(), False
+        agent_models, agent_tokens, agent_reads, agent_ids, active = Counter(), 0, 0, set(), False
         try:
             with open(path, errors="replace") as f:
                 coverage["main_files" if is_top else "subagent_files"]["scanned"] += 1
@@ -1298,7 +1303,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                         in_window = True
                         raw["sessions"] += 1
                     if record.get("type") == "api-request":
-                        request_record(record, path, request_stats, request_seen)
+                        request_record(record, path, session_key[0], request_stats, request_seen)
                     elif not is_top and record.get("type") == "assistant":
                         msg = record.get("message") if isinstance(record.get("message"), dict) else {}
                         usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
@@ -1307,6 +1312,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             agent_tokens += sum(v for k in ("input_tokens", "cache_creation_input_tokens",
                                                             "cache_read_input_tokens", "output_tokens")
                                                 if type(v := usage.get(k)) is int)
+                            agent_reads += usage["cache_read_input_tokens"] if type(
+                                usage.get("cache_read_input_tokens")) is int else 0
                             agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
                     tool_error_record(record, path, names, tool_stats)
@@ -1425,9 +1432,10 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             agent_unusable += status == "unusable"
             actual = min((m for m in agent_models if m is not None), key=lambda m: (-agent_models[m], m), default=None)
             row = agent_rows.setdefault((_label(meta.get("agentType")), _label(meta.get("model")), actual),
-                                        {"spawns": 0, "tokens": 0})
+                                        {"spawns": 0, "tokens": 0, "cache_read_tokens": 0})
             row["spawns"] += 1
             row["tokens"] += agent_tokens
+            row["cache_read_tokens"] += agent_reads
 
     return {
         "coverage": coverage,

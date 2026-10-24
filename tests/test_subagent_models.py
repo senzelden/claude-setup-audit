@@ -62,9 +62,39 @@ class SubagentModels(FakeHome):
         rows = self.rows()
         self.assertEqual(rows, [
             {"agent_type": "general-purpose", "requested_model": "opus", "actual_model": "claude-opus-5-5",
-             "spawns": 1, "tokens": 10},
+             "spawns": 1, "tokens": 10, "cache_read_tokens": 3},
             {"agent_type": "general-purpose", "requested_model": None, "actual_model": "claude-sonnet-5-5",
-             "spawns": 1, "tokens": 2}])
+             "spawns": 1, "tokens": 2, "cache_read_tokens": 0}])
+
+    def test_fork_with_inherit_keeps_the_meta_value(self):
+        self.agent("f1", [assistant("claude-opus-5-5", "m1")], {"agentType": "fork", "model": "inherit"})
+        (row,) = self.rows()
+        self.assertEqual((row["agent_type"], row["requested_model"]), ("fork", "inherit"))
+
+    def test_cache_read_tokens_are_deduplicated_and_part_of_tokens(self):
+        self.agent("a1", [assistant("claude-opus-5-5", "m1", (1, 2, 100, 4)),
+                          assistant("claude-opus-5-5", "m1", (1, 2, 100, 4)),
+                          assistant("claude-opus-5-5", "m2", (0, 0, 50, 0))])
+        (row,) = self.rows()
+        self.assertEqual((row["tokens"], row["cache_read_tokens"]), (157, 150))
+
+    def test_omitted_rows_carry_cache_read_tokens(self):
+        for i in range(collect.SUBAGENT_ROW_LIMIT + 1):
+            self.agent(f"a{i}", [assistant("claude-opus-5-5", f"m{i}", (0, 0, 7, 0))], {"agentType": f"agent{i:03d}"})
+        self.assertEqual(self.scan()["subagent_models"]["omitted"]["cache_read_tokens"], 7)
+
+    def test_only_in_window_tokens_of_a_mixed_file_count(self):
+        old = assistant("claude-opus-5-5", "old", (1000, 0, 1000, 0))
+        old["timestamp"] = stamp(-3 * 86400)
+        self.agent("a1", [old, assistant("claude-opus-5-5", "new", (1, 0, 2, 0))])
+        (row,) = self.rows()
+        self.assertEqual((row["tokens"], row["cache_read_tokens"]), (3, 2))
+
+    def test_fifo_meta_is_unusable_and_does_not_hang(self):
+        self.agent("fifo", [assistant("claude-opus-5-5", "m1")], None)
+        os.mkfifo(os.path.join(self.claude, "projects/-a/sess/subagents/fifo.meta.json"))
+        t = self.scan()["subagent_models"]
+        self.assertEqual((t["meta_absent"], t["meta_unusable"]), (0, 1))
 
     def test_actual_model_is_the_majority_and_tokens_dedupe_by_message_id(self):
         self.agent("a1", [assistant("claude-opus-5-5", "m1"), assistant("claude-opus-5-5", "m1"),  # chunk copy
@@ -141,6 +171,13 @@ class SubagentModels(FakeHome):
         self.transcript("-a/one.jsonl", [rec])
         self.transcript("-a/copy.jsonl", [rec])  # resumed copy, same session and id
         self.agent("a1", [api_request("agent:builtin:Explore", rid="other", session="s9")])
+        self.assertEqual(self.scan()["request_params"]["agent"]["requests"], 2)
+
+    def test_request_dedup_uses_the_project_not_the_subagents_directory(self):
+        rec = api_request("agent:builtin:Explore", rid="same", session="s9")
+        self.agent("a1", [rec], proj="-a", session="sess1")
+        self.agent("a2", [rec], proj="-b", session="sess1")  # same ids in another project: both count
+        self.agent("a3", [rec], proj="-a", session="sess2")  # same project, resumed copy: once
         self.assertEqual(self.scan()["request_params"]["agent"]["requests"], 2)
 
     def test_malformed_request_fields_are_tolerated(self):

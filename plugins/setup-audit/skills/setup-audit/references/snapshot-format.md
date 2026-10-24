@@ -35,9 +35,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   booleans, enums and OAuth scope tokens only; additive within snapshot v1.
 - `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
   transcript shapes (Claude Code 2.1.310, 2026-10-25). `subagent_models.rows[]`: `agent_type`,
-  `requested_model` (the model Claude passed for the call; null when none), `actual_model` (majority
-  model of the file's assistant messages), `spawns`, `tokens`; plus `files`, `meta_absent`,
-  `meta_unusable`, `omitted` (rows, spawns, tokens beyond the 30-row cap) and `configured`
+  `requested_model` (the meta `model`: usually the model Claude passed for the call, `inherit` for
+  forks; null when none), `actual_model` (majority
+  model of the file's assistant messages), `spawns`, `tokens` (volume, includes cache reads), `cache_read_tokens`; plus `files`, `meta_absent`,
+  `meta_unusable`, `omitted` (rows, spawns, tokens, cache_read_tokens beyond the 30-row cap) and `configured`
   (`model_env`, `force_env`: whether `CLAUDE_CODE_SUBAGENT_MODEL` / `_FORCE` are env keys of any
   collected settings; names only). `request_params.{main,sdk,agent,other}`: `requests`, `by_model`,
   `by_effort`, `by_thinking` (`[value, count]` pairs, value null when absent) and `cache_breakpoints`
