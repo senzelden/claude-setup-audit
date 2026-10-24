@@ -306,6 +306,11 @@ SWEEP_KEEP = (  # string fields added by plans 2A and 2B (classified 2026-09-30)
     ('transcripts', 'tool_errors', 'by_tool', '*', 'tool'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'server'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'top_error_tools', '*', '*'))
+SUBAGENT_KEEP = (  # transcripts.subagent_models / request_params: names and fixed vocabularies (0.11.0)
+    *(('transcripts', 'subagent_models', 'rows', '*', k) for k in ('agent_type', 'requested_model', 'actual_model')),
+    ('transcripts', 'subagent_models', 'basis'), ('transcripts', 'request_params', 'basis'),
+    *(('transcripts', 'request_params', c, k, '*', '*')
+      for c in ('main', 'sdk', 'agent', 'other') for k in ('by_model', 'by_effort', 'by_thinking')))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -334,7 +339,7 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
-KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SINGLE
+KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP + MCP_POLICY_KEEP)
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)

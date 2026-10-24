@@ -197,6 +197,67 @@
         }
       }
     },
+    "request_class": {
+      "type": "object",
+      "required": [
+        "requests",
+        "by_model",
+        "omitted_models",
+        "by_effort",
+        "by_thinking",
+        "cache_breakpoints"
+      ],
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_model": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "omitted_models": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_effort": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "by_thinking": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "cache_breakpoints": {
+          "type": "object",
+          "required": [
+            "1h",
+            "5m",
+            "other"
+          ],
+          "properties": {
+            "1h": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "5m": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "other": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
     "tool_error_row": {
       "type": "object",
       "required": [
@@ -455,6 +516,138 @@
         "coverage"
       ],
       "properties": {
+        "subagent_models": {
+          "type": "object",
+          "required": [
+            "rows",
+            "files",
+            "meta_absent",
+            "meta_unusable",
+            "omitted",
+            "configured"
+          ],
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "agent_type",
+                  "requested_model",
+                  "actual_model",
+                  "spawns",
+                  "tokens"
+                ],
+                "properties": {
+                  "agent_type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "requested_model": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "actual_model": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "spawns": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            },
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "meta_absent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "meta_unusable": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omitted": {
+              "type": "object",
+              "required": [
+                "rows",
+                "spawns",
+                "tokens"
+              ],
+              "properties": {
+                "rows": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "spawns": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "configured": {
+              "type": "object",
+              "required": [
+                "model_env",
+                "force_env"
+              ],
+              "properties": {
+                "model_env": {
+                  "type": "boolean"
+                },
+                "force_env": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "basis": {
+              "type": "string"
+            }
+          }
+        },
+        "request_params": {
+          "type": "object",
+          "required": [
+            "main",
+            "sdk",
+            "agent",
+            "other"
+          ],
+          "properties": {
+            "main": {
+              "$ref": "#/$defs/request_class"
+            },
+            "sdk": {
+              "$ref": "#/$defs/request_class"
+            },
+            "agent": {
+              "$ref": "#/$defs/request_class"
+            },
+            "other": {
+              "$ref": "#/$defs/request_class"
+            },
+            "basis": {
+              "type": "string"
+            }
+          }
+        },
         "tool_errors": {
           "type": "object",
           "required": [

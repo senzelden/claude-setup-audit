@@ -1113,6 +1113,110 @@ def tool_error_summary(stats):
     }
 
 
+# Subagent model mix and request parameters. Both read undocumented transcript shapes observed on
+# 2026-10-25 (Claude Code 2.1.310): <agent>.meta.json beside each subagent transcript, and
+# type "api-request" records. Resolution order of a subagent's model is documented in sub-agents
+# ("Choose a model", fetched 2026-10-25); prompt-caching (same date) gives 5 minutes as the default TTL.
+SUBAGENT_ROW_LIMIT = 30
+AGENT_META_LIMIT = 65536
+REQUEST_MODEL_LIMIT = 15
+REQUEST_CLASSES = ("main", "sdk", "agent", "other")
+SUBAGENT_ENV = {"model_env": "CLAUDE_CODE_SUBAGENT_MODEL", "force_env": "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"}
+
+
+def _label(value):
+    """A name from a transcript or meta file: redacted and capped; anything else is absent."""
+    return _mcp_name(value) if isinstance(value, str) else None
+
+
+def read_agent_meta(path):
+    """(status, dict) for the .meta.json beside a subagent transcript; only a regular file is read."""
+    meta = path[:-len(".jsonl")] + ".meta.json"
+    if os.path.islink(meta):
+        return "unusable", {}
+    try:
+        with open(meta, "rb") as f:
+            data = f.read(AGENT_META_LIMIT + 1)
+    except FileNotFoundError:
+        return "absent", {}
+    except OSError:
+        return "unusable", {}
+    try:
+        parsed = json.loads(data) if len(data) <= AGENT_META_LIMIT else None
+    except ValueError:
+        parsed = None
+    return ("ok", parsed) if isinstance(parsed, dict) else ("unusable", {})
+
+
+def _request_stats():
+    return {c: {"requests": 0, "model": Counter(), "effort": Counter(), "thinking": Counter(),
+                "ttl": Counter()} for c in REQUEST_CLASSES}
+
+
+def request_record(record, path, stats, seen):
+    """Count one api-request record's fixed parameters (never system prompt, messages, blobs or hashes)."""
+    rid, session = record.get("id"), record.get("sessionId")
+    if isinstance(rid, str) and rid:  # a resumed copy repeats the session id and request id
+        key = (os.path.dirname(path), session if isinstance(session, str) and session else path, rid)
+        if key in seen:
+            return
+        seen.add(key)
+    source = record.get("querySource")
+    cls = ("main" if source == "repl_main_thread" else "sdk" if source == "sdk"
+           else "agent" if isinstance(source, str) and source.startswith("agent:") else "other")
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    output = params.get("output_config") if isinstance(params.get("output_config"), dict) else {}
+    thinking = params.get("thinking") if isinstance(params.get("thinking"), dict) else {}
+    c = stats[cls]
+    c["requests"] += 1
+    c["model"][_label(params.get("model"))] += 1
+    c["effort"][_label(output.get("effort"))] += 1
+    c["thinking"][_label(thinking.get("type"))] += 1
+    for entry in record.get("cacheControl") if isinstance(record.get("cacheControl"), list) else []:
+        value = entry.get("value") if isinstance(entry, dict) and isinstance(entry.get("value"), dict) else None
+        if value is None:
+            continue
+        ttl = value.get("ttl")
+        c["ttl"]["1h" if ttl == "1h" else "5m" if ttl is None or ttl == "5m" else "other"] += 1
+
+
+def _counts(counter, limit=None):
+    rows = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0] is None, kv[0] or ""))
+    return [list(kv) for kv in rows[:limit]]
+
+
+def request_params_summary(stats):
+    out = {}
+    for cls, c in stats.items():
+        out[cls] = {"requests": c["requests"], "by_model": _counts(c["model"], REQUEST_MODEL_LIMIT),
+                    "omitted_models": max(0, len(c["model"]) - REQUEST_MODEL_LIMIT),
+                    "by_effort": _counts(c["effort"]), "by_thinking": _counts(c["thinking"]),
+                    "cache_breakpoints": {k: c["ttl"].get(k, 0) for k in ("1h", "5m", "other")}}
+    out["basis"] = ("Observed, undocumented api-request records (2.1.310, 2026-10-25) in the window, "
+                    "deduplicated by project directory, sessionId and request id. Source classes: main = "
+                    "repl_main_thread, sdk, agent = agent:*, other. Effort and thinking are null when the "
+                    "request carried none; a breakpoint without ttl counts as 5m (prompt-caching default).")
+    return out
+
+
+def subagent_summary(rows, files, absent, unusable):
+    ordered = sorted(rows.items(), key=lambda kv: (-kv[1]["tokens"], -kv[1]["spawns"],
+                                                   tuple("" if x is None else x for x in kv[0])))
+    kept, rest = ordered[:SUBAGENT_ROW_LIMIT], ordered[SUBAGENT_ROW_LIMIT:]
+    return {
+        "rows": [{"agent_type": k[0], "requested_model": k[1], "actual_model": k[2], **v} for k, v in kept],
+        "files": files, "meta_absent": absent, "meta_unusable": unusable,
+        "omitted": {"rows": len(rest), "spawns": sum(v["spawns"] for _, v in rest),
+                    "tokens": sum(v["tokens"] for _, v in rest)},
+        "configured": {k: False for k in SUBAGENT_ENV},
+        "basis": ("Observed, undocumented <agent>.meta.json beside subagent transcripts (2.1.310, 2026-10-25); "
+                  "description and toolUseId are never read into the snapshot. requested_model is the model "
+                  "Claude passed for the call (null when none); actual_model is the majority model of the "
+                  "file's assistant messages; tokens are input + cache creation + cache read + output, "
+                  "deduplicated by message id. configured reports env key names in collected settings only."),
+    }
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -1148,6 +1252,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
+    request_stats, request_seen = _request_stats(), set()
+    agent_rows, agent_files, agent_absent, agent_unusable = {}, 0, 0, 0
     raw = {"sessions": 0, "injections": [], "commands": {}, "event_commands": {}, "listings": [],
            "entrypoints": Counter(), "file_entrypoints": {}, "main_tokens": defaultdict(int),
            "sub_tokens": defaultdict(int), "malformed": 0}
@@ -1164,6 +1270,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         seen_ids, in_window, listed, entry_seen = set(), False, False, False
         last_t = last_model = last_msg_id = None
         compacted = False
+        agent_models, agent_tokens, agent_ids, active = Counter(), 0, set(), False
         try:
             with open(path, errors="replace") as f:
                 coverage["main_files" if is_top else "subagent_files"]["scanned"] += 1
@@ -1186,9 +1293,21 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                         if record.get("type") == "assistant" and not record.get("isSidechain"):
                             need_baseline = False
                         continue
+                    active = True
                     if is_top and not in_window:
                         in_window = True
                         raw["sessions"] += 1
+                    if record.get("type") == "api-request":
+                        request_record(record, path, request_stats, request_seen)
+                    elif not is_top and record.get("type") == "assistant":
+                        msg = record.get("message") if isinstance(record.get("message"), dict) else {}
+                        usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
+                        if usage is not None and (msg.get("id") is None or msg["id"] not in agent_ids):
+                            agent_ids.add(msg.get("id"))
+                            agent_tokens += sum(v for k in ("input_tokens", "cache_creation_input_tokens",
+                                                            "cache_read_input_tokens", "output_tokens")
+                                                if type(v := usage.get(k)) is int)
+                            agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
                     tool_error_record(record, path, names, tool_stats)
                     if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
@@ -1299,6 +1418,16 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         except OSError:
             coverage["main_files" if is_top else "subagent_files"]["omitted"] += 1
             continue
+        if active and not is_top:
+            status, meta = read_agent_meta(path)
+            agent_files += 1
+            agent_absent += status == "absent"
+            agent_unusable += status == "unusable"
+            actual = min((m for m in agent_models if m is not None), key=lambda m: (-agent_models[m], m), default=None)
+            row = agent_rows.setdefault((_label(meta.get("agentType")), _label(meta.get("model")), actual),
+                                        {"spawns": 0, "tokens": 0})
+            row["spawns"] += 1
+            row["tokens"] += agent_tokens
 
     return {
         "coverage": coverage,
@@ -1313,6 +1442,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
         "mcp_calls_by_server": mcp_calls.most_common(),
         "tool_errors": tool_error_summary(tool_stats),
+        "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
+        "request_params": request_params_summary(request_stats),
         "cache": {
             "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
             "read_tokens": cache["read"],
@@ -1984,6 +2115,9 @@ def build_snapshot(a):
         r["context_baseline_median"] = samples[len(samples) // 2] if samples else None
         r["context_baseline_sessions"] = len(samples)
     snap["transcripts"].pop("_baseline_lists", None)
+    env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_keys") or []
+                 if isinstance(k, str)}
+    snap["transcripts"]["subagent_models"]["configured"] = {k: v in env_names for k, v in SUBAGENT_ENV.items()}
     configured = set(snap["global"].get("mcp_user") or [])
     for entry in snap["projects"].values():
         configured |= set(entry.get("mcp_servers") or [])
