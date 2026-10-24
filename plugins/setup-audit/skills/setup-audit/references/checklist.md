@@ -407,9 +407,12 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   (`timestamp`, `random-id`, `unsorted-json`) in files that call the API. Before proposing:
   - Confirm the breaker feeds the prompt prefix (system prompt, tools, early messages) rather than
     being a log timestamp.
-  - Caching only pays when the shared prefix clears the model's minimum (512 tokens on Opus 5,
-    1,024 on Sonnet 5, 4,096 on Haiku 4.5, per `model_ids`) and repeats within the TTL. Two
-    requests break even on the 5-minute TTL, three on the 1-hour TTL.
+  - Caching only pays when the shared prefix clears the model's minimum and repeats within the
+    TTL. Minimums on the Claude API: 512 tokens on Opus 5.5, Sonnet 5.5, Haiku 5.5, Opus 5 and
+    Fable 5.1; 1,024 on Sonnet 5 and Opus 4.8; 4,096 on Haiku 4.5. Cache writes cost 1.25x base
+    input (5-minute TTL) or 2x (1-hour); reads cost 0.1x, and 0.05x on Opus 5.5 and Sonnet 5.5.
+    Two requests break even on the 5-minute TTL, three on the 1-hour TTL (prompt caching docs,
+    fetched 2026-10-24; other providers can differ).
   - Proposal shape: top-level `cache_control={"type": "ephemeral"}` on the create call (automatic
     placement), move volatile content after the last breakpoint, verify with
     `usage.cache_read_input_tokens` > 0 on repeat requests.
