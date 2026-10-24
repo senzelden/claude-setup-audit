@@ -69,7 +69,9 @@ def plan_file(path, remove, allow_symlinks=False):
     with os.fdopen(fd) as f:
         data = json.load(f)
     identity = identity_of(st)
-    perms = data.get("permissions") or {}
+    # Plan only over correctly typed rules; anything else stays in the file untouched.
+    perms = collect.settings_shape(data)[0].get("permissions") if isinstance(data, dict) else None
+    perms = perms or {}
     removals = []
     for rule in perms.get("allow") or []:
         reasons = [name for name, rx in collect.RISKY_RULES if name in remove and rx.search(rule)]
@@ -106,7 +108,7 @@ def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=
         os.close(fd)
     raw = {r["_raw"] for r in removals}
     perms = data["permissions"]
-    perms["allow"] = [r for r in perms.get("allow", []) if r not in raw]
+    perms["allow"] = [r for r in perms.get("allow", []) if not (isinstance(r, str) and r in raw)]
     if dirs:
         perms["additionalDirectories"] = [d for d in perms["additionalDirectories"] if d not in dirs]
     text = json.dumps(data, indent=2) + "\n"

@@ -149,6 +149,13 @@ class HookHandlerChecks(unittest.TestCase):
         self.assertEqual(check('Stop', None, {'type': 'prompt', 'prompt': 'p', 'onFailure': 'block'}),
                          (['unknown_fields'], ['onFailure']))
         self.assertEqual(check('Stop', None, {'command': 'x', 'onFailure': True}), (['invalid_on_failure'], []))
+        # hooks.md "Block the action when a hook fails": no effect on these events or on background hooks.
+        for event in ('Stop', 'SubagentStop', 'TaskCompleted', 'TeammateIdle'):
+            self.assertEqual(check(event, None, {'command': 'x', 'onFailure': 'block'}), (['on_failure_no_effect'], []))
+        for flag in ('async', 'asyncRewake'):
+            self.assertEqual(check('PreToolUse', 'Bash', {'command': 'x', flag: True, 'onFailure': 'block'}),
+                             (['on_failure_no_effect'], []))
+        self.assertEqual(check('Stop', None, {'command': 'x', 'onFailure': 'continue'}), ([], []))
 
     def test_non_string_type_is_an_unknown_type(self):
         self.assertEqual(config_checks.handler_issues('Stop', None, {'type': ['command']}),

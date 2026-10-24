@@ -8,7 +8,7 @@ the collector snapshot.
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
 caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed on
 `permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys and
-booleans only), SEC-hooks (type, matcher, origin, header keys, on_failure; no command or prompt),
+booleans only), SEC-hooks (type, matcher, origin, header keys, on_failure, background; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
@@ -87,8 +87,10 @@ readiness, cost metrics and harness overhead.
   - `sandbox.allowNestedUserNamespaces: true` (Linux/WSL2, 2.1.305+) turns off a security
     boundary: the docs say code from a sandboxed command can end up running outside the sandbox,
     so none of its restrictions can be relied on, and in auto-allow mode such a command runs
-    without a prompt. High severity when it is `true` in user settings; a project `true` is
-    ignored, so report that as ineffective rather than as exposure. For rootless Podman or
+    without a prompt. High severity when it is `true` in user or managed settings (`--settings`
+    JSON counts too, but isn't collected); a project `true` is ignored, so report that as
+    ineffective rather than as exposure. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` ignores every
+    `true`. For rootless Podman or
     Buildah the docs point to `excludedCommands` instead (settings reference, fetched 2026-10-24).
   - filesystem write/read exceptions and the network allowlist: broad entries undermine the
     boundary the sandbox exists for; note when a permission `allow` rule grants something the
@@ -105,7 +107,9 @@ readiness, cost metrics and harness overhead.
     `PermissionRequest` hook that exists to block something, propose `"onFailure": "block"`
     unless `on_failure` already says `block` (hooks docs "Block the action when a hook fails",
     fetched 2026-10-24; Claude Code 2.1.295+). Don't propose it for loggers or formatters: a
-    broken one would then block every matching call.
+    broken one would then block every matching call. It has no effect on background hooks
+    (`background`, i.e. `async`/`asyncRewake`) or on `Stop`, `SubagentStop`, `TaskCompleted` and
+    `TeammateIdle`; a `block` set there is `on_failure_no_effect` (HYG-hook-config).
   - `http`: a network egress point — every matching event's JSON is POSTed to that URL. Flag an
     unfamiliar host, a matcher wide enough to send most tool calls, and whether `header_keys` /
     `allowed_env_vars` on the handler (names only, never values) suggest a secret is being
@@ -346,7 +350,8 @@ metric that motivated it, so the next run can check whether it moved.
     what Claude Code does with it is undocumented, so say "invalid", not "ignored"),
     `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
     handler type; name the field, don't claim it's ignored), `invalid_on_failure` (`onFailure` on a
-    `command`/`http` hook that is neither `"continue"` nor `"block"`).
+    `command`/`http` hook that is neither `"continue"` nor `"block"`), `on_failure_no_effect`
+    (`"block"` on a background hook or an event where it does nothing; the hook still fails open).
   A guard that never fires (a `PreToolUse` or security hook) is high severity; the rest is hygiene.
 - **HYG-mcp-config** (`config_notes`, `extensions.mcp_name_collisions`): `url_without_type`
   (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`
@@ -418,7 +423,7 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   - Caching only pays when the shared prefix clears the model's minimum and repeats within the
     TTL. Minimums on the Claude API: 512 tokens on Opus 5.5, Sonnet 5.5, Haiku 5.5, Opus 5 and
     Fable 5.1; 1,024 on Sonnet 5 and Opus 4.8; 4,096 on Haiku 4.5. Cache writes cost 1.25x base
-    input (5-minute TTL) or 2x (1-hour); reads cost 0.1x, and 0.05x on Opus 5.5 and Sonnet 5.5.
+    input (5-minute TTL) or 2x (1-hour); reads cost 0.1x, 0.05x on Opus 5.5 and Sonnet 5.5, and 0.025x on Fable 5.1.
     Two requests break even on the 5-minute TTL, three on the 1-hour TTL (prompt caching docs,
     fetched 2026-10-24; other providers can differ).
   - Proposal shape: top-level `cache_control={"type": "ephemeral"}` on the create call (automatic

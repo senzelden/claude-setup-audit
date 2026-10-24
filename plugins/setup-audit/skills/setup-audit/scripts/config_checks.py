@@ -123,9 +123,22 @@ def handler_issues(event, matcher, handler):
         unknown = sorted(str(k) for k in handler if k not in COMMON_FIELDS | TYPE_FIELDS[kind])[:10]
         if unknown:
             issues.append('unknown_fields')
-        if 'onFailure' in TYPE_FIELDS[kind] and 'onFailure' in handler and on_failure(handler) is None:
-            issues.append('invalid_on_failure')
+        if 'onFailure' in TYPE_FIELDS[kind] and 'onFailure' in handler:
+            if on_failure(handler) is None:
+                issues.append('invalid_on_failure')
+            elif on_failure(handler) == 'block' and (event in ON_FAILURE_NO_EFFECT or background(handler)):
+                issues.append('on_failure_no_effect')
     return issues, unknown
+
+
+# hooks.md "Block the action when a hook fails" (fetched 2026-10-24): onFailure has no effect here.
+ON_FAILURE_NO_EFFECT = frozenset({'Stop', 'SubagentStop', 'TaskCompleted', 'TeammateIdle'})
+
+
+def background(handler):
+    """True for a command hook that runs in the background (async or asyncRewake)."""
+    return handler.get('type', 'command') == 'command' and (handler.get('async') is True
+                                                             or handler.get('asyncRewake') is True)
 
 
 def on_failure(handler):

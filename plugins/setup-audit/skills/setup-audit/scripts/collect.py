@@ -399,8 +399,8 @@ def hook_handler_entry(event, matcher, x):
 
     header_keys/allowed_env_vars (http only) are the fields that decide whether a secret can leak
     into the request: names only, matching the env_keys/envrc_info convention elsewhere.
-    Every entry also carries a fingerprint; on_failure, issues, unknown_fields and plugin_relative appear
-    only when set.
+    Every entry also carries a fingerprint; on_failure, background, issues, unknown_fields and
+    plugin_relative appear only when set.
     """
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
@@ -422,6 +422,8 @@ def hook_handler_entry(event, matcher, x):
              "fingerprint": config_checks.handler_fingerprint(event, matcher, x)}
     if kind in ("command", "http") and config_checks.on_failure(x):
         entry["on_failure"] = config_checks.on_failure(x)
+    if config_checks.background(x):
+        entry["background"] = True
     if issues:
         entry["issues"] = issues
     if unknown:

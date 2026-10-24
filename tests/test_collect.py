@@ -387,6 +387,23 @@ class SymlinkAndRaceGuards(FakeHome):
         self.assertTrue(os.path.islink(path))  # the swap itself is left alone; nothing was written
 
 
+class PruneMalformed(FakeHome):
+    def test_wrongly_typed_values_are_planned_around_and_kept(self):
+        for perms in (5, {"allow": 5}, {"allow": [{}, 7]}, {"additionalDirectories": "x"},
+                      {"additionalDirectories": [3]}):
+            with self.subTest(perms=perms):
+                path = self.write("settings.json", {"permissions": perms})
+                _, removals, dirs, _ = prune_permissions.plan_file(path, {"sudo", "one-off", "stale-dirs"})
+                self.assertEqual((removals, dirs), ([], []))
+        data = {"permissions": {"allow": [{}, "Bash(sudo -n true)", 7], "additionalDirectories": [3, "/nonexistent/d"]}}
+        path = self.write("settings.json", data)
+        plan = prune_permissions.plan_file(path, {"sudo", "stale-dirs"})
+        self.assertEqual(([r["_raw"] for r in plan[1]], plan[2]), (["Bash(sudo -n true)"], ["/nonexistent/d"]))
+        prune_permissions.apply_file(path, *plan, os.path.join(self.home, "backups"))
+        with open(path) as f:
+            self.assertEqual(json.load(f)["permissions"], {"allow": [{}, 7], "additionalDirectories": [3]})
+
+
 class PruneBackups(FakeHome):
     def apply(self, path):
         plan = prune_permissions.plan_file(path, {"sudo"})
@@ -1202,6 +1219,9 @@ class HookHandlerIdentifiers(unittest.TestCase):
         self.assertEqual(entry('Stop', None, {'type': 'http', 'url': 'u', 'onFailure': 'continue'})['on_failure'],
                          'continue')
         self.assertNotIn('on_failure', entry('PreToolUse', 'Bash', {'command': 'x'}))
+        self.assertTrue(entry('PreToolUse', 'Bash', {'command': 'x', 'async': True})['background'])
+        self.assertTrue(entry('PreToolUse', 'Bash', {'command': 'x', 'asyncRewake': True})['background'])
+        self.assertNotIn('background', entry('PreToolUse', 'Bash', {'command': 'x', 'async': False}))
         bad = entry('PreToolUse', 'Bash', {'command': 'x', 'onFailure': 'stop'})
         self.assertNotIn('on_failure', bad)
         self.assertEqual(bad['issues'], ['invalid_on_failure'])

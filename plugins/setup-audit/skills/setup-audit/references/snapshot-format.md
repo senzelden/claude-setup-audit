@@ -46,7 +46,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     (`permissions`, `permissions.allow`, `hooks`, `env`, ...); a managed file with any is `partial`
     with reason `invalid_entries`;
   - `permissions.rule_shape_issues`;
-  - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only),
+  - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only), `background`
+    (a command hook with `async` or `asyncRewake`),
     `issues`/`unknown_fields`/`plugin_relative` when present.
 
   Additive within snapshot v1.
