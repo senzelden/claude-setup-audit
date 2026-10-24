@@ -198,6 +198,23 @@ occurrence, so resumed copies of a session can inflate them. Caps: 15 built-in t
 3 failing tools per server; `failure_rate` (excluding permission denials and user rejections)
 is null below 5 calls. The session-meta `tool_error_categories` remain separate and coarse.
 
+Subagent models and request parameters (`transcripts.subagent_models`, `transcripts.request_params`;
+observed, undocumented, Claude Code 2.1.310, 2026-10-25): Claude Code documents neither shape.
+`<agent>.meta.json` beside each subagent transcript supplies `agentType` and `model`; only those two
+keys are read (never `description` or `toolUseId`), at most 64 KiB, regular files only. Absent files
+are counted in `meta_absent`; malformed, oversized, non-object or symlinked ones in `meta_unusable`.
+The meta `model` is the model Claude passed for that call; its absence means the definition,
+`CLAUDE_CODE_SUBAGENT_MODEL` or the main model applied (order documented in sub-agents "Choose a model",
+fetched 2026-10-25), so the row cannot say which; `actual_model` is what the transcript shows. A subagent
+counts when it has an in-window record; its tokens are the in-window assistant usage, deduplicated by
+message id, and rows are capped at 30 by tokens (`omitted` counts the rest). `api-request` records
+(`querySource`, `params.model`, `params.output_config.effort`, `params.thinking.type`,
+`cacheControl[].value.ttl`) are counted per source class, deduplicated by project directory, sessionId and
+request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25).
+`configured` reads env key names only, never values, and cannot see shell or managed environment
+variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
+as an error.
+
 Plugin candidates come from `installed_plugins.json` records, not newest cache directories.
 User/managed installs and matching project/local installs are inspected. Enablement settings
 are reported as per-source observations, with active state unknown. Only paths within plugin

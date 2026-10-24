@@ -33,6 +33,16 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
   `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,
   booleans, enums and OAuth scope tokens only; additive within snapshot v1.
+- `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
+  transcript shapes (Claude Code 2.1.310, 2026-10-25). `subagent_models.rows[]`: `agent_type`,
+  `requested_model` (the model Claude passed for the call; null when none), `actual_model` (majority
+  model of the file's assistant messages), `spawns`, `tokens`; plus `files`, `meta_absent`,
+  `meta_unusable`, `omitted` (rows, spawns, tokens beyond the 30-row cap) and `configured`
+  (`model_env`, `force_env`: whether `CLAUDE_CODE_SUBAGENT_MODEL` / `_FORCE` are env keys of any
+  collected settings; names only). `request_params.{main,sdk,agent,other}`: `requests`, `by_model`,
+  `by_effort`, `by_thinking` (`[value, count]` pairs, value null when absent) and `cache_breakpoints`
+  (`1h`, `5m`, `other`). Names, counts and booleans only; agent descriptions, tool-use ids, prompts,
+  blobs and hashes are never stored. Additive within snapshot v1.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

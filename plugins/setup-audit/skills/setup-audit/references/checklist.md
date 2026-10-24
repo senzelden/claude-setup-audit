@@ -173,7 +173,9 @@ readiness, cost metrics and harness overhead.
   `SEC-risky-allow`, and `COST-harness-overhead` / `COST-startup-hooks`. A crossing alone is never a
   proposal. The current snapshot value outranks a logged one. `status: invalid` means the log could
   not be read. See `drift.md`.
-- **COST-model-default** (`global.settings[].model`, `model_settings`, `usage.stats_lifetime_by_model`):
+- **COST-model-default** (`global.settings[].model`, `model_settings`, `usage.stats_lifetime_by_model`;
+  `transcripts.request_params` `by_model` / `by_effort` are observed, undocumented evidence of what
+  requests actually carried, null effort meaning none was sent):
   a top-tier 1M-context model as the default for mostly mechanical work. Options: `opusplan`, a
   cheaper default with per-task switching, or `CLAUDE_CODE_SUBAGENT_MODEL` for subagents. Quote
   exact values from `model-config`.
@@ -223,8 +225,23 @@ readiness, cost metrics and harness overhead.
   `injected_context.sources` row (rows are sorted by sessions descending, so the most frequent
   source); name that row's plugin and attribution in the evidence. Under global scope
   (`transcripts_not_read`) only `model_spawning_hooks` is observed; record no transcript metrics.
-- **COST-subagents** (`usage.subagent_session_share`, Agent tool counts): many small agents
-  re-reading context, or a top-tier model on mechanical agents.
+- **COST-subagents** (`usage.subagent_session_share`, Agent tool counts, `transcripts.subagent_models`
+  and `request_params.agent`; the transcript fields are measured but read undocumented shapes): many
+  small agents re-reading context, or a top-tier model on mechanical agents. Name how many subagent
+  tokens ran on a top-tier model (`rows[].actual_model`) and why, from `requested_model`:
+  - Set (e.g. `opus`): Claude passed it for that call. The per-invocation parameter outranks everything
+    except a mod's `agent.spawn` hook. Fix: CLAUDE.md guidance on when to pass `model`, or
+    `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, which makes Claude unable to pass one.
+  - Null with a cheaper `actual_model`: the definition's `model:` frontmatter or
+    `CLAUDE_CODE_SUBAGENT_MODEL` applied; the snapshot cannot say which.
+  - Null with the main model's `actual_model`: no frontmatter and no variable (or `inherit`); built-in
+    Explore and Plan ignore the variable, and forks inherit the main model. Fix for custom or plugin
+    agents: frontmatter `model:`; for Explore and Plan: `_FORCE=1` (with the variable set).
+  - `configured.model_env` true with top-tier rows is the case to explain: since 2.1.251 the variable is
+    only a default, below the per-call parameter and frontmatter; without `configured.force_env` it
+    changes neither.
+  Source: sub-agents "Choose a model" and "Run every subagent on one model", fetched 2026-10-25.
+  `request_params.agent` shows the effort and thinking mix of those requests; cite it, don't threshold it.
 - **COST-tool-errors** (`avg_tool_errors_per_session`, `tool_error_categories`): every failed call
   is a paid retry. Recurring categories point at missing commands in CLAUDE.md or a missing script.
   Prefer `transcripts.tool_errors` (see `COST-tool-error-clusters`) when present.
@@ -241,7 +258,8 @@ readiness, cost metrics and harness overhead.
   - `file_state` recurring: an edit-before-read habit; an `LRN-` pattern if it spans 3+ sessions.
   - `validation`: malformed tool calls; check for a tool or server whose schema confuses the model.
   `error_results_unmatched` and `results_without_is_error` bound the evidence; say so when large.
-- **COST-cache-health** (`transcripts.cache`, measured): Claude Code places cache points itself, so
+- **COST-cache-health** (`transcripts.cache`, measured; `transcripts.request_params[*].cache_breakpoints`
+  adds observed, undocumented TTL counts per source class, `5m` including breakpoints with no `ttl`): Claude Code places cache points itself, so
   there's no `cache_control` to set. What the user controls is the cache lifetime (TTL) and the
   habits that break the cache.
   - `hit_ratio` (reads / (reads + writes)) above ~90% is healthy; say so and move on.
