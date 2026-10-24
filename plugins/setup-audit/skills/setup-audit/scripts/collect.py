@@ -484,6 +484,13 @@ def settings_shape(d):
     return d, sorted(issues)
 
 
+def _settings_layer(path):
+    """user, project or local, from where a non-managed settings file lives (settings.md "Settings files")."""
+    if os.path.basename(path) == "settings.local.json":
+        return "local"
+    return "user" if os.path.dirname(os.path.abspath(path)) == CLAUDE else "project"
+
+
 def summarize_settings(path, data=None, managed=False):
     raw = load_json(path) if data is None else data
     if raw is None:
@@ -524,6 +531,12 @@ def summarize_settings(path, data=None, managed=False):
     }
     if shape_issues:
         summary["shape_issues"] = shape_issues
+    if not managed:
+        ignored_keys, ignored_env = config_checks.scope_ignored(_settings_layer(path), d)
+        if ignored_keys:
+            summary["scope_ignored_keys"] = ignored_keys
+        if ignored_env:
+            summary["ignored_env_keys"] = ignored_env
     # Raw rules for config_stacks(); never part of a summary, which is serialized.
     _RAW_PERMISSIONS[summary["path"]] = {k: [r for r in (perms.get(k) if isinstance(perms.get(k), list) else [])
                                             if isinstance(r, str)] for k in ("allow", "ask", "deny")}

@@ -342,3 +342,188 @@ def conflicts(stacks, redact):
     perms, perms_omitted = permission_overlaps(stacks, redact)
     return {'stacks': len(stacks), 'hook_duplicates': hooks, 'hook_duplicates_omitted': hooks_omitted,
             'permission_overlaps': perms, 'permission_overlaps_omitted': perms_omitted}
+
+
+# settings-reference.md (https://code.claude.com/docs/en/settings-reference.md, fetched 2026-10-24), the
+# key table's Scope column and each key's `* **Scope**:` line; every key whose scope is not `Any file`.
+# Scope vocabulary: user_or_managed = "User or managed", managed = "Managed", global_config = "Global
+# config" (lives in ~/.claude.json: "Claude Code ignores them anywhere else"), user_local_managed =
+# "User, local, or managed", user = "User". A key not in this table is never judged.
+SETTINGS_SCOPES = {
+    # user_or_managed
+    'modelPicker': 'user_or_managed',
+    'autoMode': 'user_or_managed',
+    'autoMode.classifyAllShell': 'user_or_managed',
+    'skipAutoPermissionPrompt': 'user_or_managed',
+    'sandbox.filesystem.disabled': 'user_or_managed',
+    'sandbox.allowAppleEvents': 'user_or_managed',
+    'sandbox.allowNestedUserNamespaces': 'user_or_managed',
+    'sandbox.ripgrep': 'user_or_managed',
+    'sandbox.credentials.allowPlaintextInject': 'user_or_managed',
+    'sandbox.credentials.awsPairs': 'user_or_managed',
+    'sandbox.credentials.sigv4': 'user_or_managed',
+    'sandbox.network.strictAllowlist': 'user_or_managed',
+    'sandbox.network.tlsTerminate': 'user_or_managed',
+    'askUserQuestionTimeout': 'user_or_managed',
+    'autoContinueAtUsageLimit': 'user_or_managed',
+    'axScreenReader': 'user_or_managed',
+    'bashEditDiffEnabled': 'user_or_managed',
+    'dialogExpiry': 'user_or_managed',
+    'footerLinksRegexes': 'user_or_managed',
+    'spellcheck': 'user_or_managed',
+    'vimInsertModeRemaps': 'user_or_managed',
+    'pluginConfigs': 'user_or_managed',
+    'prependPlugins': 'user_or_managed',
+    'appendPlugins': 'user_or_managed',
+    'processWrapper': 'user_or_managed',
+    'sshConfigs': 'user_or_managed',
+    'sshHostCommands': 'user_or_managed',
+    'forceLoginGatewayUrl': 'user_or_managed',
+    'desktopSessionCleanupPeriodDays': 'user_or_managed',
+    'feedbackDrafts': 'user_or_managed',
+    # managed
+    'availableModelsMatch': 'managed',
+    'deniedModels': 'managed',
+    'modelPricing': 'managed',
+    'allowManagedPermissionRulesOnly': 'managed',
+    'sandbox.filesystem.allowManagedReadPathsOnly': 'managed',
+    'sandbox.bwrapPath': 'managed',
+    'sandbox.socatPath': 'managed',
+    'sandbox.network.allowManagedDomainsOnly': 'managed',
+    'claudeMd': 'managed',
+    'allowManagedHooksOnly': 'managed',
+    'allowedChannelPlugins': 'managed',
+    'blockedMarketplaces': 'managed',
+    'channelsEnabled': 'managed',
+    'disableCommandPluginSources': 'managed',
+    'pluginSuggestionMarketplaces': 'managed',
+    'pluginTrustMessage': 'managed',
+    'strictKnownMarketplaces': 'managed',
+    'strictPluginOnlyCustomization': 'managed',
+    'strictPluginOnlyCustomization.skills': 'managed',
+    'strictPluginOnlyCustomization.agents': 'managed',
+    'strictPluginOnlyCustomization.hooks': 'managed',
+    'strictPluginOnlyCustomization.mcp': 'managed',
+    'allowAllClaudeAiMcps': 'managed',
+    'allowClaudeInChromeWithManagedMcp': 'managed',
+    'allowManagedMcpServersOnly': 'managed',
+    'managedMcpServers': 'managed',
+    'disableDesktopLocalSessions': 'managed',
+    'sshHostAllowlist': 'managed',
+    'allowedProviders': 'managed',
+    'gatewayInternalNetworks': 'managed',
+    'requiredMaximumVersion': 'managed',
+    'requiredMinimumVersion': 'managed',
+    'browserExternalPageTools': 'managed',
+    'disableBrowserExternalNavigation': 'managed',
+    'disableMobileSimulatorTools': 'managed',
+    'disableSideloadFlags': 'managed',
+    'forceRemoteSettingsRefresh': 'managed',
+    'managedSourcesBehavior': 'managed',
+    'parentSettingsBehavior': 'managed',
+    'policyHelper': 'managed',
+    'policyHelper.path': 'managed',
+    'policyHelper.timeoutMs': 'managed',
+    'policyHelper.refreshIntervalMs': 'managed',
+    'wslInheritsWindowsSettings': 'managed',
+    # global_config
+    'autoConnectIde': 'global_config',
+    'autoInstallIdeExtension': 'global_config',
+    'claudeInChromeDefaultEnabled': 'global_config',
+    'copyFullResponse': 'global_config',
+    'copyOnSelect': 'global_config',
+    'defaultToAgentsView': 'global_config',
+    'diffTool': 'global_config',
+    'externalEditorContext': 'global_config',
+    'leftArrowOpensAgents': 'global_config',
+    'permissionExplainerEnabled': 'global_config',
+    'prStatusFooterEnabled': 'global_config',
+    'teammateDefaultModel': 'global_config',
+    # user_local_managed
+    'useAutoModeDuringPlan': 'user_local_managed',
+    'skipDangerousModePermissionPrompt': 'user_local_managed',
+    'syncClaudeAiSkills': 'user_local_managed',
+    'syncClaudeAiPlugins': 'user_local_managed',
+    # user
+    'worktree.location': 'user',
+}
+# Settings layers that ignore a key of each scope class. A managed file is never judged: this check
+# is about what a repository (or a stray user file) can't set, and the managed layer is the admin's.
+SCOPE_IGNORED_IN = {
+    'user_or_managed': frozenset({'project', 'local'}),
+    'managed': frozenset({'user', 'project', 'local'}),
+    'global_config': frozenset({'user', 'project', 'local'}),
+    'user_local_managed': frozenset({'project'}),
+    'user': frozenset({'project', 'local'}),
+}
+# settings-reference.md "Variables Claude Code ignores in `env`" and env-vars.md (fetched 2026-10-24).
+# Reasons: project_local = dropped from project and local settings; every_file = dropped from every
+# settings file; telemetry_unless_off = dropped from project and local settings unless the value turns
+# telemetry off (`none` for the exporter selectors, an off value for three content variables; values
+# aren't collected, so only the name is judged); ignored_if_1 = CLAUDE_CODE_ENABLE_CFC=1 is ignored in
+# project and local settings (env-vars.md), other values apply.
+ENV_PROJECT_LOCAL = frozenset({
+    'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
+    'SystemRoot', 'ComSpec', 'ProgramData', 'LOCALAPPDATA', 'PATHEXT', 'PSModulePath',
+    'OTEL_LOG_RAW_API_BODIES', 'ENABLE_BETA_TRACING_DETAILED', 'BETA_TRACING_ENDPOINT',
+    'CLAUDE_CODE_ENABLE_TELEMETRY', 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA', 'ENABLE_ENHANCED_TELEMETRY_BETA',
+    'OTEL_LOG_ASSISTANT_RESPONSES', 'OTEL_EXPORTER_PROMETHEUS_HOST', 'OTEL_EXPORTER_PROMETHEUS_PORT',
+    'CLAUDE_CODE_PROCESS_WRAPPER', 'CLAUDE_CODE_SYNC_SKILLS', 'CLAUDE_CODE_SYNC_PLUGINS',
+    'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS',
+    'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS'})
+ENV_PROJECT_LOCAL_PREFIXES = ('XDG_', 'CLAUDE_AX_', 'ProgramFiles')  # the XDG_* family, CLAUDE_AX_*, the ProgramFiles family
+ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
+ENV_TELEMETRY_UNLESS_OFF = frozenset({'OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER',
+                                      'OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_TOOL_CONTENT', 'OTEL_LOG_TOOL_DETAILS'})
+ENV_EVERY_FILE = frozenset({
+    'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ACCOUNT_UUID', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN',
+    'CLAUDE_CODE_PROJECT_DIR_NAME', 'CLAUDE_CODE_RESTRICTED', 'CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY',
+    'CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT', 'CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT',
+    'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT', 'CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT',
+    'CLAUDE_CODE_WARN_DISK_FREE_GIB', 'CLAUDE_CODE_WARN_MEMORY_FREE_GIB'})
+
+
+def _env_reason(name, layer):
+    """Why a settings file of this layer ignores env var `name`, else None."""
+    if name in ENV_EVERY_FILE:
+        return 'every_file' if layer != 'managed' else None
+    if layer not in ('project', 'local'):
+        return None
+    if name in ENV_TELEMETRY_UNLESS_OFF:
+        return 'telemetry_unless_off'
+    if name == 'CLAUDE_CODE_ENABLE_CFC':
+        return 'ignored_if_1'
+    if name in ENV_PROJECT_LOCAL or name.startswith(ENV_PROJECT_LOCAL_PREFIXES) or ENV_OTLP.fullmatch(name):
+        return 'project_local'
+    return None
+
+
+def _present(data, path):
+    """True when the dotted key path holds a value other than null (null removes a key)."""
+    node = data
+    for part in path.split('.'):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return node is not None
+
+
+def scope_ignored(layer, data):
+    """(scope_ignored_keys, ignored_env_keys) for one settings file; see references/checklist.md HYG-scope-ignored.
+
+    `layer` is user, project, local or managed. Keys are matched at their documented (nested) path; a nested
+    key is left out when its parent is already reported. Names and table vocabulary only, never values.
+    """
+    if not isinstance(data, dict):
+        return [], []
+    keys = []
+    for key in sorted(SETTINGS_SCOPES):
+        klass = SETTINGS_SCOPES[key]
+        parent = key.rpartition('.')[0]
+        if layer in SCOPE_IGNORED_IN[klass] and _present(data, key) and not (
+                parent in SETTINGS_SCOPES and layer in SCOPE_IGNORED_IN[SETTINGS_SCOPES[parent]]
+                and _present(data, parent)):
+            keys.append({'key': key, 'scope': klass})
+    env = data.get('env')
+    names = sorted(n for n in env if isinstance(n, str)) if isinstance(env, dict) else []
+    return keys, [{'name': n, 'reason': r} for n in names for r in [_env_reason(n, layer)] if r]

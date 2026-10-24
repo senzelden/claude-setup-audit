@@ -3,6 +3,33 @@
   "title": "Setup Audit snapshot v1",
   "description": "Stable envelope and coverage/provenance contract. Family payloads allow additive fields; see snapshot-format.md.",
   "$defs": {
+    "settings_summary": {
+      "type": "object",
+      "properties": {
+        "scope_ignored_keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "scope"],
+            "properties": {
+              "key": {"type": "string"},
+              "scope": {"type": "string", "enum": ["user_or_managed", "managed", "global_config", "user_local_managed", "user"]}
+            }
+          }
+        },
+        "ignored_env_keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "reason"],
+            "properties": {
+              "name": {"type": "string"},
+              "reason": {"type": "string", "enum": ["project_local", "every_file", "telemetry_unless_off", "ignored_if_1"]}
+            }
+          }
+        }
+      }
+    },
     "config_layer": {"enum": ["managed", "user", "project", "local", "plugin"]},
     "mcp_server": {
       "type": "object",
@@ -443,7 +470,7 @@
         "settings": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/$defs/settings_summary"
           }
         }
       }
@@ -459,7 +486,7 @@
         "settings": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/$defs/settings_summary"
           }
         },
         "sources": {
