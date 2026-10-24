@@ -90,8 +90,8 @@ readiness, cost metrics and harness overhead.
     without a prompt. High severity when it is `true` in user or managed settings (`--settings`
     JSON counts too, but isn't collected); a project `true` is ignored, so report that as
     ineffective rather than as exposure. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` ignores every
-    `true`. For rootless Podman or
-    Buildah the docs point to `excludedCommands` instead (settings reference, fetched 2026-10-24).
+    `true`. For rootless Podman or Buildah the docs point to `excludedCommands` instead (settings
+    reference, fetched 2026-10-24).
   - filesystem write/read exceptions and the network allowlist: broad entries undermine the
     boundary the sandbox exists for; note when a permission `allow` rule grants something the
     sandbox would otherwise have blocked, since that rule is now the only remaining control

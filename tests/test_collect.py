@@ -402,6 +402,18 @@ class PruneMalformed(FakeHome):
         prune_permissions.apply_file(path, *plan, os.path.join(self.home, "backups"))
         with open(path) as f:
             self.assertEqual(json.load(f)["permissions"], {"allow": [{}, 7], "additionalDirectories": [3]})
+        # A wrongly typed allow beside a stale directory comes back unchanged, and no allow key appears.
+        for allow in ("Read", 5, None):
+            with self.subTest(allow=allow):
+                perms = {"additionalDirectories": ["/nonexistent/d"]}
+                if allow is not None:
+                    perms["allow"] = allow
+                path = self.write("settings.json", {"permissions": perms})
+                plan = prune_permissions.plan_file(path, {"stale-dirs"})
+                prune_permissions.apply_file(path, *plan, os.path.join(self.home, "backups"))
+                with open(path) as f:
+                    expected = {"additionalDirectories": []} if allow is None else {"allow": allow, "additionalDirectories": []}
+                    self.assertEqual(json.load(f)["permissions"], expected)
 
 
 class PruneBackups(FakeHome):

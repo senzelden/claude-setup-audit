@@ -108,7 +108,8 @@ def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=
         os.close(fd)
     raw = {r["_raw"] for r in removals}
     perms = data["permissions"]
-    perms["allow"] = [r for r in perms.get("allow", []) if not (isinstance(r, str) and r in raw)]
+    if raw:  # removals exist only when allow is a list; leave any other allow value as it is
+        perms["allow"] = [r for r in perms["allow"] if not (isinstance(r, str) and r in raw)]
     if dirs:
         perms["additionalDirectories"] = [d for d in perms["additionalDirectories"] if d not in dirs]
     text = json.dumps(data, indent=2) + "\n"
