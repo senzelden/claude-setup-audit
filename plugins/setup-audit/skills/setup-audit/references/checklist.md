@@ -369,7 +369,7 @@ metric that motivated it, so the next run can check whether it moved.
     `telemetry_unless_off` = the exporter selectors and `OTEL_LOG_USER_PROMPTS`/`_TOOL_CONTENT`/`_TOOL_DETAILS`:
     ignored in project and local settings unless the value turns telemetry off (`none`, `0`). Values
     aren't collected, so say "ignored unless it turns telemetry off", never that it was definitely
-    dropped; `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` set to `1` is ignored there (env-vars page,
+    dropped; `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` or `OTEL_LOG_MANAGED_SETTINGS` set to `1` is ignored there (env-vars page,
     fetched 2026-10-24), other values apply. Claude Code logs the dropped ones in `claude --debug`
     and lists them in `/status` or `claude doctor`; a `-p` run shows no notice.
   - Managed files are never flagged. A key missing from the table isn't judged. Unmeasured: whether

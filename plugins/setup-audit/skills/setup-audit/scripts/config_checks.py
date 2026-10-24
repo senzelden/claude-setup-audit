@@ -460,8 +460,8 @@ SCOPE_IGNORED_IN = {
 # Reasons: project_local = dropped from project and local settings; every_file = dropped from every
 # settings file; telemetry_unless_off = dropped from project and local settings unless the value turns
 # telemetry off (`none` for the exporter selectors, an off value for three content variables; values
-# aren't collected, so only the name is judged); ignored_if_1 = CLAUDE_CODE_ENABLE_CFC=1 is ignored in
-# project and local settings (env-vars.md), other values apply.
+# aren't collected, so only the name is judged); ignored_if_1 = CLAUDE_CODE_ENABLE_CFC=1 and OTEL_LOG_MANAGED_SETTINGS=1
+# (2.1.274+) are ignored in project and local settings (env-vars.md), other values apply.
 ENV_PROJECT_LOCAL = frozenset({
     'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
     'SystemRoot', 'ComSpec', 'ProgramData', 'LOCALAPPDATA', 'PATHEXT', 'PSModulePath',
@@ -472,7 +472,9 @@ ENV_PROJECT_LOCAL = frozenset({
     'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS',
     'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS'})
 ENV_PROJECT_LOCAL_PREFIXES = ('XDG_', 'CLAUDE_AX_', 'ProgramFiles')  # the XDG_* family, CLAUDE_AX_*, the ProgramFiles family
-ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
+ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)*(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
+# env-vars.md: a value in project or local settings doesn't turn these on (CFC: ignores `1`).
+ENV_IGNORED_IF_1 = frozenset({'CLAUDE_CODE_ENABLE_CFC', 'OTEL_LOG_MANAGED_SETTINGS'})
 ENV_TELEMETRY_UNLESS_OFF = frozenset({'OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER',
                                       'OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_TOOL_CONTENT', 'OTEL_LOG_TOOL_DETAILS'})
 ENV_EVERY_FILE = frozenset({
@@ -491,7 +493,7 @@ def _env_reason(name, layer):
         return None
     if name in ENV_TELEMETRY_UNLESS_OFF:
         return 'telemetry_unless_off'
-    if name == 'CLAUDE_CODE_ENABLE_CFC':
+    if name in ENV_IGNORED_IF_1:
         return 'ignored_if_1'
     if name in ENV_PROJECT_LOCAL or name.startswith(ENV_PROJECT_LOCAL_PREFIXES) or ENV_OTLP.fullmatch(name):
         return 'project_local'

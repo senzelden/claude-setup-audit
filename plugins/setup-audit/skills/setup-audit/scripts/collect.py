@@ -488,7 +488,9 @@ def _settings_layer(path):
     """user, project or local, from where a non-managed settings file lives (settings.md "Settings files")."""
     if os.path.basename(path) == "settings.local.json":
         return "local"
-    return "user" if os.path.dirname(os.path.abspath(path)) == CLAUDE else "project"
+    def norm(p):  # CLAUDE_CONFIG_DIR may be spelled with a trailing slash, `..` or a leading `~`
+        return os.path.normpath(os.path.abspath(HOME + p[1:] if p == "~" or p.startswith("~/") else p))
+    return "user" if norm(os.path.dirname(path)) == norm(CLAUDE) else "project"
 
 
 def summarize_settings(path, data=None, managed=False):

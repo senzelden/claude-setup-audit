@@ -112,6 +112,13 @@ class EnvNames(FakeHome):
     def test_otlp_pattern_needs_the_documented_suffix(self):
         self.assertEqual(env('project', ['OTEL_EXPORTER_OTLP_TIMEOUT', 'OTEL_SERVICE_NAME', 'MY_OTEL_EXPORTER_OTLP_ENDPOINT',
                                          'OTEL_EXPORTER_OTLP_ENDPOINT_X']), {})
+        for name in ('OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY',
+                     'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE'):
+            self.assertEqual(env('project', [name]), {name: 'project_local'})
+
+    def test_managed_settings_log_toggle_is_ignored_if_1(self):
+        self.assertEqual(env('local', ['OTEL_LOG_MANAGED_SETTINGS']), {'OTEL_LOG_MANAGED_SETTINGS': 'ignored_if_1'})
+        self.assertEqual(env('user', ['OTEL_LOG_MANAGED_SETTINGS']), {})
 
     def test_cfc_is_ignored_only_as_one_so_it_is_its_own_reason(self):
         self.assertEqual(env('project', ['CLAUDE_CODE_ENABLE_CFC']), {'CLAUDE_CODE_ENABLE_CFC': 'ignored_if_1'})
@@ -127,6 +134,12 @@ class SummaryAndSnapshot(PatchedHome):
         return collect.summarize_settings(self.write(rel, self.body))
 
     body = {'axScreenReader': True, 'model': 'x', 'env': {'HOME': '/x', 'FOO': 'zcvalue'}}
+
+    def test_user_layer_survives_an_unnormalized_config_dir(self):
+        for spelled in (self.claude + '/', self.claude + '/../.claude'):
+            collect.CLAUDE = spelled
+            with self.subTest(config_dir=spelled):
+                self.assertNotIn('scope_ignored_keys', self.summary('.claude/settings.json'))
 
     def test_layer_comes_from_the_file_location(self):
         self.assertEqual([k['key'] for k in self.summary('repo/.claude/settings.json')['scope_ignored_keys']],
