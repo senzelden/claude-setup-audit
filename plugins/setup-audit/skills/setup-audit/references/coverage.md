@@ -96,6 +96,13 @@ plugin names, relative script paths and pattern ids.
 `config_conflicts` is coverage source `config_conflicts` (`collected`, or `partial` when the caps
 omitted entries; `basis: static`). It reads settings text only.
 
+- Scope-ignored settings (`settings[].scope_ignored_keys`, `ignored_env_keys`, `basis: static`): the
+  table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`" list
+  (plus env-vars `CLAUDE_CODE_ENABLE_CFC`), fetched 2026-10-24; it must be refreshed when the docs
+  change and judges only the file's own location. Not seen: `--settings` files, the launch environment,
+  `~/.claude.json` contents, env values (so the telemetry group and `CLAUDE_CODE_ENABLE_CFC` are
+  conditional), and a managed file never being flagged even where the key would be ignored.
+  Metadata-only keeps the key names, scope classes, env names and reasons (fixed vocabulary).
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the
   highest-precedence file in the stack (managed > local > project > user).

@@ -57,6 +57,14 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     (`permissions`, `permissions.allow`, `hooks`, `env`, ...); a managed file with any is `partial`
     with reason `invalid_entries`;
   - `permissions.rule_shape_issues`;
+  - `scope_ignored_keys` (non-managed files, when non-empty): `{key, scope}` for each setting the file's
+    layer (user, project or local, from the file location) cannot set, matched at the nested path;
+    `scope` is `user_or_managed`, `managed`, `global_config`, `user_local_managed` or `user`. Table:
+    settings reference, fetched 2026-10-24. Static, names only; `null` values and keys absent from
+    the table are not reported;
+  - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude Code
+    ignores there; `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
+    (env values are never collected, so the last two are conditional). Managed files get neither field;
   - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only), `background`
     (a command hook with `async` or `asyncRewake`),
     `issues`/`unknown_fields`/`plugin_relative` when present.
