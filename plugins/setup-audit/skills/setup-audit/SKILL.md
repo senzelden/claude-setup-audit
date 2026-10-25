@@ -284,6 +284,7 @@ Claude Code <version> · profile: focus=… depth=… scope=… mode=… · <N> 
 **Evidence:** … (measured|estimated)
 **Why it matters:** …
 **Fix:** before/after or command (metadata-only: the change's shape only)
+**Cache effect:** one line from `references/cache-effects.md` (`keeps`, `invalidates_next_request`, bare-name deny with the tool-search label, `applies_next_session`, or `unknown`); omit only for findings that change nothing
 **Docs:** <url>
 
 ## Parked
@@ -292,6 +293,10 @@ Claude Code <version> · profile: focus=… depth=… scope=… mode=… · <N> 
 ## New Claude Code features worth trying   (only ones tied to evidence)
 ## Not checked / caveats
 ```
+
+Every proposal that changes configuration states its cache effect in its Details entry, taken from
+`references/cache-effects.md`; say `unknown` where the table does. This is information only: it
+never changes severity, ordering or whether a change is offered.
 
 Cap the Proposals table at about 15 rows and put the rest under a short "Minor" list.
 
@@ -341,6 +346,13 @@ execute, follow the blocked-action guidance in Step 1 rather than manually editi
 For sandbox settings, require a successful `apply_ops.py` dry run before its apply call; if either
 cannot execute, or the helper refuses an op, follow the blocked-action guidance in Step 1 rather
 than manually editing `sandbox` keys.
+
+Cache effects are inform-only. `apply_ops.py` and `prune_permissions.py` print a `cache_effect` per
+op or removal (pass `--snapshot` so bare-name deny changes can say whether tool search was
+observed); show it next to the before/after, then apply the approved change regardless. Never hold,
+refuse, delay or reorder a change because it invalidates the cache, and do not ask the user to wait
+for an idle gap or a new session; a `cache_estimate` (labelled estimate) may accompany it.
+Table, effects and estimate: `references/cache-effects.md`.
 
 1. **Back up first**: copy every file to `~/.claude/backups/setup-audit-<timestamp>/`, keeping
    its path recognisable, before any edit or before handing work to a sub-agent.

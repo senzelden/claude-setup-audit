@@ -22,6 +22,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cache_effects  # noqa: E402  (cache effect per op: inform only, never gates)
 import collect  # noqa: E402  (HOME, CLAUDE, managed_directory, sanitize)
 import ledger  # noqa: E402  (fingerprint: one canonical-JSON hash across helpers)
 import report_state  # noqa: E402  (load_json: rejects duplicate keys and non-finite numbers)
@@ -487,9 +488,10 @@ def apply_target(p, expect_file, backup_dir):
 OK_STATUSES = ('planned', 'unchanged', 'applied')
 
 
-def _public(p):
+def _public(p, tool_search=None):
     row = {k: v for k, v in p.items() if not k.startswith('_')}
-    row['ops'] = [dict(r, before=collect.sanitize(r['before']), after=collect.sanitize(r['after']))
+    row['ops'] = [dict(r, before=collect.sanitize(r['before']), after=collect.sanitize(r['after']),
+                       cache_effect=cache_effects.effect_for('setting', r['path'], tool_search))
                   for r in p['ops']]
     return row
 
@@ -507,7 +509,7 @@ def _prepare_backup_dir(backup_dir):
     return path
 
 
-def run(raw, apply=False, backup_dir=None):
+def run(raw, apply=False, backup_dir=None, snapshot=None):
     result = {'applied': apply, 'ok': False, 'docs_fetched': DOCS_FETCHED, 'targets': [], 'error': None}
     try:
         targets = load_ops(raw)
@@ -543,7 +545,14 @@ def run(raw, apply=False, backup_dir=None):
                 for p, t in zip(plans, targets):
                     if p['status'] == 'planned':
                         apply_target(p, t['expect_file'], directory)
-    result['targets'] = [_public(p) for p in plans]
+    tool_search, context = cache_effects.load_signals(snapshot)
+    result['targets'] = [_public(p, tool_search) for p in plans]
+    result['cache_effects_note'] = (cache_effects.INFORM_ONLY + ' Docs fetched '
+                                    + cache_effects.DOCS_FETCHED + '.')
+    estimate = cache_effects.estimate_reread(context) if context is not None else None
+    if estimate and any(cache_effects.needs_estimate(r['cache_effect'])
+                        for t in result['targets'] for r in t['ops']):
+        result['cache_estimate'] = estimate
     result['ok'] = result['error'] is None and all(p['status'] in OK_STATUSES for p in plans)
     return result
 
@@ -553,6 +562,8 @@ def main(argv=None):
     ap.add_argument('--ops', required=True, help='ops file (JSON, see references/apply-ops.md)')
     ap.add_argument('--apply', action='store_true', help='write the planned changes (default: dry run)')
     ap.add_argument('--backup-dir', help='directory for private backups (required with --apply)')
+    ap.add_argument('--snapshot', help='collect.py snapshot: supplies tool-search state and context size '
+                                       'for the cache-effect labels and estimate (optional)')
     ap.add_argument('--claude-dir', help='Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)')
     a = ap.parse_args(argv)
     if a.apply and not a.backup_dir:
@@ -565,7 +576,7 @@ def main(argv=None):
             raw = stream.read(MAX_OPS_BYTES + 1)
     except (OSError, safe_write.SymlinkRefused):
         raw = None
-    result = run(raw, a.apply, a.backup_dir)
+    result = run(raw, a.apply, a.backup_dir, a.snapshot)
     print(json.dumps(result, indent=1, ensure_ascii=False))
     return 0 if result['ok'] else 1
 

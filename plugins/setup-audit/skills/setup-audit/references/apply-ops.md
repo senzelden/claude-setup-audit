@@ -10,6 +10,14 @@ item 7 requires it for every sandbox change; do not substitute Write/Edit.
 python3 ${CLAUDE_SKILL_DIR}/scripts/apply_ops.py --ops <file> [--apply --backup-dir DIR] [--claude-dir DIR]
 ```
 
+## Cache effect
+
+Every op row in the plan and apply output carries `cache_effect` (`effect`, `label`, `source`,
+`note`), from the table in `references/cache-effects.md`; the result carries `cache_effects_note`
+and, with `--snapshot` and a possibly invalidating effect, a labelled `cache_estimate`. Sandbox keys
+are `unknown`: settings reload mid-session, but the prompt-caching page does not say what they do to
+the cache. Information only: no status, ordering or refusal depends on it.
+
 ## Sources
 
 Keys, types and scopes: fetched 2026-09-29 (raw pages, `curl -sL <url>`):

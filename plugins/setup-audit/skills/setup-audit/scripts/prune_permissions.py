@@ -37,6 +37,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cache_effects  # noqa: E402  (cache effect per removal: inform only, never gates)
 import collect  # noqa: E402  (shares the risk classification with the collector)
 from safe_write import (  # noqa: E402  (re-exported: tests and callers use these names here)
     ChangedSincePlan, SymlinkRefused, atomic_write, backup_from_fd, identity_of, open_no_symlink)
@@ -140,6 +141,9 @@ def main():
         ap.error("--apply requires --backup-dir")
 
     plan, total, skipped = [], 0, []
+    tool_search, context = cache_effects.load_signals(a.snapshot)
+    rule_effect = cache_effects.effect_for("rule-allow", "", tool_search)
+    dir_effect = cache_effects.effect_for("setting", "permissions.additionalDirectories", tool_search)
     for path in a.files or settings_files(a.snapshot):
         try:
             data, removals, dirs, identity = plan_file(path, remove, a.allow_symlinks)
@@ -150,8 +154,11 @@ def main():
             continue
         total += len(removals)
         plan.append({"file": path.replace(collect.HOME, "~"),
-                     "remove_rules": [{k: v for k, v in r.items() if k != "_raw"} for r in removals],
+                     "remove_rules": [{**{k: v for k, v in r.items() if k != "_raw"}, "cache_effect": rule_effect}
+                                      for r in removals],
                      "remove_dirs": dirs})
+        if dirs:
+            plan[-1]["remove_dirs_cache_effect"] = dir_effect
         if a.apply:
             try:
                 backup = apply_file(path, data, removals, dirs, identity,
@@ -160,7 +167,12 @@ def main():
                 plan[-1]["apply_error"] = type(e).__name__
                 continue
             plan[-1]["backup"] = backup.replace(collect.HOME, "~")
-    print(json.dumps({"applied": a.apply, "rules": total, "files": plan, "skipped": skipped}, indent=1))
+    out = {"applied": a.apply, "rules": total, "files": plan, "skipped": skipped,
+           "cache_effects_note": cache_effects.INFORM_ONLY + " Docs fetched " + cache_effects.DOCS_FETCHED + "."}
+    estimate = cache_effects.estimate_reread(context) if context is not None else None
+    if estimate and any(cache_effects.needs_estimate(e) for e in (rule_effect, dir_effect)):
+        out["cache_estimate"] = estimate
+    print(json.dumps(out, indent=1))
 
 
 if __name__ == "__main__":

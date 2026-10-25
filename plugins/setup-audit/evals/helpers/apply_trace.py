@@ -75,7 +75,8 @@ def successful_result(block, kind, workspace):
         entry = result['files'][0]
         if (path_at(entry.get('file'), workspace) != str(workspace / 'claude-config/settings.json')
                 or entry.get('remove_dirs') != [] or 'apply_error' in entry
-                or entry.get('remove_rules') != [
+                or [{k: v for k, v in r.items() if k != 'cache_effect'}  # additive, inform-only field
+                    for r in entry.get('remove_rules') or [] if isinstance(r, dict)] != [
                     {'rule': 'Bash(curl:*)', 'reasons': ['network-wildcard']}]):
             return False
         if kind == 'apply':
