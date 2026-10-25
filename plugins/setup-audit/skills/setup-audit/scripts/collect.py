@@ -658,6 +658,8 @@ def collect_managed_settings():
 HASH_PATHS_LIMITATION = (
     "Hashed paths: project roots, config file paths, transcript keys and file names are salted hash tags "
     "(h:<12 hex>); tags join within this snapshot only, and across snapshots only with the same salt file. "
+    "Equal strings get equal tags, so a relative file name has the same tag in every repo. Full-mode free text "
+    "(hook commands, excerpts) only has known home and project directories replaced; what follows a tag stays. "
     "Tools that open a path or compare projects between audits need a snapshot with real paths.")
 METADATA_ONLY_LIMITATION = (
     "Metadata-only mode: free text (prompts, corrections, friction details, memory and skill descriptions, "
@@ -902,7 +904,9 @@ def collect_memory():
     for i, (p1, f1, w1) in enumerate(items):
         for p2, f2, w2 in items[i + 1:]:
             if p1 != p2 and w1 and w2 and len(w1 & w2) / len(w1 | w2) >= 0.3:
-                similar.append({"a": f"{p1}/{f1}", "b": f"{p2}/{f2}", "shared": sorted(w1 & w2)[:6]})
+                shared = sorted(w1 & w2)[:6]
+                similar.append({"a": f"{p1}/{f1}", "b": f"{p2}/{f2}", "shared": shared, "shared_count": len(shared),
+                                "a_project": p1, "a_file": f1, "b_project": p2, "b_file": f2})
     return {"by_project": mem, "similar_across_projects": similar[:25]}
 
 

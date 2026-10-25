@@ -283,7 +283,11 @@ collection join, and records `hashed_paths`, `hashed_path_families` and `hash_sa
 limitation. The salt file must already exist, hold at least 16 bytes after trimming whitespace, and is
 never created by the collector. This hides usernames, project names and file names that live in paths;
 it does not hide names the collector keeps by design (plugin, skill, agent and MCP server names) and
-does not mask full-mode free text beyond replacing known home and project directories inside it.
+does not mask full-mode free text beyond replacing known home and project directories inside it (what
+follows a tag stays, e.g. `h:<12 hex>/run.sh` in a hook command; the count is `free_text_scrubbed`).
+Equal strings get equal tags, so a relative file name is the same tag in every repo. Path-like kept
+strings that no family names are hashed too and counted as `other_paths`; hook script names under
+`projects/*/hooks` are names and stay.
 What degrades: the report cannot name a project or file (cite the tag), and tags cannot be opened,
 compared with another audit's tags (unless the same salt file is reused) or fed to
 `prune_permissions.py --snapshot` or a project-scoped ledger entry.

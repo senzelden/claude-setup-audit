@@ -25,13 +25,17 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   hashed values and keys) and `hash_salt` (`per_run` or `file`) when collected with `--hash-paths`
   (works with or without `--metadata-only`); the keys are absent otherwise. The salt is never stored.
   Path-like kept strings become `h:<12 hex>`, the first 48 bits of HMAC-SHA256(salt, normalized value);
-  `~/x` and `<home>/x` hash equal, so the same path gets the same tag everywhere in one snapshot and
+  `~/x` and `<home>/x` hash equal, so the same string gets the same tag everywhere in one snapshot (a
+  relative value such as `src/app.py` hashes equal in every repo that has it) and
   joins (`projects` and `readiness` keys, `coverage.projects_collected`, session and correction
   project fields, a root's transcript key and `memory.by_project`) keep working. Whole values are
   hashed: no basename, extension or depth survives, and the tags of a project root and of files under
   it are unrelated. Any other occurrence of the home directory, the config directory, a collected
-  project root or their dash-encoded forms inside a remaining string (full-mode free text such as hook
-  commands) is replaced by the same tags. Fixed vocabulary (event names, model ids, setting keys,
+  project root or their dash-encoded forms (mapped to the root's own tag) inside a remaining string
+  (full-mode free text such as hook commands) is replaced by the same tags, at a path boundary only
+  (`/h/u/code/app2` is not treated as inside `/h/u/code/app`); what follows a tag is kept, so a hook
+  command reads `bash h:<12 hex>/run.sh`. Hook script names under `projects/*/hooks` are names, not
+  paths, and stay. Fixed vocabulary (event names, model ids, setting keys,
   scopes, enums) and plugin, skill, agent and MCP server names are never hashed. Families
   (`privacy.PATH_FAMILIES` holds the patterns):
 
@@ -41,7 +45,15 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
   | `config_files` | settings, instruction, managed and MCP config file paths, previous audit file names, the drift log path and the /insights report path |
   | `plugin_paths` | plugin install roots and plugin component files |
-  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, SDK call-site file names, MCP executables |
+  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`), MCP executables |
+  | `other_paths` | fail-closed counter: path-like kept strings and dict keys (whitespace-free, not a URL or `name/N` basis string) that no family above names, hashed after the families so a new field is hashed, not leaked |
+  | `free_text_scrubbed` | counter: strings and dict keys in which a known home, config or project directory was replaced by its tag (full-mode free text such as hook commands) |
+
+  `memory.similar_across_projects` pairs carry `a_project`, `a_file`, `b_project`, `b_file` and
+  `shared_count` (additive; `a` and `b` stay `<project key>/<file>`). Hashed, `a_project`/`b_project`
+  take the tag of that project's root (as in `memory.by_project`), `a_file`/`b_file` the tag of the
+  whole file name, `a`/`b` one tag of the whole string, and `shared` (name-derived words) is emptied
+  while `shared_count` keeps how many there were.
 
   Consumers: tags join within one snapshot. Across audits they match only with the same
   `--hash-salt-file` (the compare-between-audits check needs equal `projects_collected`, so a

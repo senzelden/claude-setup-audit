@@ -444,8 +444,11 @@ PATH_FAMILIES = {
                   ('config_conflicts', 'permission_overlaps', '*', 'stack')),
         'keys': (('projects',), ('readiness',))},
     'transcript_keys': {
-        'doc': 'transcript directory keys (dash-encoded project paths): memory and per-project transcript maps',
-        'leaves': (('transcripts', 'context_baseline_by_project_median', '*', '*'),),
+        'doc': 'transcript directory keys (dash-encoded project paths): memory and per-project transcript maps, '
+               'the project of each memory.similar_across_projects pair (same tag as that project root)',
+        'leaves': (('transcripts', 'context_baseline_by_project_median', '*', '*'),
+                   ('memory', 'similar_across_projects', '*', 'a_project'),
+                   ('memory', 'similar_across_projects', '*', 'b_project')),
         'keys': (('memory', 'by_project'), ('transcripts', 'env_error_hits_by_project'),
                  ('transcripts', 'test_run_seconds_by_project'))},
     'config_files': {
@@ -463,10 +466,31 @@ PATH_FAMILIES = {
                    *(p + ('missing_hook_scripts', '*') for p in _SETTINGS),
                    *(p + ('permissions', k, '*') for p in _SETTINGS for k in ('additional_dirs', 'missing_additional_dirs')),
                    ('memory', 'by_project', '*', 'entries', '*', 'file'),
+                   ('readiness', '*', 'env', 'undeclared', '*', 'files', '*'),
+                   ('memory', 'similar_across_projects', '*', 'a'), ('memory', 'similar_across_projects', '*', 'b'),
+                   ('memory', 'similar_across_projects', '*', 'a_file'),
+                   ('memory', 'similar_across_projects', '*', 'b_file'),
                    ('readiness', '*', 'app_caching', 'uncached_files', '*'),
                    ('readiness', '*', 'app_caching', 'possible_cache_breakers', '*', '*')),
         'maybe': (('extensions', 'mcp_servers', '*', 'executable'),)},
 }
+
+# Counters that are not path patterns (recorded beside the families in hashed_path_families).
+EXTRA_COUNTERS = {
+    'other_paths': 'path-like kept strings and dict keys that no family names, hashed after the families so a '
+                   'new field fails closed; URLs, `name/N` basis strings and whitespace-containing prose are exempt',
+    'free_text_scrubbed': 'strings and dict keys in which a known home, config or project directory (or its '
+                          'dash-encoded form) was replaced by its tag',
+}
+BASIS_RE = re.compile(r'[A-Za-z_]+/\d+\Z')
+FIXED_SLASH_VOCAB = frozenset()  # exact kept strings with a slash that are vocabulary, not paths
+
+
+def stray_path(value):
+    """A kept, whitespace-free, path-like string that is not a tag, URL or basis string."""
+    return (path_like(value) and not TAG_RE.match(value) and not MARKER_RE.match(value) and '://' not in value
+            and not BASIS_RE.match(value) and not any(c.isspace() for c in value)
+            and value not in FIXED_SLASH_VOCAB)
 
 
 def _transcript_key(root):
@@ -485,18 +509,22 @@ def path_needles(home, extra_dirs, roots):
     return sorted(n for n in found if len(n) >= 4 and n.strip('/-') != '')
 
 
-def scrub_known_paths(snap, hasher, needles):
+def scrub_known_paths(snap, hasher, needles, dirs=()):
     """Replace every occurrence of a known home or project directory in any string leaf or dict key."""
     needles = sorted((n for n in needles if len(n) >= 4 and n.strip('/-') != ''), key=len, reverse=True)
     if not needles:
         return 0
-    rx = re.compile('|'.join(re.escape(n) for n in needles))
+    # A path needle ends at a path boundary, so `/h/u/code/app2` is not tagged as inside `/h/u/code/app`;
+    # dash-encoded needles stay unbounded (their continuation is also dash-separated: fail closed).
+    alts = [re.escape(n) + ('' if '/' not in n and '-' in n else r'''(?=[/\s"'`:;),\]}]|\Z)''') for n in needles]
+    rx = re.compile('|'.join(alts))
     count = [0]
+    encoded = {_transcript_key(d): d for d in dirs}
 
     def sub(text):
         if TAG_RE.match(text) or MARKER_RE.match(text):
             return text
-        new = rx.sub(lambda m: hasher(m.group(0)), text)
+        new = rx.sub(lambda m: hasher(encoded.get(m.group(0), m.group(0))), text)
         count[0] += new != text
         return new
 
@@ -518,7 +546,14 @@ def hash_paths(snap, hasher, roots, extra_dirs=()):
     """Hash the path families in place, then scrub known directories out of everything else.
 
     Returns {family: count of hashed values and keys, ...} for every family (zero included)."""
-    counts = Counter({f: 0 for f in PATH_FAMILIES})
+    counts = Counter({f: 0 for f in (*PATH_FAMILIES, *EXTRA_COUNTERS)})
+    cs = snap.get('collection_scope')
+    if isinstance(cs, dict) and isinstance(cs.get('project'), str) and cs.get('requested') == 'project' and roots:
+        cs['project'] = roots[0]  # the resolved root, so it joins with the `projects` keys
+    for pair in (snap.get('memory') or {}).get('similar_across_projects', ()):
+        if isinstance(pair, dict) and 'shared' in pair:  # name-derived words: keep only how many
+            pair['shared_count'] = len(pair['shared'])
+            pair['shared'] = []
     rows = [(f, pat, maybe) for f, spec in PATH_FAMILIES.items()
             for maybe, pats in ((False, spec.get('leaves', ())), (True, spec.get('maybe', ())))
             for pat in pats]
@@ -529,7 +564,7 @@ def hash_paths(snap, hasher, roots, extra_dirs=()):
         for family, pat, maybe in rows:
             if path_matches(path, pat) and not MARKER_RE.match(v) and (not maybe or path_like(v)):
                 counts[family] += 1
-                return hasher(v)
+                return hasher(encoded.get(v, v) if family == 'transcript_keys' else v)
         return v
 
     def walk(o, path):
@@ -551,5 +586,36 @@ def hash_paths(snap, hasher, roots, extra_dirs=()):
 
     for key in list(snap):
         snap[key] = walk(snap[key], (key,))
-    scrub_known_paths(snap, hasher, path_needles(hasher.home, extra_dirs, roots))
+    dirs = [d for d in (hasher.home, *extra_dirs, *roots) if d and isinstance(d, str)]
+    counts['free_text_scrubbed'] = scrub_known_paths(snap, hasher, path_needles(hasher.home, extra_dirs, roots), dirs)
+    counts['other_paths'] = _hash_strays(snap, hasher)
     return dict(counts)
+
+
+def _hash_strays(snap, hasher):
+    """Fail closed: hash path-like kept strings (and any path-like dict key) that no family claimed."""
+    n = [0]
+
+    def walk(o, path):
+        if isinstance(o, str):
+            if is_kept(path) and stray_path(o):
+                n[0] += 1
+                return hasher(o)
+            return o
+        if isinstance(o, (list, tuple)):
+            return [walk(v, path + (i,)) for i, v in enumerate(o)]
+        if not isinstance(o, dict):
+            return o
+        out = {}
+        for k, v in o.items():
+            if isinstance(k, str) and stray_path(k):
+                n[0] += 1
+                new_k = hasher(k)
+            else:
+                new_k = k
+            out[new_k] = walk(v, path + (k,))
+        return out
+
+    for key in list(snap):
+        snap[key] = walk(snap[key], (key,))
+    return n[0]

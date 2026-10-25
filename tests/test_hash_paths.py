@@ -9,6 +9,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+import test_privacy
 from test_privacy import PatchedHome, args  # also puts the plugin scripts directory on sys.path
 import collect
 import ledger
@@ -18,7 +19,8 @@ import snapshot_contract
 
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
 USER, PROJ = 'zcuserhome', 'zcprojalpha'
-CANARIES = (USER, PROJ, 'zcmemfile', 'zcauditname', 'zcsdkfile', 'zcpluginroot', 'zcmissingdir')
+CANARIES = (USER, PROJ, 'zcmemfile', 'zcauditname', 'zcsdkfile', 'zcpluginroot', 'zcmissingdir', 'zcenvmodule',
+            'zcotherproj')
 
 
 class CanaryHome(PatchedHome):
@@ -73,6 +75,13 @@ class CanaryHome(PatchedHome):
         self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'hooks.json'), self.home), {'hooks': {
             'PostToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'echo hi'}]}]}})
         self.write(f'code/{PROJ}/.mcp.json', {'mcpServers': {'srv': {'command': 'npx'}}})
+        self.write(f'code/{PROJ}/src/zcenvmodule.py', 'import os\nX = os.environ["ZC_NEEDED"]\n')
+        other = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
+        self.write(f'.claude/projects/{other}/memory/zcmemfile.md', '---\ndescription: d\n---\n')
+        for i in range(3):  # three assistant turns with usage give a per-project context baseline
+            self.write(f'.claude/projects/{self.key}/b{i}.jsonl', json.dumps({
+                'type': 'assistant', 'sessionId': f'b{i}', 'timestamp': stamp,
+                'message': {'content': [], 'usage': {'input_tokens': 10 + i}}}))
 
     def snap(self, **kw):
         return collect.build_snapshot(args(roots=[self.root], **kw))
@@ -124,7 +133,7 @@ class Joins(CanaryHome):
         self.assertEqual(snap['corrections']['samples'][0]['project'], tag)
         self.assertEqual(snap['corrections']['by_project'][0][0], tag)
         self.assertEqual(snap['usage']['sessions_per_project'][0][0], tag)
-        self.assertEqual(set(snap['memory']['by_project']), {tag})  # transcript key of the root maps to its tag
+        self.assertIn(tag, snap['memory']['by_project'])  # transcript key of the root maps to its tag
         self.assertEqual(set(snap['transcripts']['env_error_hits_by_project']), {tag})
         self.assertEqual(set(snap['transcripts']['test_run_seconds_by_project']), {tag})
 
@@ -158,6 +167,146 @@ class Joins(CanaryHome):
         self.assertNotEqual(list(a['projects']), list(b['projects']))
 
 
+class Review(CanaryHome):
+    """Findings of the 0.11.0 M4 review: joins that leaked or broke, and the fail-closed sweep."""
+
+    def pair(self, snap):
+        (pair,) = snap['memory']['similar_across_projects']
+        return pair
+
+    def test_unhashed_similar_pairs_keep_their_shape_and_add_parts(self):
+        pair = self.pair(self.snap())
+        other = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
+        self.assertEqual({pair['a'], pair['b']}, {f'{self.key}/zcmemfile.md', f'{other}/zcmemfile.md'})
+        self.assertEqual((pair['shared'], pair['shared_count']), (['zcmemfile'], 1))
+        self.assertEqual({pair['a_file'], pair['b_file']}, {'zcmemfile.md'})
+
+    def test_similar_pairs_share_tags_with_projects_and_memory_files(self):
+        for mode in ({}, {'metadata_only': True}):
+            with self.subTest(mode=mode):
+                snap = self.hashed(**mode)
+                pair = self.pair(snap)
+                (root_tag,) = snap['projects']
+                (entry,) = snap['memory']['by_project'][root_tag]['entries']
+                self.assertIn(root_tag, (pair['a_project'], pair['b_project']))
+                self.assertEqual({pair['a_file'], pair['b_file']}, {entry['file']})
+                self.assertEqual(pair['shared'], [])
+                self.assertEqual(pair['shared_count'], 1)
+                for k in ('a', 'b', 'a_project', 'b_project', 'a_file', 'b_file'):
+                    self.assertRegex(pair[k], TAG_RE)
+                self.assertNotIn('zcmemfile', json.dumps(snap['memory']['similar_across_projects']))
+
+    def test_env_undeclared_files_are_hashed(self):
+        for mode in ({}, {'metadata_only': True}):
+            with self.subTest(mode=mode):
+                snap = self.hashed(**mode)
+                (readiness,) = snap['readiness'].values()
+                files = [f for u in readiness['env']['undeclared'] for f in u['files']]
+                self.assertTrue(files)
+                self.assertEqual([f for f in files if not TAG_RE.match(f)], [])
+                self.assertGreater(snap['coverage']['privacy']['hashed_path_families']['referenced_files'], 0)
+
+    def test_context_baseline_project_gets_the_root_tag(self):
+        for mode in ({}, {'metadata_only': True}):
+            with self.subTest(mode=mode):
+                snap = self.hashed(**mode)
+                (root_tag,) = snap['projects']
+                rows = snap['transcripts']['context_baseline_by_project_median']
+                self.assertEqual([r[0] for r in rows], [root_tag])
+
+    def test_collection_scope_project_joins_with_projects(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.home)  # a relative --project: its own hash would not equal the resolved root's
+        snap = collect.build_snapshot(args(scope='project', project=f'code/{PROJ}', hash_paths=True,
+                                           hash_salt_file=self.salt_file))
+        self.assertEqual([snap['collection_scope']['project']], list(snap['projects']))
+
+    def test_scrub_counts_are_recorded(self):
+        fams = self.hashed()['coverage']['privacy']['hashed_path_families']
+        self.assertGreater(fams['free_text_scrubbed'], 0)  # the hook command carries the project root
+        self.assertEqual(fams['other_paths'], 0)
+
+    def test_scrub_respects_path_boundaries(self):
+        h = privacy.PathHasher(b'k' * 16, '/h/u')
+        snap = {'x': 'run /h/u/code/app2/x then /h/u/code/app/y; "/h/u/code/app"'}
+        privacy.scrub_known_paths(snap, h, privacy.path_needles('/h/u', [], ['/h/u/code/app']),
+                                  ['/h/u', '/h/u/code/app'])
+        app, home = h('/h/u/code/app'), h('/h/u')
+        self.assertEqual(snap['x'], f'run {home}/code/app2/x then {app}/y; "{app}"')
+
+    def test_scrub_maps_dash_encoded_roots_to_the_root_tag(self):
+        h = privacy.PathHasher(b'k' * 16, '/h/u')
+        snap = {'m': {'x': 'dir -h-u-code-app/memory', '-h-u-code-app': 1}}
+        privacy.scrub_known_paths(snap, h, privacy.path_needles('/h/u', [], ['/h/u/code/app']),
+                                  ['/h/u', '/h/u/code/app'])
+        self.assertEqual(snap, {'m': {'x': f"dir {h('/h/u/code/app')}/memory", h('/h/u/code/app'): 1}})
+
+    def test_unclaimed_path_like_kept_strings_and_keys_are_hashed(self):
+        h = privacy.PathHasher(b'k' * 16, '/h/u')
+        snap = {'collection_scope': {'new_field': 'a/b/c', 'url': 'https://x.example/p', 'basis': 'collected_chars/4',
+                                     'prose': 'one/two words', 'word': 'plain', 'nested': {'rel/key': ['d\\e']}}}
+        counts = privacy.hash_paths(snap, h, [])
+        scope = snap['collection_scope']
+        self.assertEqual(scope['new_field'], h('a/b/c'))
+        self.assertEqual((scope['url'], scope['basis'], scope['prose'], scope['word']),
+                         ('https://x.example/p', 'collected_chars/4', 'one/two words', 'plain'))
+        self.assertEqual(scope['nested'], {h('rel/key'): [h('d\\e')]})
+        self.assertEqual(counts['other_paths'], 3)
+
+
+class FailClosed(PatchedHome):
+    """Every path-like string in a hashed snapshot is a tag or a documented exception."""
+
+    def plant(self):
+        test_privacy.EndToEnd.plant(self)
+        stamp = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        self.write('code/app/src/zcenv.py', 'import os\nX = os.environ["ZC_NEEDED"]\n')
+        self.write('.claude/projects/-code-zcotherproj/memory/note.md', '---\ndescription: d\n---\n')
+        for i in range(3):
+            self.write(f'.claude/projects/-code-app/b{i}.jsonl', json.dumps({
+                'type': 'assistant', 'sessionId': f'b{i}', 'timestamp': stamp,
+                'message': {'content': [], 'usage': {'input_tokens': 10 + i}}}))
+
+    @staticmethod
+    def documented_exception(path, value, full_mode):
+        if '://' in value or privacy.BASIS_RE.match(value):  # URL origins and targets, `collected_chars/4`
+            return True
+        if any(c.isspace() for c in value) and (path[-1] == 'mcp_configured_but_unused_note'
+                                                or (len(path) > 2 and path[1] == 'limitations')
+                                                or path[0] == 'coverage' and path[1] == 'limitations'):
+            return True  # fixed explanatory sentences
+        return full_mode and ('hook_commands' in path or path[-1] == 'target')  # documented free text
+
+    def strays(self, snap, full_mode):
+        found = []
+
+        def walk(o, path):
+            if isinstance(o, str):
+                if privacy.path_like(o) and not TAG_RE.match(o) and not self.documented_exception(path, o, full_mode):
+                    found.append(('value', path, o))
+            elif isinstance(o, dict):
+                for k, v in o.items():
+                    if privacy.path_like(k) and not TAG_RE.match(k):
+                        found.append(('key', path, k))
+                    walk(v, path + (k,))
+            elif isinstance(o, list):
+                for i, v in enumerate(o):
+                    walk(v, path + (i,))
+        walk(snap, ())
+        return found
+
+    def test_no_path_like_string_survives_outside_tags_and_documented_exceptions(self):
+        self.plant()
+        app = os.path.join(self.home, 'code', 'app')
+        for mode in ({}, {'metadata_only': True}):
+            with self.subTest(mode=mode):
+                snap = collect.build_snapshot(args(roots=[app], hash_paths=True, **mode))
+                self.assertEqual(self.strays(snap, not mode), [])
+                self.assertTrue(snap['memory']['similar_across_projects'])
+                self.assertTrue(snap['transcripts']['context_baseline_by_project_median'])
+                self.assertTrue(any(u['files'] for r in snap['readiness'].values() for u in r['env']['undeclared']))
+
+
 class Coverage(CanaryHome):
     def test_records_families_and_salt_kind_but_never_the_salt(self):
         for kw, kind in (({}, 'file'), ({'hash_salt_file': None}, 'per_run')):
@@ -165,7 +314,7 @@ class Coverage(CanaryHome):
             p = snap['coverage']['privacy']
             self.assertIs(p['hashed_paths'], True)
             self.assertEqual(p['hash_salt'], kind)
-            self.assertEqual(set(p['hashed_path_families']), set(privacy.PATH_FAMILIES))
+            self.assertEqual(set(p['hashed_path_families']), {*privacy.PATH_FAMILIES, *privacy.EXTRA_COUNTERS})
             self.assertNotIn('a-long-enough-test-salt', json.dumps(snap))
             snapshot_contract.validate_snapshot(snap)
 
@@ -320,7 +469,7 @@ class Docs(unittest.TestCase):
 
     def test_snapshot_format_lists_every_family(self):
         text = self.read('references', 'snapshot-format.md')
-        self.assertEqual([f for f in privacy.PATH_FAMILIES if f'`{f}`' not in text], [])
+        self.assertEqual([f for f in (*privacy.PATH_FAMILIES, *privacy.EXTRA_COUNTERS) if f'`{f}`' not in text], [])
         for word in ('hashed_paths', 'hash_salt', '--hash-salt-file', 'h:<12 hex>'):
             self.assertIn(word, text)
 
