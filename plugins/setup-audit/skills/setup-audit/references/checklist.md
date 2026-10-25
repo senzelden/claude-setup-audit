@@ -487,7 +487,9 @@ metric that motivated it, so the next run can check whether it moved.
   or a tool whose deny/ask lists in that file hold a `!` rule. A Bash deny shaped like an input
   parameter (`Bash(timeout:*)`) is compared by raw text only. Absence isn't proof. Fix: remove the
   dead allow, or narrow the deny/ask if the allow was intended; never propose loosening a managed
-  rule.
+  rule. Check `settings[].plugin_written_rules` first: when the covering deny/ask was written by a
+  plugin, do not propose narrowing or removing it (HYG-plugin-footprint); attribute it to the plugin
+  and offer only removing the dead allow.
 - **HYG-hook-config** (`hook_handlers[].issues` / `unknown_fields`, the same fields on
   `extensions.plugins[].components[].handlers[]`, static; hooks docs fetched 2026-10-24): hook
   configuration that doesn't do what it reads.

@@ -144,8 +144,9 @@ class LoopTracker:
         msg = record.get('message') if isinstance(record.get('message'), dict) else {}
         if record.get('type') == 'assistant':
             usage = msg.get('usage')
-            if isinstance(usage, dict) and (msg.get('id') is None or msg['id'] not in self.seen_msgs):
-                self.seen_msgs.add(msg.get('id'))
+            mid = msg.get('id') if isinstance(msg.get('id'), str) else None  # a list/dict id is unhashable
+            if isinstance(usage, dict) and (mid is None or mid not in self.seen_msgs):
+                self.seen_msgs.add(mid)
                 turn['tokens'] += _usage_total(usage)
         items = msg.get('content')
         for item in items if isinstance(items, list) else []:
@@ -174,6 +175,8 @@ class LoopTracker:
 
     def _result(self, turn, item, record=None):
         tid = item.get('tool_use_id')
+        if not isinstance(tid, str):
+            return
         path = turn['edits'].pop(tid, None)
         if path is not None:
             if item.get('is_error') is not True:

@@ -50,7 +50,7 @@ creep.) `skill_listing_chars` is taken
 from the most recent non-SDK session, so at scope `all` it can move with whichever project was used
 last.
 
-**Crossing kinds:** `above_max` (with `path`), `below_min`, `high_failure_rate` (with `server`, `value`, `share`, `sessions_observed`), `new` (with the new fingerprints and
+**Crossing kinds:** `above_max` (with `path`), `below_min`, `high_failure_rate` (with `server`, `value`, `share`, `sessions_observed`, `sessions_present`; the reported server is the one crossing both thresholds, else the highest share), `new` (with the new fingerprints and
 their settings file paths), `growth` (with `previous`, the anchor value, `since`, the anchor run's `at`, and `fraction`).
 
 **Fingerprint limits.** A fingerprint is the first 16 hex characters of the SHA-256 of settings file

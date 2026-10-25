@@ -21,7 +21,7 @@ def fingerprint(path, flag, rule):
     return hashlib.sha256(f'{path}\0{flag}\0{rule}'.encode()).hexdigest()[:16]
 
 
-def derive(snap, global_claude_md):
+def derive(snap, global_claude_md, mcp_min=(MCP_FAIL_MIN_SESSIONS, MCP_FAIL_MIN_SHARE)):
     """(signals, fingerprint -> settings path) from a collected snapshot. Rule text is not kept."""
     glob_ = snap.get('global') or {}
     projects = snap.get('projects') or {}
@@ -48,10 +48,17 @@ def derive(snap, global_claude_md):
     failing = [r for r in ((snap.get('transcripts') or {}).get('mcp_failures') or {}).get('servers') or []
                if isinstance(r, dict) and type(r.get('sessions_failed')) is int and r['sessions_failed'] > 0]
     observed = ((snap.get('transcripts') or {}).get('mcp_failures') or {}).get('sessions_observed')
-    worst = max(failing, key=lambda r: (r['sessions_failed'], str(r.get('server'))), default=None)
-    denominator = observed
-    if worst and type(worst.get('sessions_present')) is int and worst['sessions_present'] >= worst['sessions_failed']:
-        denominator = worst['sessions_present']  # sessions where this server appears at all
+    def denominator_of(r):
+        present = r.get('sessions_present')
+        return present if type(present) is int and present >= r['sessions_failed'] else observed
+
+    def rank(r):  # a server crossing both thresholds wins; then the higher share, count, name
+        d = denominator_of(r)
+        share = r['sessions_failed'] / d if type(d) is int and d >= 1 else 0
+        return (r['sessions_failed'] >= mcp_min[0] and share >= mcp_min[1], share, r['sessions_failed'],
+                str(r.get('server')))
+    worst = max(failing, key=rank, default=None)
+    denominator = denominator_of(worst) if worst else observed
     signals = {
         'claude_md': claude_md or None,
         'cache_hit_ratio': None if ratio is None else {'value': ratio, 'complete': transcripts_complete},
@@ -141,6 +148,7 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
             and mcp['share'] >= thresholds.get('mcp_fail_min_share', MCP_FAIL_MIN_SHARE):
         crossings.append({'signal': 'mcp_failures', 'kind': 'high_failure_rate', 'server': mcp.get('server'),
                           'value': mcp['value'], 'share': mcp['share'], 'sessions_observed': mcp.get('sessions_observed'),
+                          'sessions_present': mcp.get('sessions_present', mcp.get('sessions_observed')),
                           'threshold': thresholds.get('mcp_fail_min_sessions', MCP_FAIL_MIN_SESSIONS)})
     for name in ('skill_listing_chars', 'injected_tokens'):
         current = signals[name]
@@ -164,7 +172,7 @@ def summary_line(crossings, log_display):
         elif c['kind'] == 'below_min':
             parts.append(f"cache_hit_ratio {c['value']} < {c['threshold']}")
         elif c['kind'] == 'high_failure_rate':
-            parts.append(f"MCP server {c['server']} failed in {c['value']} of {c['sessions_observed']} sessions")
+            parts.append(f"MCP server {c['server']} failed in {c['value']} of {c['sessions_present']} sessions where it appears")
         elif c['kind'] == 'new':
             parts.append('new broad permission in ' + ', '.join(c['paths'] or ['an unknown settings file']))
         else:
@@ -240,7 +248,8 @@ def main(argv=None):
     meta = {'scope': a.scope,
             'project': display(os.path.abspath(os.path.expanduser(a.project))) if a.project else None,
             'window_days': a.days}
-    signals, fps = derive(snap, display(os.path.join(collect.CLAUDE, 'CLAUDE.md')))
+    signals, fps = derive(snap, display(os.path.join(collect.CLAUDE, 'CLAUDE.md')),
+                          (a.mcp_fail_min_sessions, a.mcp_fail_min_share))
     crossings = compare(signals, fps, entries, meta, {'claude_md_max_lines': a.claude_md_max_lines,
                                                       'cache_hit_min': a.cache_hit_min, 'growth_min': a.growth_min,
                                                       'mcp_fail_min_sessions': a.mcp_fail_min_sessions,

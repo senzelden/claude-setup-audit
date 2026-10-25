@@ -241,7 +241,8 @@ compact summaries, sidechain or system-injected text (`<system-reminder>`, `<loc
 interruption notices); observed, undocumented record shapes, so a change in a later Claude Code release shows up as
 fewer turns, not an error. A failure is an `is_error` result that is not a permission answer: `user_rejected`,
 `permission_denied` and `permission_gate` (the permission system replying instead of the command running, observed
-2026-10-25: auto-mode classifier without a verdict, "requires approval", compound-command and variable checks,
+2026-10-25, matched only at the start of the error text so a tool error that merely mentions a block or
+approval (an MCP "request was blocked by proxy") is `other`: auto-mode classifier without a verdict, "requires approval", compound-command and variable checks,
 "Blocked:" sleeps, built-in safety denials, `allowed_domains` notes) are neutral, and `transcripts.tool_errors` counts
 `permission_gate` as `denied` too. Commands are compared by a hash of the whole normalized command (a leading
 `cd ... &&` or `VAR=value` prefix and trailing `2>&1`, `/dev/null` redirects and pipes into tail/head/tee/grep/less/wc/cat
@@ -256,7 +257,8 @@ tools); any other first token, including project or script names, is `other`. Th
 `EDIT_TEST_MIN` in `failure_loops.py`), a recommendation calibrated on fake transcripts and an aggregate smoke over real
 transcripts, not a documented limit. Tokens are main-thread assistant usage within the turn (subagent work inside it is
 not attributed). The snapshot block comes from the bounded transcript scan (`max_files`, most recent first); the ledger
-`failure_loops` selector scans every main transcript in its window, so their counts are not comparable. Background shell
+`failure_loops` selectors share one pass over the main transcripts modified since the earliest selector start (at most
+`MAX_LOOP_FILES` newest files; hitting the cap marks the counts incomplete), so their counts are not comparable. Background shell
 results, commands run through subagents and tests run by hooks are invisible here.
 
 Plugin runtime footprint (`plugin_written_rules`, `plugin_markers`, `plugin_state`, hook `decides_permissions`
@@ -288,7 +290,8 @@ or `json` (largest of `additionalContext`, `systemMessage`, `initialUserMessage`
 2,000-character preview of a spilled output, so `over_cap` can undercount, and none has been seen locally.
 Spawned sessions: the only attributed fingerprint is a working directory under
 `~/.claude-mem/observer-sessions` (claude-mem), matched on the dash-encoded transcript directory name for
-transcripts and on the project path for history, session-meta and facets; the encoding cannot tell
+transcripts and on the project path for history, session-meta and facets; spawned working directories are also
+not discovered as project roots, and spawned sessions feed no MCP call counts, env-error hits or test run times; the encoding cannot tell
 `observer-sessions/x` from `observer-sessions-x`, and a relocated claude-mem data directory is not seen.
 Not attributed because the files the collector reads do not show them: remember's
 `REMEMBER_NESTED_SUMMARIZER` (an environment variable of the child process) and autoharness's detached

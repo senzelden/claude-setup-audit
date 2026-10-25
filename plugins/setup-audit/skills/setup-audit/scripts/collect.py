@@ -865,6 +865,8 @@ def discover_projects(with_context=False):
         path = (load_json(f) or {}).get("project_path")
         if path:
             found.add(path)
+    # Directories a plugin spawns Claude in (observer sessions) are not the user's projects.
+    found = {p for p in found if not (isinstance(p, str) and plugin_footprint.spawn_label(p, HOME))}
     contexts = [inventory.git_context(path) for path in sorted(found)
                 if os.path.isdir(path) and os.path.realpath(path) != os.path.realpath(HOME)]
     roots = sorted({c['worktree_root'] or c['session_cwd'] for c in contexts})
@@ -1060,7 +1062,7 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
         if usage is None:
             return
         # Streamed chunks share a message id; records without an id are never deduplicated.
-        if msg.get("id") is not None:
+        if isinstance(msg.get("id"), str):  # a list/dict id is unhashable
             if msg["id"] in seen_ids:
                 return
             seen_ids.add(msg["id"])
@@ -1090,10 +1092,13 @@ TOOL_ERROR_CATEGORIES = [
     # The permission system answering instead of the command running (observed 2026-10-25): the auto-mode
     # classifier without a verdict, approval required, compound-command and variable checks, built-in
     # safety denials, blocked sleeps and sandbox-domain notes. Not a failure of the command itself.
+    # Anchored to the start of the text: only the permission system's own phrasings count, so a tool's
+    # error that merely mentions a block or approval (an MCP "request was blocked by proxy") stays "other".
     ("permission_gate", re.compile(
-        r"^(?!Exit code)(?s:.*?)(auto mode classifier|requires? approval|^Permission for this\b|^Blocked:|"
-        r"allowed_domains applies only|was blocked\b|variable in this command can.t be checked|"
-        r"contains multiple operations)", re.I)),
+        r"^(?!Exit code)(?:(?s:.{0,80}?)auto mode classifier|This (?:Bash )?command requires? approval|"
+        r"This Bash command contains multiple operations|Permission for this\b|Blocked:|"
+        r"allowed_domains applies only|The command was blocked\b|A variable in this command can.t be checked)",
+        re.I)),
     ("sandbox", re.compile(r"\b(bwrap|apply-seccomp|sandbox-exec|seatbelt)\b", re.I)),
     ("timeout", re.compile(r"timed out|\btimeout\b", re.I)),
     ("nonzero_exit", re.compile(r"^Exit code \d+")),
@@ -1465,7 +1470,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             raw["file_entrypoints"][path] = ep
                     if is_top and not listed and record.get("type") == "attachment":
                         listed = harness_listing(raw, record, timestamp, path)
-                    if is_top and '"tool_result"' in line:
+                    if is_top and spawn is None and '"tool_result"' in line:
                         if ENV_ERROR_RE.search(line):
                             env_hits[proj_key] += 1
                         if pending and '"tool_use_id"' in line:
@@ -1479,7 +1484,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 start = pending.pop(item.get("tool_use_id"), None) if isinstance(item, dict) else None
                                 if start is not None and end is not None and end >= start:
                                     test_durations[proj_key].append(round(end - start, 1))
-                    elif is_top and '"tool_use"' in line and TEST_CMD_RE.search(line):
+                    elif is_top and spawn is None and '"tool_use"' in line and TEST_CMD_RE.search(line):
                         try:
                             r = json.loads(line)
                         except ValueError:
@@ -1541,7 +1546,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 baselines.append(total)
                                 per_project[os.path.basename(os.path.dirname(path))].append(total)
                                 need_baseline = False
-                    if record.get("type") == "assistant":
+                    # MCP call counts are usage evidence for COST-mcp-unused: the user's own sessions only.
+                    if record.get("type") == "assistant" and spawn is None:
                         content = (record.get("message") or {}).get("content", record.get("content", []))
                         for item in content if isinstance(content, list) else []:
                             if not isinstance(item, dict) or item.get("type") != "tool_use":
@@ -2141,33 +2147,77 @@ def _category_count(facet, name, counts):
     return _positive(table.get(name))
 
 
-def _loop_rows(kind, since, until, project_filter, counts):
-    """Yield (session key, looping turns of `kind`) per own main session with a turn in the bounds."""
-    files = glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl"))
+MAX_LOOP_FILES = 400  # newest main transcripts a ledger failure_loops pass reads; more marks counts incomplete
+
+
+def _loop_pass(specs, project_filter):
+    """One read of the main transcripts for every failure_loops spec ({kind, since, until, counts, rows}).
+
+    Files last modified before the earliest `since` cannot hold an in-window record and are skipped; each line is
+    parsed once and fed to every spec whose window contains it. At most MAX_LOOP_FILES newest files are read."""
+    if not specs:
+        return
+    floor = min(sp["since"] for sp in specs)
     matches = _project_key_matcher(project_filter) if project_filter is not None else None
-    for path in sorted(files):
+    candidates = []
+    for path in glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl")):
         key = os.path.basename(os.path.dirname(path))
         if (matches is not None and not matches(key)) or plugin_footprint.spawn_label_for_key(key, HOME):
             continue
-        tracker = failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            for sp in specs:
+                sp["counts"]["complete"] = False
+            continue
+        if mtime >= floor:
+            candidates.append((mtime, path))
+    candidates.sort(key=lambda mp: (-mp[0], mp[1]))
+    if len(candidates) > MAX_LOOP_FILES:
+        candidates = candidates[:MAX_LOOP_FILES]
+        for sp in specs:
+            sp["counts"]["complete"] = False
+    for _, path in candidates:
+        key = os.path.basename(os.path.dirname(path))
+        trackers = [failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE) for _ in specs]
         try:
             with open(path, errors="replace") as f:
                 for line in f:
                     try:
                         record = json.loads(line)
                     except ValueError:
-                        counts["complete"] = counts["complete"] and not line.strip()
+                        if line.strip():
+                            for sp in specs:
+                                sp["counts"]["complete"] = False
                         continue
                     stamp = _dated(record.get("timestamp")) if isinstance(record, dict) else None
-                    if stamp is not None and since <= stamp <= until:
-                        tracker.feed(record)
+                    if stamp is None:
+                        continue
+                    for sp, tracker in zip(specs, trackers):
+                        if sp["since"] <= stamp <= sp["until"]:
+                            tracker.feed(record)
         except OSError:
-            counts["complete"] = False
+            for sp in specs:
+                sp["counts"]["complete"] = False
             continue
-        tracker.finish()
-        if tracker.turns:
-            yield (key, os.path.basename(path)), sum(1 for t in tracker.turns if kind == "any" and t["kinds"]
-                                                       or kind in t["kinds"])
+        for sp, tracker in zip(specs, trackers):
+            tracker.finish()
+            if tracker.turns:
+                kind = sp["kind"]
+                sp["rows"].append(((key, os.path.basename(path)), sum(
+                    1 for t in tracker.turns if kind == "any" and t["kinds"] or kind in t["kinds"])))
+
+
+def _tally(rows, counts):
+    scanned, matched = set(), set()
+    for sid, n in rows:
+        key = sid if sid is not None else object()
+        scanned.add(key)
+        if n:
+            counts["matches"] += n
+            matched.add(key)
+    counts["sessions_scanned"], counts["sessions_matched"] = len(scanned), len(matched)
+    return counts
 
 
 def count_selector(selector, since, until, project_filter=None):
@@ -2182,21 +2232,15 @@ def count_selector(selector, since, until, project_filter=None):
         rows = ((sid, int(any(w in str(d.get("friction_detail") or "").lower() for w in words)))
                 for sid, d in _facet_rows(since, until, project_filter, counts))
     elif kind == "failure_loops":
-        rows = _loop_rows(selector["kind"], since, until, project_filter, counts)
+        spec = dict(kind=selector["kind"], since=since, until=until, counts=counts, rows=[])
+        _loop_pass([spec], project_filter)
+        rows = spec["rows"]
     elif kind == "friction_category":
         rows = ((sid, _category_count(d, selector["name"], counts))
                 for sid, d in _facet_rows(since, until, project_filter, counts))
     else:
         raise ValueError("metric selectors are not counted from raw sources")
-    scanned, matched = set(), set()
-    for sid, n in rows:
-        key = sid if sid is not None else object()
-        scanned.add(key)
-        if n:
-            counts["matches"] += n
-            matched.add(key)
-    counts["sessions_scanned"], counts["sessions_matched"] = len(scanned), len(matched)
-    return counts
+    return _tally(rows, counts)
 
 
 def collect_ledger_signals(path, days, project_filter):
@@ -2207,15 +2251,22 @@ def collect_ledger_signals(path, days, project_filter):
     except (ledger.LedgerError, OSError, UnicodeDecodeError):
         return {"status": "invalid", "entries": {}}
     now = time.time()
-    entries = {}
+    entries, loops = {}, []
     for entry in book["entries"]:
         if entry["state"] != "active" or entry["selector"]["type"] == "metric":
             continue
         since = max(now - days * 86400, ledger.epoch(entry["applied_at"]))
-        counts = count_selector(entry["selector"], since, now, project_filter)
+        if entry["selector"]["type"] == "failure_loops":  # all such entries share one transcript pass
+            counts = dict(matches=0, sessions_matched=0, sessions_scanned=0, complete=True)
+            loops.append(dict(kind=entry["selector"]["kind"], since=since, until=now, counts=counts, rows=[]))
+        else:
+            counts = count_selector(entry["selector"], since, now, project_filter)
         counts.update({"from": ledger.iso(since), "to": ledger.iso(now),
                        "selector_sha": ledger.selector_hash(entry["selector"])})
         entries[entry["id"]] = counts
+    _loop_pass(loops, project_filter)
+    for sp in loops:
+        _tally(sp["rows"], sp["counts"])
     return {"status": "collected", "entries": entries}
 
 
