@@ -237,13 +237,16 @@ readiness, cost metrics and harness overhead.
   session in the window has them, and say which basis you used. The fallback is a guess shaped
   after the superpowers plugin (the size of its `skills/using-*/SKILL.md`); for any other plugin
   it is absent, not zero.
-  Each source row also carries `chars_max` and `over_cap`: hook output (`additionalContext`,
+  Each source row also carries `chars_max` and `over_cap` (characters of the injected text; the
+  cap is applied per JSON field, hooks docs "Hook output"): hook output (`additionalContext`,
   `systemMessage`, plain stdout) is capped at 10,000 characters, and a larger one is written to a
   file for Claude with a 2,000-character preview (hooks docs "Hook output", fetched 2026-10-25;
   `injected_context.output_cap_chars`). A non-zero `over_cap` means the plugin's own text is being
   cut; a transcript may keep only the preview, so zero is not proof. `hook_stdout` lists printed
-  hook output per plugin and event (records, `chars_max`, `over_cap`) for hooks that are not
-  context injections. Evidence: plugin (or `ambiguous`/`unattributed`), event, sessions and median
+  hook output per plugin, event and `kind`: `plain` rows are whole-stdout sizes (the cap applies to
+  the whole text); `json` rows are the same injections the source rows already count, sized by the
+  largest capped field of the object. Do not add `hook_stdout` counts to the source rows' counts;
+  use `plain` rows for hooks that print without injecting. Evidence: plugin (or `ambiguous`/`unattributed`), event, sessions and median
   estimated tokens per session (chars/4). SessionStart re-fires on `startup`, `resume`, `clear`,
   `compact` and `fork` (https://code.claude.com/docs/en/hooks.md, fetched 2026-09-29), and its
   `additionalContext` is added to context before the first prompt.
@@ -476,7 +479,8 @@ metric that motivated it, so the next run can check whether it moved.
     default for command, http and mcp_tool hooks, so a value such as 5000 or 10000 was almost
     certainly written in milliseconds and sets no useful limit; hooks docs "Hook handler fields",
     fetched 2026-10-25; a hung hook can then hold the event for well over an hour, so propose the intended number
-    of seconds), `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
+    of seconds; not reported for `async: true` command hooks, whose timeout Claude Code does not
+    enforce, or for `SessionEnd`, whose hooks share a 1.5-second budget), `matcher_not_string`, `unknown_type`, `unknown_fields` (not in the documented fields for that
     handler type; name the field, don't claim it's ignored), `invalid_on_failure` (`onFailure` on a
     `command`/`http` hook that is neither `"continue"` nor `"block"`), `on_failure_no_effect`
     (`"block"` on a background hook or an event where it does nothing; the hook still fails open).
@@ -492,7 +496,7 @@ metric that motivated it, so the next run can check whether it moved.
     lists this settings file and the listed bare-name `deny` rules are in it; `ledger_only` counts
     listed rules the file no longer holds. These are not the user's hand-written policy: say so in
     SEC findings that cite the deny list, do not propose removing them (the plugin writes them
-    again; `prune_permissions.py` never proposes a ledger-listed rule), and note they can make a
+    again; `prune_permissions.py` only removes allow rules and never touches deny rules), and note they can make a
     tool unavailable that the user expects (a denied bare tool name). Only the default directory is
     read, not `$TOKENECONOMIZER_HOME`.
   - **Auto-approve markers.** `plugin_markers: ["quartermaster.autoApprovePermissions"]` means
@@ -509,9 +513,14 @@ metric that motivated it, so the next run can check whether it moved.
     command line or plugin-local script text contains `permissionDecision` `"allow"`/`"deny"`
     sets `decides_permissions`, and `updatedInput` sets `rewrites_input` (`decision_basis:
     static_scan`, `decision_file` names the script). The scan is a heuristic text match over at
-    most 64 KiB per script inside the plugin root, never executed, sourced scripts not followed;
-    `scan_gap` (`script_unresolved`, `script_truncated`) means part of the logic was not read, so
-    the flags may be missing, not false. These decisions do not appear in any rule list. Per the
+    most 64 KiB per script inside the plugin root, never executed, sourced scripts not followed.
+    It matches `permissionDecision` allow/deny, the deprecated top-level `"decision"`
+    `approve`/`block`, and exit code 2 (which blocks a `PreToolUse` call; hooks docs "Exit code 2
+    behavior per event"), so a script that merely exits 2 on an internal error can be flagged.
+    Scripts are found by absolute plugin-root path or, after `cd "$CLAUDE_PLUGIN_ROOT" &&`, by
+    relative path. `scan_gap` (`script_unresolved`, `script_truncated`, `no_local_script` for a
+    command such as `npx -y pkg hook` that names no plugin-local script) means part of the logic
+    was not read. A missing flag is never evidence that a hook does not decide or rewrite. These decisions do not appear in any rule list. Per the
     hooks docs, a hook's `allow` does not override deny or ask rules, and `updatedInput` replaces
     the whole tool input and is what permission rules are then checked against (hooks docs
     "PreToolUse decision control", fetched 2026-10-25). Fail-open behaviour is not a finding here:

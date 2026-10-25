@@ -371,9 +371,11 @@ Table, effects and estimate: `references/cache-effects.md`.
    (dry-run) first, then add `--apply --backup-dir <dir>` with only the approved categories. Prefer adding `deny`/`ask` rules and removing specific broad allows
    over wiping allowlists; a flood of prompts pushes people toward bypass mode. Re-verify
    "secret" findings on the real file before telling anyone to rotate a key: command
-   substitutions and empty values are not secrets. The dry run lists rules it leaves alone
-   because a plugin wrote them (`kept_plugin_written`) and flags files with a plugin auto-approve
-   marker (`plugin_note`); relay both instead of working around them.
+   substitutions and empty values are not secrets. The script only removes
+   allow rules and stale directories and never touches deny rules, so a deny rule a plugin wrote
+   (`plugin_written_rules`, TokenEconomizer) is never proposed; it flags files with a plugin
+   auto-approve marker (`plugin_note`), whose allow rules may be machine-written and return;
+   relay that instead of working around it.
 5. **Hooks.** Write the script, then test it by piping sample event JSON for a should-block
    case, a should-allow case and an unrelated case, plus exit codes. Register it only after
    that passes: a broken PreToolUse hook blocks every tool call. Give it a `timeout`.

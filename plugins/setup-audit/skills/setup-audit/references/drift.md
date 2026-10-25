@@ -26,7 +26,7 @@ is installed on your machine; fill it in yourself.
 | `cache_hit_ratio` | `transcripts.cache.hit_ratio` | below the minimum (`below_min`) | 0.90: "above ~90% is healthy" (`COST-cache-health`) |
 | `broad_permissions` | count and fingerprints of `permissions.risky` rules | a fingerprint is absent from the previous comparable entry (`new`) | none |
 | `skill_listing_chars` | last `harness_overhead.skill_listing_series` size | grew by at least the fraction over its growth anchor (`growth`) | 0.25 (`--growth-min`), a recommendation, not a documented limit |
-| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule; the anchor only reaches back over runs whose plugin, hook event and `attribution` match the current ones (entries logged without `attribution` end the walk) | 0.25 (`--growth-min`) |
+| `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule; the anchor only reaches back over runs whose plugin, hook event and `attribution` match the current ones (entries logged without `attribution`, or without the `unit` `chars_text` that 0.12.0 added (earlier runs measured the JSON encoding of the content, not its text), end the walk) | 0.25 (`--growth-min`) |
 
 A signal is `null` when its source is absent, and a null signal never crosses. The `complete` flag
 recorded per signal comes from the snapshot's coverage; it does not suppress a crossing, and the
@@ -71,7 +71,7 @@ One JSON object per line, appended only; there is no rotation in v1 (an entry is
              "broad_permissions": {"count": 1, "fingerprints": ["3f1c0a9b7e2d4c55"]},
              "skill_listing_chars": {"value": 29782, "complete": false},
              "injected_tokens": {"value": 885, "plugin": "superpowers@claude-plugins-official",
-                                 "hook_event": "SessionStart", "attribution": "matched", "complete": false}},
+                                 "hook_event": "SessionStart", "attribution": "matched", "unit": "chars_text", "complete": false}},
  "crossings": [{"signal": "cache_hit_ratio", "kind": "below_min", "value": 0.61, "threshold": 0.9}]}
 ```
 

@@ -251,9 +251,17 @@ Permission-deciding hooks: a plugin handler on `PermissionRequest` decides by de
 the command line and the plugin-local scripts it names (inside the plugin root as `harness._inside`
 decides, no symlinks, regular files, 64 KiB each) get a text match for `permissionDecision` `allow`/`deny`
 and `updatedInput`, comment lines skipped, nothing executed or sourced. It misses logic built at run time,
-sourced files and scripts beyond the bound (`scan_gap` says so) and can match prose in a string. Hooks
+sourced files, commands that name no plugin-local script (`scan_gap: no_local_script`) and scripts
+beyond the bound (`scan_gap` says so); it can match prose in a string, and a script that exits 2 on an
+internal error is flagged like a guard. It matches `permissionDecision` allow/deny, the deprecated
+top-level `decision` approve/block and exit code 2 (hooks docs "Exit code 2 behavior per event"), and
+resolves relative script paths only after `cd "$CLAUDE_PLUGIN_ROOT" &&`. A missing flag is not evidence
+that a hook does not decide. Hooks
 docs fetched 2026-10-25. Injection size: the cap applies to characters; `hook_additional_context.content`
-is observed (2026-10-25) as a list of strings, whose lengths are summed; a transcript may hold only the
+is observed (2026-10-25) as a list of strings, whose lengths are summed (drift entries logged before this
+carry no `unit` and end the `injected_tokens` growth anchor walk); `hook_stdout` rows are `plain` (whole stdout)
+or `json` (largest of `additionalContext`, `systemMessage`, `initialUserMessage`, top level or in
+`hookSpecificOutput`), because the cap measures JSON per field and plain stdout whole; a transcript may hold only the
 2,000-character preview of a spilled output, so `over_cap` can undercount, and none has been seen locally.
 Spawned sessions: the only attributed fingerprint is a working directory under
 `~/.claude-mem/observer-sessions` (claude-mem), matched on the dash-encoded transcript directory name for

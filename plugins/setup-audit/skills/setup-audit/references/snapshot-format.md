@@ -112,11 +112,13 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   - Plugin hook handlers (`extensions.plugins[].components[].handlers[]`) may carry
     `decides_permissions`, `rewrites_input` (true), `decision_basis` (`permission_request_event`,
     `static_scan`), `decision_file` (plugin-relative script, a hashed/masked path) and `scan_gap`
-    (`script_unresolved`, `script_truncated`). The static scan is heuristic.
-  - Handler `issues` gains `timeout_suspect_ms` (`timeout` above 600).
+    (`script_unresolved`, `script_truncated`, `no_local_script`). The static scan is heuristic.
+    Matches: `permissionDecision` allow/deny, top-level `decision` approve/block, exit code 2.
+  - Handler `issues` gains `timeout_suspect_ms` (`timeout` above 600; not for `async: true` or `SessionEnd`).
+  - Drift's `injected_tokens` signal gains `unit: chars_text`; earlier entries lack it.
   - `harness_overhead.injected_context`: `output_cap_chars` (10000), per source `chars_max` and
-    `over_cap`, and `hook_stdout[]` (`plugin`, `attribution`, `hook_event`, `records`, `chars_max`,
-    `over_cap`) with `hook_stdout_omitted`.
+    `over_cap`, and `hook_stdout[]` (`plugin`, `attribution`, `hook_event`, `kind` `plain`|`json`, `records`,
+    `chars_max`, `over_cap`; json rows are sized per capped field) with `hook_stdout_omitted`.
   - `transcripts.plugin_spawned`: `rows[]` (`label`, `sessions`, `subagent_files`, `tokens`),
     `tokens_spawned`, `tokens_total`, `basis`. `usage.plugin_spawned_sessions` and
     `usage.heaviest_sessions[].plugin_spawned` (label) mark the same sessions in usage data.
