@@ -182,9 +182,14 @@ What is **measured** versus **estimated** matters for credibility; say which in 
   context, skill listing, subagent spend; injected tokens are chars/4 of measured text).
 - Static (configuration text only): `permissions.rule_shape_issues`, hook handler `issues`,
   `scope_ignored_keys`/`ignored_env_keys` and `config_conflicts`. Their effects come from the quoted docs, not observed runs; say so.
+  Plugin footprint (`HYG-plugin-footprint`: `plugin_written_rules`, `plugin_markers`, `plugin_state`,
+  `decides_permissions`/`rewrites_input`) is a mix: ledger and marker attribution are exact matches
+  on a file or key from a dated table, the hook-script flags are a heuristic text scan; label which.
+  Plugin-spawned sessions (`transcripts.plugin_spawned`) are in the cost totals and out of the
+  learning evidence.
 - Estimated: CLAUDE.md tokens (chars/4). `COST-startup-hooks` is measured from
-  `harness_overhead.injected_context` and falls back to the file-size estimate
-  (`plugin_session_start_hooks`, `basis: file_size_estimate`) when no session has records; add
+  `harness_overhead.injected_context` and falls back to a labelled guess
+  (`plugin_session_start_hooks`, `basis: using_skill_file_size_guess`, or `not_measured`) when no session has records; add
   `COST-harness-overhead` for listing growth, model-invoking hooks and subagent spend. Global
   scope reads no transcripts, so `harness_overhead` then holds only static signals
   (`transcripts_not_read`).
@@ -366,7 +371,9 @@ Table, effects and estimate: `references/cache-effects.md`.
    (dry-run) first, then add `--apply --backup-dir <dir>` with only the approved categories. Prefer adding `deny`/`ask` rules and removing specific broad allows
    over wiping allowlists; a flood of prompts pushes people toward bypass mode. Re-verify
    "secret" findings on the real file before telling anyone to rotate a key: command
-   substitutions and empty values are not secrets.
+   substitutions and empty values are not secrets. The dry run lists rules it leaves alone
+   because a plugin wrote them (`kept_plugin_written`) and flags files with a plugin auto-approve
+   marker (`plugin_note`); relay both instead of working around them.
 5. **Hooks.** Write the script, then test it by piping sample event JSON for a should-block
    case, a should-allow case and an unrelated case, plus exit codes. Register it only after
    that passes: a broken PreToolUse hook blocks every tool call. Give it a `timeout`.

@@ -72,7 +72,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   last crossing dates and `scopes`. Counts, dates and scalars only; additive within snapshot v1.
 - `harness_overhead`: optional; counts, sizes, dates, plugin names, relative script paths and
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
-  `basis` (`file_size_estimate`).
+  `basis` (since 0.12.0: `using_skill_file_size_guess` when a `skills/using-*/SKILL.md` size is the guess, else `not_measured`
+  with a null estimate; earlier snapshots say `file_size_estimate`).
 - `extensions.plugins[].components[].mod` (hooks components of a plugin with `hooks.json`
   `modules`): optional; `module` (declared relative path), `exists`, `bytes`, `events[]`, `calls[]`
   (identifier-shaped names from a heuristic scan), `truncated`, and `reason` when unread.
@@ -101,6 +102,24 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   undocumented; `coverage.md`). `context_tokens` is input + cache-creation + cache-read tokens per
   deduplicated main-thread response (measured), the basis for the cache re-read estimate in
   `references/cache-effects.md`.
+- Plugin runtime footprint (0.12.0; evidence and table dated 2026-10-25), all optional and additive within snapshot v1:
+  - `settings[].plugin_written_rules[]`: `plugin`, `list` (`deny`), `rules` (names of the ledger's
+    rules present in that file's deny list; masked in metadata-only), `rule_count`, `ledger_only`
+    (ledger rules the file no longer holds). `settings[].plugin_markers[]`: key paths such as
+    `quartermaster.autoApprovePermissions`. Neither appears in managed settings.
+  - `global.plugin_state` and `projects[].plugin_state`: `{name: true}` for plugin state files or
+    directories that exist (`ralph-loop`, `hookify`, `auto-memory`, `autoharness`, `claude-hud`).
+  - Plugin hook handlers (`extensions.plugins[].components[].handlers[]`) may carry
+    `decides_permissions`, `rewrites_input` (true), `decision_basis` (`permission_request_event`,
+    `static_scan`), `decision_file` (plugin-relative script, a hashed/masked path) and `scan_gap`
+    (`script_unresolved`, `script_truncated`). The static scan is heuristic.
+  - Handler `issues` gains `timeout_suspect_ms` (`timeout` above 600).
+  - `harness_overhead.injected_context`: `output_cap_chars` (10000), per source `chars_max` and
+    `over_cap`, and `hook_stdout[]` (`plugin`, `attribution`, `hook_event`, `records`, `chars_max`,
+    `over_cap`) with `hook_stdout_omitted`.
+  - `transcripts.plugin_spawned`: `rows[]` (`label`, `sessions`, `subagent_files`, `tokens`),
+    `tokens_spawned`, `tokens_total`, `basis`. `usage.plugin_spawned_sessions` and
+    `usage.heaviest_sessions[].plugin_spawned` (label) mark the same sessions in usage data.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

@@ -236,6 +236,35 @@ request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching,
 variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
 as an error.
 
+Plugin runtime footprint (`plugin_written_rules`, `plugin_markers`, `plugin_state`, hook `decides_permissions`
+/ `rewrites_input`, `transcripts.plugin_spawned`; fingerprint table dated 2026-10-25, from a survey of plugin sources,
+`docs/research/2026-10-25-plugin-side-effects.md`): only fingerprints that are a named file, key or directory are
+used, never string shapes in settings (a `statusLine` command, the form of a deny rule). The TokenEconomizer
+ledger (`~/.tokeneconomizer/**/untool_applied.json`, observed shape `{"by_path": {settings path: [rules]}}`
+or the older `{"tools", "path"}`; undocumented, written by that plugin) is read to depth 4, 50 files,
+256 KiB each, symlinks and non-regular files refused, regular files opened nonblocking; paths are matched
+to collected settings files by realpath, only rule names present in the file's deny list are reported, and
+the rest is a count. `$TOKENECONOMIZER_HOME` is not honoured (environment values are not collected);
+a relocated ledger is invisible. The quartermaster marker is the key `quartermaster.autoApprovePermissions`
+set to true; the rules it appends are not attributable. State files are presence checks (never read).
+Permission-deciding hooks: a plugin handler on `PermissionRequest` decides by definition; for `PreToolUse`
+the command line and the plugin-local scripts it names (inside the plugin root as `harness._inside`
+decides, no symlinks, regular files, 64 KiB each) get a text match for `permissionDecision` `allow`/`deny`
+and `updatedInput`, comment lines skipped, nothing executed or sourced. It misses logic built at run time,
+sourced files and scripts beyond the bound (`scan_gap` says so) and can match prose in a string. Hooks
+docs fetched 2026-10-25. Injection size: the cap applies to characters; `hook_additional_context.content`
+is observed (2026-10-25) as a list of strings, whose lengths are summed; a transcript may hold only the
+2,000-character preview of a spilled output, so `over_cap` can undercount, and none has been seen locally.
+Spawned sessions: the only attributed fingerprint is a working directory under
+`~/.claude-mem/observer-sessions` (claude-mem), matched on the dash-encoded transcript directory name for
+transcripts and on the project path for history, session-meta and facets; the encoding cannot tell
+`observer-sessions/x` from `observer-sessions-x`, and a relocated claude-mem data directory is not seen.
+Not attributed because the files the collector reads do not show them: remember's
+`REMEMBER_NESTED_SUMMARIZER` (an environment variable of the child process) and autoharness's detached
+`claude -p --resume --fork-session` runs (same working directory as the user's session; transcripts of
+`claude -p` runs carry the same `sdk-*` entrypoint as any other script). Entrypoint counts in
+`harness_overhead.subagent_spend.entrypoints` remain the generic signal.
+
 Plugin candidates come from `installed_plugins.json` records, not newest cache directories.
 User/managed installs and matching project/local installs are inspected. Enablement settings
 are reported as per-source observations, with active state unknown. Only paths within plugin
