@@ -164,7 +164,8 @@ class Gates(Base):
              "part(s) requires approval: x", "Blocked: sleep 30 followed by another command", "allowed_domains "
              "applies only when the sandbox is enabled", "Permission for this command was denied by a built-in "
              "Claude Code safety check", "The command was blocked by policy", "A variable in this command can't be "
-             "checked: $X"]
+             "checked: $X", "ls in '/tmp' was blocked. For security, Claude Code may only list files in the allowed "
+             "working directories for this session"]
 
     def test_permission_system_answers_are_not_command_failures(self):
         for text in self.GATES:

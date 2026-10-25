@@ -1097,7 +1097,8 @@ TOOL_ERROR_CATEGORIES = [
     ("permission_gate", re.compile(
         r"^(?!Exit code)(?:(?s:.{0,80}?)auto mode classifier|This (?:Bash )?command requires? approval|"
         r"This Bash command contains multiple operations|Permission for this\b|Blocked:|"
-        r"allowed_domains applies only|The command was blocked\b|A variable in this command can.t be checked)",
+        r"allowed_domains applies only|The command was blocked\b|A variable in this command can.t be checked|"
+        r"[^\n]{0,200}? was blocked\. For security, Claude Code may only)",
         re.I)),
     ("sandbox", re.compile(r"\b(bwrap|apply-seccomp|sandbox-exec|seatbelt)\b", re.I)),
     ("timeout", re.compile(r"timed out|\btimeout\b", re.I)),
