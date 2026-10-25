@@ -6,7 +6,9 @@ and the nested coverage/report versions. The machine-readable contract is
 
 The contract stabilizes the envelope: required sections, their container types, scope/window,
 source provenance and coverage statuses/counts. Family-specific analytical payloads remain
-extensible objects, not exhaustively typed records. Validation establishes structure, not
+extensible objects, not exhaustively typed records. The settings summary definition is applied to
+`global.settings` and `managed_settings.settings`; project settings and `instructions.settings_candidates`
+stay untyped objects, so their summary fields (`scope_ignored_keys` among them) are not schema-checked. Validation establishes structure, not
 factual correctness, redaction completeness or effective policy. The collector validates the
 serialized, sanitized snapshot before printing or writing it; invalid output is not published.
 
@@ -36,7 +38,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   (`/h/u/code/app2` is not treated as inside `/h/u/code/app`); what follows a tag is kept, so a hook
   command reads `bash h:<12 hex>/run.sh`. Hook script names under `projects/*/hooks` are names, not
   paths, and stay. Fixed vocabulary (event names, model ids, setting keys,
-  scopes, enums) and plugin, skill, agent and MCP server names are never hashed. Families
+  scopes, enums) and plugin, skill, agent and MCP server names are never hashed, except that a model id
+  containing `/` (a Bedrock ARN, which can carry an account id, or a gateway name) is hashed by the
+  fail-closed sweep, so its tier is lost under `--hash-paths`. Families
   (`privacy.PATH_FAMILIES` holds the patterns):
 
   | Family | Hashed |
@@ -44,7 +48,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   | `project_roots` | project root directories: projects/readiness keys, session and correction project paths, coverage.projects_collected, collection_scope.project, session and worktree roots |
   | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
   | `config_files` | settings, instruction, managed and MCP config file paths, previous audit file names, the drift log path and the /insights report path |
-  | `plugin_paths` | plugin install roots and plugin component files |
+  | `plugin_paths` | plugin install roots, plugin component files and declared mod modules (`mod.module`) |
   | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`), MCP executables |
   | `other_paths` | fail-closed counter: path-like kept strings and dict keys (whitespace-free, not a URL or `name/N` basis string) that no family above names, hashed after the families so a new field is hashed, not leaked |
   | `free_text_scrubbed` | counter: strings and dict keys in which a known home, config or project directory was replaced by its tag (full-mode free text such as hook commands) |

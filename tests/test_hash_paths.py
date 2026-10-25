@@ -20,7 +20,7 @@ import snapshot_contract
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
 USER, PROJ = 'zcuserhome', 'zcprojalpha'
 CANARIES = (USER, PROJ, 'zcmemfile', 'zcauditname', 'zcsdkfile', 'zcpluginroot', 'zcmissingdir', 'zcenvmodule',
-            'zcotherproj')
+            'zcotherproj', 'zcmodfile')
 
 
 class CanaryHome(PatchedHome):
@@ -72,7 +72,8 @@ class CanaryHome(PatchedHome):
         self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {'p@m': [
             {'scope': 'user', 'installPath': plugin, 'version': '1.0.0'}]}})
         self.write(os.path.relpath(os.path.join(plugin, '.claude-plugin', 'plugin.json'), self.home), {'name': 'p'})
-        self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'hooks.json'), self.home), {'hooks': {
+        self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'zcmodfile.js'), self.home), "on('tool.call', f)\n")
+        self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'hooks.json'), self.home), {'modules': ['zcmodfile.js'], 'hooks': {
             'PostToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'echo hi'}]}]}})
         self.write(f'code/{PROJ}/.mcp.json', {'mcpServers': {'srv': {'command': 'npx'}}})
         self.write(f'code/{PROJ}/src/zcenvmodule.py', 'import os\nX = os.environ["ZC_NEEDED"]\n')

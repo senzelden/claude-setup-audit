@@ -456,8 +456,8 @@ PATH_FAMILIES = {
                'drift log path and the /insights report path',
         'leaves': (), 'maybe': _FILE_SOURCES},
     'plugin_paths': {
-        'doc': 'plugin install roots and plugin component files',
-        'leaves': (), 'maybe': (('extensions', 'plugins', '*', 'source'),
+        'doc': 'plugin install roots, plugin component files and declared mod modules',
+        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'mod', 'module'),), 'maybe': (('extensions', 'plugins', '*', 'source'),
                                 ('extensions', 'plugins', '*', 'components', '*', 'source'))},
     'referenced_files': {
         'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '
