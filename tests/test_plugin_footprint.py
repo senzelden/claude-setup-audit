@@ -91,6 +91,24 @@ class LedgerRules(FakeHome):
         self.assertEqual((result['by_path'], result['status']), ({}, 'partial'))
         self.assertEqual((result['files'], result['unreadable']), (0, 2))  # both oversized files; the FIFO is not listed
 
+    def test_deeply_nested_json_is_unreadable_not_a_crash(self):
+        path = self.project_settings()
+        self.write('.tokeneconomizer/deep/untool_applied.json', '[' * 100000)
+        self.write('.tokeneconomizer/ok/untool_applied.json', {'by_path': {os.path.realpath(path): ['WebFetch']}})
+        result = plugin_footprint.read_ledger(self.home)
+        self.assertEqual((result['files'], result['unreadable'], result['status']), (1, 1, 'partial'))
+        self.assertEqual(collect.summarize_settings(path)['plugin_written_rules'][0]['rules'], ['WebFetch'])
+
+    def test_nul_and_relative_keys_are_skipped_and_counted(self):
+        path = self.project_settings()
+        ledger(self, {'/a/b\u0000c': ['WebFetch'], 'relative/settings.json': ['WebFetch'],
+                      os.path.realpath(path): ['WebFetch']})
+        result = plugin_footprint.read_ledger(self.home)
+        self.assertEqual((result['unreadable'], result['status'], list(result['by_path'])),
+                         (2, 'partial', [os.path.realpath(path)]))
+        snap_source = collect.summarize_settings(path)
+        self.assertEqual(snap_source['plugin_written_rules'][0]['rules'], ['WebFetch'])
+
     def test_file_count_is_capped(self):
         for i in range(plugin_footprint.LEDGER_FILES + 5):
             self.write(f'.tokeneconomizer/p{i:03d}/untool_applied.json', {'by_path': {}})
@@ -164,6 +182,32 @@ class HookEffects(FakeHome):
             with self.subTest(text=text):
                 self.assertTrue(self.effects('PreToolUse', files={'hooks/h.sh': text}).get('decides_permissions'))
 
+    def test_exit_code_two_and_legacy_decision_block_are_decisions(self):
+        for text in ('exit 2', 'sys.exit(2)', 'process.exit(2)', 'os._exit(2)', '{"decision": "block"}',
+                     'out["decision"] = "approve"'):
+            with self.subTest(text=text):
+                out = self.effects('PreToolUse', files={'hooks/h.sh': text})
+                self.assertEqual((out.get('decides_permissions'), out.get('decision_basis')), (True, 'static_scan'))
+
+    def test_other_exit_codes_and_prose_are_not(self):
+        for text in ('exit 0', 'exit 20', 'sys.exit(1)', 'echo a 2>&1', 'myexit 2', '# exit 2', 'indecision block'):
+            with self.subTest(text=text):
+                self.assertEqual(self.effects('PreToolUse', files={'hooks/h.sh': text}), {})
+
+    def test_relative_script_after_cd_to_the_plugin_root_is_resolved(self):
+        out = self.effects('PreToolUse', command='cd "$CLAUDE_PLUGIN_ROOT" && node hooks/g.js',
+                           files={'hooks/g.js': 'process.exit(2)'})
+        self.assertEqual((out['decides_permissions'], out['decision_file']), (True, os.path.join('hooks', 'g.js')))
+
+    def test_relative_script_without_the_cd_is_not_resolved_against_the_root(self):
+        out = self.effects('PreToolUse', command='node hooks/g.js', files={'hooks/g.js': 'process.exit(2)'})
+        self.assertEqual(out, {'scan_gap': 'no_local_script'})
+
+    def test_command_without_a_local_script_is_a_gap_unless_the_text_matched(self):
+        self.assertEqual(self.effects('PreToolUse', command='npx -y some-guard hook'), {'scan_gap': 'no_local_script'})
+        self.assertEqual(self.effects('PreToolUse', command='echo ok; exit 2')['decision_basis'], 'static_scan')
+        self.assertNotIn('scan_gap', self.effects('PreToolUse', command='echo ok; exit 2'))
+
     def test_ask_reason_comments_and_other_keys_do_not_match(self):
         for text in ('{"permissionDecision": "ask"}', '{"permissionDecisionReason": "allow all"}',
                      '# permissionDecision: allow', '// permissionDecision: deny', 'permissionDecisions allow'):
@@ -210,6 +254,10 @@ class HookEffects(FakeHome):
 
     def test_missing_script_is_a_gap_not_a_clean_bill(self):
         self.assertEqual(self.effects('PreToolUse'), {'scan_gap': 'script_unresolved'})
+
+    def test_non_command_pretooluse_handler_has_no_gap(self):
+        root = os.path.join(self.claude, 'plugins', 'cache', 'm', 'p', '1')
+        self.assertEqual(plugin_footprint.hook_effects('PreToolUse', {'type': 'http', 'url': 'https://x'}, root), {})
 
     def test_script_over_the_read_bound_is_truncated_and_labelled(self):
         text = 'x' * plugin_footprint.SCAN_BYTES + '\n' + DECIDER
@@ -263,6 +311,11 @@ class HandlerTimeout(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(self.issues(timeout=value), [])
 
+    def test_async_command_hooks_and_session_end_are_not_judged(self):
+        self.assertEqual(self.issues(timeout=5000, **{'async': True}), [])
+        self.assertEqual(config_checks.handler_issues('SessionEnd', None, {'command': 'x', 'timeout': 5000})[0], [])
+        self.assertEqual(self.issues(timeout=5000, **{'async': False}), ['timeout_suspect_ms'])
+
     def test_issue_reaches_the_collected_handler(self):
         entry = collect.hook_handler_entry('PreToolUse', 'Bash', {'type': 'command', 'command': 'x', 'timeout': 5000})
         self.assertEqual(entry['issues'], ['timeout_suspect_ms'])
@@ -295,6 +348,11 @@ class InjectionVersusCap(FakeHome):
         self.assertEqual((src['over_cap'], src['chars_max'], src['records'], out['output_cap_chars']),
                          (1, 10001, 2, 10000))
 
+    def assemble(self, raw, index):
+        return harness.assemble(raw, index, [], {'plugins': []},
+                                {'main_files': {'omitted': 0}, 'subagent_files': {'omitted': 0, 'scanned': 0}},
+                                30, collect.pct, scan=lambda i: ([], []))['injected_context']
+
     def test_hook_stdout_rows_attribute_by_command_and_count_over_cap(self):
         index = [{'plugin': 'a@m', 'command': 'run-a', 'event': 'PostToolUse'}]
         raw = self.raw([
@@ -302,14 +360,28 @@ class InjectionVersusCap(FakeHome):
             attachment('hook_success', toolUseID='t2', command='run-a', hookEvent='PostToolUse', stdout='y' * 5),
             attachment('hook_success', toolUseID='t3', command='mine', hookEvent='PostToolUse', stdout='z' * 7),
             attachment('hook_success', toolUseID='t4', command='quiet', hookEvent='PostToolUse', stdout='')])
-        out = harness.assemble(raw, index, [], {'plugins': []},
-                               {'main_files': {'omitted': 0}, 'subagent_files': {'omitted': 0, 'scanned': 0}},
-                               30, collect.pct, scan=lambda i: ([], []))['injected_context']
-        self.assertEqual(out['hook_stdout'], [
-            {'plugin': 'a@m', 'attribution': 'matched', 'hook_event': 'PostToolUse', 'records': 2,
+        self.assertEqual(self.assemble(raw, index)['hook_stdout'], [
+            {'plugin': 'a@m', 'attribution': 'matched', 'hook_event': 'PostToolUse', 'kind': 'plain', 'records': 2,
              'chars_max': 12000, 'over_cap': 1},
-            {'plugin': None, 'attribution': 'unattributed', 'hook_event': 'PostToolUse', 'records': 1,
-             'chars_max': 7, 'over_cap': 0}])
+            {'plugin': None, 'attribution': 'unattributed', 'hook_event': 'PostToolUse', 'kind': 'plain',
+             'records': 1, 'chars_max': 7, 'over_cap': 0}])
+
+    def test_json_stdout_is_sized_per_field_not_as_a_whole_envelope(self):
+        index = [{'plugin': 'a@m', 'command': 'run-a', 'event': 'SessionStart'}]
+        # Two fields of 6000 characters: 12000+ in total, but each below the cap.
+        envelope = json.dumps({'hookSpecificOutput': {'additionalContext': 'a' * 6000}, 'systemMessage': 'b' * 6000})
+        over = json.dumps({'hookSpecificOutput': {'additionalContext': 'a' * 10001}})
+        raw = self.raw([attachment('hook_success', toolUseID='t1', command='run-a', hookEvent='SessionStart', stdout=envelope),
+                        attachment('hook_success', toolUseID='t2', command='run-a', hookEvent='SessionStart', stdout=over),
+                        attachment('hook_success', toolUseID='t3', command='run-a', hookEvent='SessionStart',
+                                   stdout='{not json ' + 'x' * 10001)])
+        rows = {r['kind']: r for r in self.assemble(raw, index)['hook_stdout']}
+        self.assertEqual((rows['json']['records'], rows['json']['chars_max'], rows['json']['over_cap']), (2, 10001, 1))
+        self.assertEqual((rows['plain']['records'], rows['plain']['over_cap']), (1, 1))
+
+    def test_json_without_capped_fields_and_nested_arrays_do_not_crash(self):
+        self.assertEqual(harness.stdout_size('{"continue": true}'), ('json', 0))
+        self.assertEqual(harness.stdout_size('{"a":' + '[' * 100000), ('plain', 100005))
 
 
 class SessionStartGuess(FakeHome):
@@ -475,45 +547,46 @@ def privacy_marker(value):
     return re.fullmatch(r'\[metadata-only: \d+ chars\]', value) is not None
 
 
-class PruneKeepsPluginRules(PatchedHome):
-    LONG = 'Bash(curl https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)'
+class PruneAndPluginRules(PatchedHome):
+    """prune_permissions only removes allow rules and directories; the ledger records deny rules only."""
+    ONE_OFF = 'Bash(curl https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)'
 
-    def plan(self, **settings):
-        path = self.write('code/app/.claude/settings.local.json', settings)
-        return path, prune_permissions.plan_file_detail(path, {'one-off'})
+    def write_settings(self, **settings):
+        return self.write('code/app/.claude/settings.local.json', settings)
 
-    def test_ledger_listed_rule_is_never_proposed_and_is_reported_with_the_reason(self):
-        path = self.write('code/app/.claude/settings.local.json',
-                          {'permissions': {'allow': [self.LONG, 'Bash(git status)', 'Bash(curl http://a.example/b)']}})
-        ledger(self, {os.path.realpath(path): [self.LONG]})
-        _, removals, _, _, kept, _ = prune_permissions.plan_file_detail(path, {'one-off'})
-        self.assertNotIn(self.LONG[:160], [r['rule'] for r in removals])
-        self.assertEqual([k['plugin'] for k in kept], ['TokenEconomizer'])
-        self.assertIn('plugin', kept[0]['why'])
-        self.assertEqual(len(removals), 1)  # the user's own one-off is still proposed
-
-    def test_without_a_ledger_the_same_rule_is_proposed(self):
-        _, (_, removals, _, _, kept, _) = self.plan(permissions={'allow': [self.LONG]})
-        self.assertEqual((len(removals), kept), (1, []))
-
-    def test_cli_plan_names_kept_rules_and_apply_leaves_them_in_the_file(self):
-        path = self.write('code/app/.claude/settings.local.json', {'permissions': {'allow': [self.LONG]}})
-        ledger(self, {os.path.realpath(path): [self.LONG]})
+    def run_cli(self, path, *extra):
         out = io.StringIO()
-        argv = ['prune_permissions.py', '--remove', 'one-off', '--files', path, '--apply', '--backup-dir',
-                os.path.join(self.home, 'bk')]
+        argv = ['prune_permissions.py', '--remove', 'one-off,stale-dirs', '--files', path, *extra]
         with mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(out):
             prune_permissions.main()
-        plan = json.loads(out.getvalue())
-        self.assertEqual((plan['rules'], len(plan['files'][0]['kept_plugin_written'])), (0, 1))
-        self.assertNotIn('backup', plan['files'][0])
+        return json.loads(out.getvalue())
+
+    def test_a_deny_rule_is_never_proposed_even_when_it_would_match_a_category(self):
+        path = self.write_settings(permissions={'deny': [self.ONE_OFF, 'WebFetch'], 'allow': []})
+        ledger(self, {os.path.realpath(path): [self.ONE_OFF, 'WebFetch']})
+        plan = self.run_cli(path, '--apply', '--backup-dir', os.path.join(self.home, 'bk'))
+        self.assertEqual((plan['rules'], plan['files']), (0, []))
         with open(path) as f:
-            self.assertEqual(json.load(f)['permissions']['allow'], [self.LONG])
+            self.assertEqual(json.load(f)['permissions']['deny'], [self.ONE_OFF, 'WebFetch'])
+
+    def test_a_ledger_deny_entry_does_not_protect_a_users_allow_rule(self):
+        path = self.write_settings(permissions={'allow': [self.ONE_OFF]})
+        ledger(self, {os.path.realpath(path): [self.ONE_OFF]})
+        _, removals, _, _, _ = prune_permissions.plan_file_detail(path, {'one-off'})
+        self.assertEqual(len(removals), 1)
+        self.assertNotIn('kept_plugin_written', self.run_cli(path)['files'][0])
 
     def test_marker_file_is_flagged_but_rules_stay_proposable(self):
-        _, (_, removals, _, _, _, markers) = self.plan(permissions={'allow': [self.LONG]},
-                                                       quartermaster={'autoApprovePermissions': True})
+        path = self.write_settings(permissions={'allow': [self.ONE_OFF]}, quartermaster={'autoApprovePermissions': True})
+        _, removals, _, _, markers = prune_permissions.plan_file_detail(path, {'one-off'})
         self.assertEqual((len(removals), markers), (1, ['quartermaster.autoApprovePermissions']))
+        entry = self.run_cli(path)['files'][0]
+        self.assertEqual(entry['plugin_markers'], ['quartermaster.autoApprovePermissions'])
+        self.assertIn('auto-approve', entry['plugin_note'])
+
+    def test_unmarked_file_has_no_note(self):
+        path = self.write_settings(permissions={'allow': [self.ONE_OFF]})
+        self.assertNotIn('plugin_note', self.run_cli(path)['files'][0])
 
 
 if __name__ == '__main__':

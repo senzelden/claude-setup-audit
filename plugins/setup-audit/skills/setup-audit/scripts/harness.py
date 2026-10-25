@@ -186,6 +186,25 @@ ENTRYPOINTS = ('cli', 'sdk-py', 'sdk-cli')
 # documented, so an over-cap count can be an undercount.
 HOOK_OUTPUT_CAP = 10000
 OUTPUT_ROW_LIMIT = 30
+# hooks.md measures JSON output per string field (additionalContext, systemMessage, initialUserMessage) and
+# only plain stdout as a whole, so a JSON object is sized by its largest such field.
+JSON_CAPPED_FIELDS = ('additionalContext', 'systemMessage', 'initialUserMessage')
+
+
+def stdout_size(stdout):
+    """('json' | 'plain', characters the cap applies to): the largest capped field of a JSON object, else the whole text."""
+    text = stdout.strip()
+    if text.startswith('{'):
+        try:
+            data = json.loads(text)
+        except (ValueError, RecursionError):
+            data = None
+        if isinstance(data, dict):
+            nested = data.get('hookSpecificOutput') if isinstance(data.get('hookSpecificOutput'), dict) else {}
+            sizes = [len(v) for src in (data, nested) for k in JSON_CAPPED_FIELDS
+                     if isinstance(v := src.get(k), str)]
+            return 'json', max(sizes, default=0)
+    return 'plain', len(stdout)
 
 
 def _int(value):
@@ -267,14 +286,14 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
                             est_tokens_per_session_median=_int(median / 4)))
     sources.sort(key=lambda s: (-s['sessions'], s['plugin'] or '', s['attribution'], s['hook_event']))
     outputs = defaultdict(lambda: dict(records=0, chars_max=0, over_cap=0))
-    for path, event, command, chars in raw.get('outputs', ()):
+    for path, event, command, chars, kind in raw.get('outputs', ()):
         plugin, attribution = match_command(index, command)
-        row = outputs[(plugin, attribution, event)]
+        row = outputs[(plugin, attribution, event, kind)]
         row['records'] += 1
         row['chars_max'] = max(row['chars_max'], chars)
         row['over_cap'] += chars > HOOK_OUTPUT_CAP
-    output_rows = sorted((dict(plugin=p, attribution=a, hook_event=e, **v) for (p, a, e), v in outputs.items()),
-                         key=lambda r: (-r['chars_max'], r['plugin'] or '', r['attribution'], r['hook_event']))
+    output_rows = sorted((dict(plugin=p, attribution=a, hook_event=e, kind=k, **v) for (p, a, e, k), v in outputs.items()),
+                         key=lambda r: (-r['chars_max'], r['plugin'] or '', r['attribution'], r['hook_event'], r['kind']))
 
     # SDK sessions list different skills than interactive ones; mixing them breaks the series.
     # No or unknown entrypoint counts as non-SDK.

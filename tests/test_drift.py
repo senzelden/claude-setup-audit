@@ -174,7 +174,7 @@ class Signals(unittest.TestCase):
         self.assertEqual(fps, {fp: '~/.claude/settings.json'})
         self.assertEqual(signals['skill_listing_chars'], {'value': 10000, 'complete': True})
         self.assertEqual(signals['injected_tokens'], {'value': 800, 'plugin': 'p@m', 'hook_event': 'SessionStart',
-                                                      'attribution': 'hook.sh', 'complete': True})
+                                                      'attribution': 'hook.sh', 'unit': 'chars_text', 'complete': True})
 
     def test_missing_sources_are_null(self):
         signals, _ = drift.derive({'global': {}, 'projects': {}, 'transcripts': {'cache': {'hit_ratio': None}}},
@@ -245,6 +245,14 @@ class Compare(unittest.TestCase):
         now = snapshot()
         now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 5000
         self.assertEqual(self.run_compare(now, [before]), [])
+
+    def test_injected_growth_skips_entries_measured_in_another_unit(self):
+        before = self.entry(snapshot())  # an entry logged before 0.12.0 has no unit
+        del before['signals']['injected_tokens']['unit']
+        now = snapshot()
+        now['harness_overhead']['injected_context']['sources'][0]['est_tokens_per_session_median'] = 5000
+        self.assertEqual(self.run_compare(now, [before]), [])
+        self.assertNotEqual(self.run_compare(now, [self.entry(snapshot())]), [])
 
     def listing(self, chars, at, crossed=False):
         snap = snapshot()

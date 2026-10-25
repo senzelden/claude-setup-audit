@@ -1170,6 +1170,7 @@
               "type": "object",
               "required": ["plugin", "attribution", "hook_event", "records", "chars_max", "over_cap"],
               "properties": {
+                "kind": {"enum": ["json", "plain"]},
                 "plugin": {"type": ["string", "null"]},
                 "attribution": {"enum": ["matched", "ambiguous", "unattributed"]},
                 "hook_event": {"type": "string"},

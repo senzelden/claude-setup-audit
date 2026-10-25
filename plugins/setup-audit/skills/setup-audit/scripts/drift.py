@@ -51,10 +51,15 @@ def derive(snap, global_claude_md):
                                                         'complete': bool(h.get('complete'))},
         'injected_tokens': None if not top else {'value': top['est_tokens_per_session_median'],
                                                  'plugin': top['plugin'], 'hook_event': top['hook_event'],
-                                                 'attribution': top['attribution'],
+                                                 'attribution': top['attribution'], 'unit': INJECTION_UNIT,
                                                  'complete': bool(h.get('complete'))},
     }
     return signals, fps
+
+
+# 0.12.0 sizes injections in characters of the text; earlier collectors measured the length of the JSON
+# encoding of the content list, so values logged without this unit are not comparable.
+INJECTION_UNIT = 'chars_text'
 
 
 def comparable(entries, meta, name, valid=None):
@@ -78,8 +83,8 @@ def _identity(v):
 def growth_anchor(entries, meta, name, current):
     """The reference value for growth and its `at`: the value at the last growth crossing of this
     signal, or else the earliest comparable run. For injected_tokens the walk stops at a run whose
-    plugin, hook event or attribution differs (older entries lack attribution), so a change of the
-    top source starts a new baseline. Only values above 0 can be a reference."""
+    plugin, hook event, attribution or unit differs (older entries lack attribution and unit), so a change
+    of the top source or of how injections are measured starts a new baseline. Only values above 0 can be a reference."""
     anchor = (None, None)
     for e in reversed(entries):
         signals = e.get('signals')
@@ -87,7 +92,8 @@ def growth_anchor(entries, meta, name, current):
                 or not isinstance(signals.get(name), dict):
             continue
         value = signals[name]
-        if name == 'injected_tokens' and ('attribution' not in value or _identity(value) != _identity(current)):
+        if name == 'injected_tokens' and ('attribution' not in value or value.get('unit') != current.get('unit')
+                                          or _identity(value) != _identity(current)):
             break
         if _number(value.get('value')) and value['value'] > 0:
             anchor = (value['value'], e.get('at'))

@@ -15,6 +15,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import stat
 
 import harness
@@ -121,7 +122,7 @@ def read_ledger(home):
         raw = _read_regular(path, LEDGER_BYTES)
         try:
             data = json.loads(raw) if raw is not None and len(raw) <= LEDGER_BYTES else None
-        except ValueError:
+        except (ValueError, RecursionError):  # deeply nested arrays raise RecursionError
             data = None
         if not isinstance(data, dict):
             out['unreadable'] += 1
@@ -133,6 +134,10 @@ def read_ledger(home):
         elif isinstance(data.get('path'), str):
             pairs = [(data['path'], _rules(data.get('tools')))]
         for key, rules in pairs:
+            if '\0' in key or not os.path.isabs(key):  # realpath raises on NUL; a relative key names no file
+                out['unreadable'] += 1
+                out['status'] = 'partial'
+                continue
             have = out['by_path'].setdefault(os.path.realpath(key), [])
             have.extend(r for r in rules if r not in have)
     if out['unreadable']:
@@ -152,11 +157,6 @@ def written_rules(ledger, settings_path, deny):
     present = [r for r in listed if r in set(deny)]
     return [{'plugin': LEDGER_PLUGIN, 'list': 'deny', 'rules': present, 'rule_count': len(present),
              'ledger_only': len(listed) - len(present)}]
-
-
-def protected_rules(ledger, settings_path):
-    """{rule: plugin} the ledger says a plugin wrote to this file, whichever list holds it today."""
-    return {r: LEDGER_PLUGIN for r in ledger['by_path'].get(os.path.realpath(settings_path), [])}
 
 
 def markers(raw):
@@ -208,6 +208,12 @@ SCAN_BYTES = 64 * 1024
 # Heuristic text patterns. `permissionDecision` followed by quotes, colon or escaped quotes, then
 # allow|deny (a `permissionDecisionReason` key does not match); `updatedInput` as a word.
 DECISION_RE = re.compile(r'permissionDecision[\\"\'\s:=]{1,12}(allow|deny)\b')
+# Other documented ways a PreToolUse hook decides (hooks.md, fetched 2026-10-25): the deprecated top-level
+# `"decision": "approve"|"block"` and exit code 2, which blocks the tool call ("Exit code 2 behavior per event").
+LEGACY_DECISION_RE = re.compile(r'(?<![A-Za-z])decision[\\"\'\s:=\]]{1,12}(approve|block)\b')
+EXIT_TWO_RE = re.compile(r'(?<![A-Za-z0-9])_?exit\s*\(?\s*2(?![\d>])')
+CD_ROOT_RE = re.compile(r'\bcd\s+["\']?\$\{?CLAUDE_PLUGIN_ROOT\}?["\']?\s*(?:&&|;)')
+SCRIPT_SUFFIXES = ('.sh', '.bash', '.js', '.mjs', '.cjs', '.ts', '.py', '.rb', '.pl')
 REWRITE_RE = re.compile(r'\bupdatedInput\b')
 SCAN_EVENTS = ('PreToolUse', 'PermissionRequest')
 
@@ -217,9 +223,25 @@ def _scan_text(text):
     for line in text.splitlines():
         if line.lstrip().startswith(('#', '//')):
             continue
-        decides = decides or DECISION_RE.search(line) is not None
+        decides = (decides or DECISION_RE.search(line) is not None or LEGACY_DECISION_RE.search(line) is not None
+                   or EXIT_TWO_RE.search(line) is not None)
         rewrites = rewrites or REWRITE_RE.search(line) is not None
     return decides, rewrites
+
+
+def _relative_scripts(command, root):
+    """Script paths written relative to the plugin root, only after `cd "$CLAUDE_PLUGIN_ROOT" &&` (or `;`)."""
+    expanded = command
+    for var in harness.ROOT_VARS:
+        expanded = expanded.replace(var, '%ROOT%')
+    if not CD_ROOT_RE.search(expanded.replace('%ROOT%', '$CLAUDE_PLUGIN_ROOT')):
+        return []
+    try:
+        tokens = shlex.split(expanded.replace('%ROOT%', root))
+    except ValueError:
+        return []
+    return [os.path.join(root, t) for t in tokens
+            if t and not t.startswith(('-', '/')) and t.lower().endswith(SCRIPT_SUFFIXES)]
 
 
 def hook_effects(event, handler, root):
@@ -242,7 +264,9 @@ def hook_effects(event, handler, root):
         return out
     command = handler['command']
     texts, gap = [(None, command)], None
-    for raw in harness._script_paths(command, root):
+    candidates = list(harness._script_paths(command, root))
+    candidates += _relative_scripts(command, root)
+    for raw in candidates:
         path = os.path.abspath(raw)
         if not harness._inside(path, root) or not os.path.isfile(path):
             gap = gap or 'script_unresolved'
@@ -268,6 +292,8 @@ def hook_effects(event, handler, root):
         out.setdefault('decision_basis', 'static_scan')
     if evidence and ('decision_basis' in out or rewrites):
         out['decision_file'] = evidence
+    if not candidates and not decides and not rewrites:
+        gap = 'no_local_script'  # e.g. `npx -y pkg hook`: nothing of this hook's logic was readable
     if gap:
         out['scan_gap'] = gap
     return out

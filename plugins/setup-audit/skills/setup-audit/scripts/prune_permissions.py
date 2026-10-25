@@ -71,17 +71,17 @@ def settings_files(snapshot):
 
 
 def plan_file(path, remove, allow_symlinks=False):
-    """(data, removals, dirs, identity); see plan_file_detail for the plugin-written rules it left alone."""
+    """(data, removals, dirs, identity); see plan_file_detail for the plugin markers it also finds."""
     return plan_file_detail(path, remove, allow_symlinks)[:4]
 
 
 def plan_file_detail(path, remove, allow_symlinks=False):
-    """plan_file plus the rules kept because a plugin wrote them, and plugin markers found in the file.
+    """plan_file plus the plugin markers found in the file.
 
-    A rule a plugin's ledger says it wrote to this file (TokenEconomizer's untool_applied.json) is
-    never proposed for removal: the plugin would write it again, or the user chose it. Rules written
-    by a plugin that leaves only a marker key (quartermaster auto-approve) cannot be told apart from
-    the user's, so they stay proposable and the file is flagged instead.
+    This script only ever removes `allow` rules and stale directories; it never touches `deny` rules,
+    which is the only list TokenEconomizer's ledger records, so a plugin-written deny rule can never be
+    proposed here. Allow rules written by a plugin that leaves only a marker key (quartermaster
+    auto-approve) cannot be told apart from the user's, so they stay proposable and the file is flagged.
     """
     fd, st = open_no_symlink(path, allow_symlinks)
     with os.fdopen(fd) as f:
@@ -90,23 +90,19 @@ def plan_file_detail(path, remove, allow_symlinks=False):
     # Plan only over correctly typed rules; anything else stays in the file untouched.
     perms = collect.settings_shape(data)[0].get("permissions") if isinstance(data, dict) else None
     perms = perms or {}
-    removals, kept = [], []
-    protected = plugin_footprint.protected_rules(collect.plugin_ledger(), path)
+    removals = []
     for rule in perms.get("allow") or []:
         reasons = [name for name, rx in collect.RISKY_RULES if name in remove and rx.search(rule)]
         if "one-off" in remove and not reasons and is_one_off(rule):
             reasons = ["one-off"]
-        if reasons and rule in protected:
-            kept.append({"rule": collect.redact(rule)[:160], "plugin": protected[rule],
-                         "why": "written by the plugin (its ledger lists this file); it would write it again"})
-        elif reasons:
+        if reasons:
             removals.append({"rule": collect.redact(rule)[:160], "reasons": reasons, "_raw": rule})
     dirs = []
     if "stale-dirs" in remove:
         dirs = [d for d in perms.get("additionalDirectories") or []
                 if d.rstrip("/") == "/tmp" or not os.path.isdir(os.path.expanduser(d))]
     markers = plugin_footprint.markers(data)
-    return data, removals, dirs, identity, kept, markers
+    return data, removals, dirs, identity, markers
 
 
 def apply_file(path, data, removals, dirs, identity, backup_dir, allow_symlinks=False):
@@ -165,11 +161,11 @@ def main():
     dir_effect = cache_effects.effect_for("setting", "permissions.additionalDirectories", tool_search)
     for path in a.files or settings_files(a.snapshot):
         try:
-            data, removals, dirs, identity, kept, markers = plan_file_detail(path, remove, a.allow_symlinks)
+            data, removals, dirs, identity, markers = plan_file_detail(path, remove, a.allow_symlinks)
         except (OSError, ValueError, SymlinkRefused) as e:  # unreadable (sandbox, permissions), symlink, bad JSON
             skipped.append({"file": path.replace(collect.HOME, "~"), "error": type(e).__name__})
             continue
-        if not removals and not dirs and not kept:
+        if not removals and not dirs:
             continue
         total += len(removals)
         plan.append({"file": path.replace(collect.HOME, "~"),
@@ -178,8 +174,6 @@ def main():
                      "remove_dirs": dirs})
         if dirs:
             plan[-1]["remove_dirs_cache_effect"] = dir_effect
-        if kept:
-            plan[-1]["kept_plugin_written"] = kept
         if markers and removals:
             plan[-1]["plugin_markers"] = markers
             plan[-1]["plugin_note"] = ("this file carries a plugin auto-approve marker; allow rules the plugin "

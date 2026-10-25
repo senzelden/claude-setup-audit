@@ -115,7 +115,7 @@ def handler_issues(event, matcher, handler):
     issues = ['unknown_event'] if spec is None else _matcher_issues(event, spec, matcher)
     if spec is not None and 'if' in handler and event not in TOOL_EVENTS:
         issues.append('if_never_runs')
-    if timeout_suspect(handler):
+    if timeout_suspect(handler, event):
         issues.append('timeout_suspect_ms')
     kind = handler.get('type', 'command')
     unknown = []
@@ -138,8 +138,15 @@ def handler_issues(event, matcher, handler):
 TIMEOUT_SUSPECT_SECONDS = 600
 
 
-def timeout_suspect(handler):
-    """True when `timeout` is a number above the 600-second default (likely written in milliseconds)."""
+def timeout_suspect(handler, event=None):
+    """True when `timeout` is a number above the 600-second default (likely written in milliseconds).
+
+    Not for a command hook with `async: true` (Claude Code does not enforce its timeout) or for SessionEnd,
+    whose hooks share a 1.5-second budget raised to the longest `timeout` up to 60 seconds (hooks.md
+    "Hook handler fields", fetched 2026-10-25).
+    """
+    if event == 'SessionEnd' or handler.get('async') is True:
+        return False
     value = handler.get('timeout')
     return type(value) in (int, float) and value > TIMEOUT_SUSPECT_SECONDS
 

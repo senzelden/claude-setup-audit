@@ -1050,7 +1050,8 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
             stdout = a.get("stdout")
             if isinstance(a.get("hookEvent"), str) and isinstance(stdout, str) and stdout.strip():
                 raw["event_commands"].setdefault((path, a["hookEvent"]), set()).add(a["command"])
-                raw["outputs"].append((path, a["hookEvent"], a["command"], len(stdout)))
+                kind, chars = harness.stdout_size(stdout)
+                raw["outputs"].append((path, a["hookEvent"], a["command"], chars, kind))
     if record.get("type") == "assistant" and (not is_top or not record.get("isSidechain")):
         msg = record.get("message") if isinstance(record.get("message"), dict) else {}
         usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
