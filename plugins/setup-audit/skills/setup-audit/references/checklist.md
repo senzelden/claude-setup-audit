@@ -227,6 +227,14 @@ readiness, cost metrics and harness overhead.
   coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
   transcript scans provide no usage evidence. Propose removal only with additional evidence that
   the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
+  Per-tool evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
+  excluded): `used[]` counts sessions per tool name, `listed_never_called[]` names deferred tools
+  listed in some session and never called in the window (with how many sessions listed each). State
+  the cost honestly: a deferred tool costs about one listing line until it is used, so pruning
+  never-called tools saves little; the evidence supports a note, rarely a removal. Always-loaded
+  built-in tools are not listed in transcripts, so their non-use is not observable, and this audit
+  proposes no deny rules for built-in tools from usage. Read `sessions_with_deferred_records`
+  before concluding anything: zero means no listing evidence, not zero use.
 - **COST-skill-listing** (`skill_listing`, excerpt-size observation): verify runtime activation,
   `skillListingBudgetFraction` and `skillListingMaxDescChars` against current settings and docs
   before claiming listing overflow. Collected excerpts do not establish the effective budget or
@@ -554,6 +562,14 @@ metric that motivated it, so the next run can check whether it moved.
   (skipped at load), `sse_deprecated` (switch to `http`), and the same name in several scopes with
   `endpoint_origins_differ: true` (OAuth sign-ins are stored per endpoint, so sign-in state differs
   between projects). `empty_url_placeholder` is a documented placeholder, not a finding.
+  Connection failures (`transcripts.mcp_failures`, observed, undocumented): per server name,
+  `sessions_failed` and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts
+  (error text is never stored) and `configured` (exact name match to a collected config name;
+  plugin and connector servers use other names, so `false` is not proof of absence). A server failing
+  in many sessions (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones)
+  is a configuration or availability problem to fix or remove: an endpoint that does not exist
+  (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after checking
+  scope and activation in `extensions.mcp_servers`; a pending server may only be slow to start.
 
 ## Agent readiness (`RDY-`, opt-in via `focus=readiness`)
 

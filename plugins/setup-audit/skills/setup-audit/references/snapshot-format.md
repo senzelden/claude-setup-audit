@@ -127,6 +127,16 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `by_project` (transcript key -> `turns`, `loop_turns`, `tokens`; hashed like other per-project maps),
     `command_heads` (first token or test runner from a fixed allowlist, else `other`, capped at 15),
     `thresholds`, `basis`. Counts only: no commands, paths or session ids. Plugin-spawned sessions excluded.
+- `transcripts.tool_usage` and `transcripts.mcp_failures` (0.12.0; observed, undocumented
+  `deferred_tools_delta` records, plus assistant `tool_use` names), optional and additive within snapshot v1:
+  main-thread sessions only, plugin-spawned sessions excluded. `tool_usage`: `sessions`,
+  `sessions_with_deferred_records`, `used[]` (`tool`, `sessions`; 40 rows, `used_omitted`),
+  `listed_never_called[]` (`tool`, `sessions_listed`; 40 rows, `listed_never_called_total`,
+  `listed_never_called_omitted`), `basis`. `mcp_failures`: `sessions_observed`, `servers[]`
+  (`server`, `sessions_failed`, `sessions_pending`, `error_codes[]` of `code`, `sessions`, and
+  `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
+  only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
+  not a short identifier-like string are never stored. Names stay in metadata-only mode.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

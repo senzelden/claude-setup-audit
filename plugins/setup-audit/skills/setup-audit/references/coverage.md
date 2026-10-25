@@ -367,3 +367,13 @@ The contextual detector runs in both modes. A high-entropy value next to a key-l
 `[REDACTED:context]`, keeping the label. It ignores hashes, UUIDs, paths, references, word-like
 identifiers and values with spaces, so it can miss short or low-entropy secrets and secrets with
 unfamiliar labels. Redaction remains best-effort.
+
+Tool usage and MCP failures (`transcripts.tool_usage`, `transcripts.mcp_failures`; observed, undocumented,
+Claude Code 2.1.278 to 2.1.310, 2026-10-25): Claude Code documents neither shape. `deferred_tools_delta` attachments
+carry name lists (`addedNames`, `readdedNames`, `surfacedNames`, `removedNames`), `pendingMcpServers` (names)
+and `failedMcpServers` (`name`, `errorCode`, `error`); only names and `errorCode` are read, never `error`.
+Always-loaded built-in tools are not listed anywhere, so only deferred tools (MCP, plugin and some built-ins)
+can be "listed but never called". Counts are per transcript file in the window, so resumed copies of a
+session can count twice; sessions without these records (older versions, no tool search) contribute to
+`sessions` but not to listing or failure evidence. A deferred tool costs about one listing line until used.
+A shape change shows up as zero `sessions_with_deferred_records`, not as an error.

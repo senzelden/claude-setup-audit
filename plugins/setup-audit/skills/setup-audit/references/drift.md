@@ -1,7 +1,7 @@
 # Drift mode
 
 An optional, model-free command that notices setup drift between full audits. It collects a
-snapshot, derives five signals, compares them with thresholds and earlier comparable runs,
+snapshot, derives six signals, compares them with thresholds and earlier comparable runs,
 appends one line to a drift log, and prints one line only when something crossed. You run it or wire
 it into your own cron job or hook. The plugin never installs a hook, schedule or background process.
 The full audit reads the log read-only and cites crossings as dated evidence (see `checklist.md`).
@@ -11,7 +11,7 @@ The full audit reads the log read-only and cites crossings as dated evidence (se
 ```bash
 python3 <plugin dir>/skills/setup-audit/scripts/drift.py [--scope all|global|project] [--project P] \
   [--roots ...] [--days 30] [--claude-dir D] [--log PATH] [--claude-md-max-lines 200] \
-  [--cache-hit-min 0.9] [--growth-min 0.25]
+  [--cache-hit-min 0.9] [--growth-min 0.25] [--mcp-fail-min-sessions 3] [--mcp-fail-min-share 0.5]
 ```
 
 `--scope`, `--project`, `--roots`, `--days` and `--claude-dir` mean what they mean for `collect.py`
@@ -26,6 +26,7 @@ is installed on your machine; fill it in yourself.
 | `cache_hit_ratio` | `transcripts.cache.hit_ratio` | below the minimum (`below_min`) | 0.90: "above ~90% is healthy" (`COST-cache-health`) |
 | `broad_permissions` | count and fingerprints of `permissions.risky` rules | a fingerprint is absent from the previous comparable entry (`new`) | none |
 | `skill_listing_chars` | last `harness_overhead.skill_listing_series` size | grew by at least the fraction over its growth anchor (`growth`) | 0.25 (`--growth-min`), a recommendation, not a documented limit |
+| `mcp_failures` | the MCP server with the most sessions in `transcripts.mcp_failures` (`failedMcpServers`; observed, undocumented), its failed sessions and share of sessions with such records | failed in at least 3 sessions and at least half of the observed sessions (`high_failure_rate`) | 3 sessions (`--mcp-fail-min-sessions`) and 0.5 (`--mcp-fail-min-share`), recommendations, not documented limits |
 | `injected_tokens` | median estimated tokens per session of the top injected-context source | same growth rule; the anchor only reaches back over runs whose plugin, hook event and `attribution` match the current ones (entries logged without `attribution`, or without the `unit` `chars_text` that 0.12.0 added (earlier runs measured the JSON encoding of the content, not its text), end the walk) | 0.25 (`--growth-min`) |
 
 A signal is `null` when its source is absent, and a null signal never crosses. The `complete` flag
@@ -49,7 +50,7 @@ creep.) `skill_listing_chars` is taken
 from the most recent non-SDK session, so at scope `all` it can move with whichever project was used
 last.
 
-**Crossing kinds:** `above_max` (with `path`), `below_min`, `new` (with the new fingerprints and
+**Crossing kinds:** `above_max` (with `path`), `below_min`, `high_failure_rate` (with `server`, `value`, `share`, `sessions_observed`), `new` (with the new fingerprints and
 their settings file paths), `growth` (with `previous`, the anchor value, `since`, the anchor run's `at`, and `fraction`).
 
 **Fingerprint limits.** A fingerprint is the first 16 hex characters of the SHA-256 of settings file
