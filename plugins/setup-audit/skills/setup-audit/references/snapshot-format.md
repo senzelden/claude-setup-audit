@@ -125,7 +125,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   - `transcripts.failure_loops`: `turns_scanned`, `turns_with_loop`, `sessions_scanned`, `sessions_with_loop`,
     `by_kind` and `max_repeats` (`repeat_error`, `edit_test`), `tokens_scanned`, `tokens_in_loop_turns`,
     `by_project` (transcript key -> `turns`, `loop_turns`, `tokens`; hashed like other per-project maps),
-    `command_heads` (first token matching a strict lowercase identifier, else `other`, capped at 15),
+    `command_heads` (first token or test runner from a fixed allowlist, else `other`, capped at 15),
     `thresholds`, `basis`. Counts only: no commands, paths or session ids. Plugin-spawned sessions excluded.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;

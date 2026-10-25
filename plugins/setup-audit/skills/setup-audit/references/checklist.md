@@ -300,7 +300,7 @@ readiness, cost metrics and harness overhead.
   Prefer `transcripts.tool_errors` (see `COST-tool-error-clusters`) when present.
 - **COST-tool-error-clusters** (`transcripts.tool_errors`, measured; categories heuristic): cite
   `by_tool` and `by_mcp_server` counts, never error text (none is stored). Separate `denied`
-  (permission prompts refused or rules denying) from failures; `failure_rate` already excludes
+  (permission prompts refused, rules denying, or the permission system answering: category `permission_gate`) from failures; `failure_rate` already excludes
   them and is `null` under `min_calls_for_rate` calls.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
     fix authentication or configuration (`claude mcp get <name>` shows an `Issue:` line), or
@@ -391,8 +391,8 @@ metric that motivated it, so the next run can check whether it moved.
 - **LRN-failure-loops** (`transcripts.failure_loops`, measured counts; thresholds in `thresholds`). A turn
   (real user prompt to the next, main thread) that repeats one failing Bash command (`repeat_error`) or
   edits one file and fails the tests again (`edit_test`) 3 or more times. Evidence is counts only: `turns_with_loop`
-  of `turns_scanned`, `by_kind`, `max_repeats`, `command_heads` (first token, e.g. `pytest`, `npm`; `other` when not an
-  identifier), `by_project`; command text and file paths are not stored, so ask the user which commands, or read the
+  of `turns_scanned`, `by_kind`, `max_repeats`, `command_heads` (allowlisted first token, e.g. `pytest`, `npm`; `other` when not on the
+  allowlist), `by_project`; command text and file paths are not stored, so ask the user which commands, or read the
   repo's test setup, before proposing. Weigh by `tokens_in_loop_turns` against `tokens_scanned` (volume incl.
   cache reads, not spend); propose only when loops recur in 3+ sessions or 2+ projects (`sessions_with_loop`,
   `by_project`), and skip a single outlier. Lightest durable fix that fits the cause:

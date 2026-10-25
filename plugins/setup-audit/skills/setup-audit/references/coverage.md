@@ -239,14 +239,25 @@ as an error.
 Failure loops (`transcripts.failure_loops`): turns are delimited by user records that are not tool results, meta,
 compact summaries, sidechain or system-injected text (`<system-reminder>`, `<local-command...>`, `<task-notification>`,
 interruption notices); observed, undocumented record shapes, so a change in a later Claude Code release shows up as
-fewer turns, not an error. A failure is an `is_error` result that is not a permission denial or user rejection. Commands
-are compared after dropping a leading `cd ... &&` or `VAR=value` prefix and trailing `2>&1`, `/dev/null` redirects and
-pipes into tail/head/tee/grep/less/wc/cat; arguments otherwise stay, so a varied selector is a different command.
-`edit_test` pairs Edit/Write/MultiEdit with the next test-like Bash command (the runner list of the readiness test
-timing); a passing run resets the files it followed. Thresholds are 3 (`REPEAT_ERROR_MIN`, `EDIT_TEST_MIN` in
-`failure_loops.py`), a recommendation calibrated on fake transcripts and an aggregate smoke over real transcripts, not
-a documented limit. Tokens are main-thread assistant usage within the turn (subagent work inside it is not attributed).
-Background shell results, commands run through subagents and tests run by hooks are invisible here.
+fewer turns, not an error. A failure is an `is_error` result that is not a permission answer: `user_rejected`,
+`permission_denied` and `permission_gate` (the permission system replying instead of the command running, observed
+2026-10-25: auto-mode classifier without a verdict, "requires approval", compound-command and variable checks,
+"Blocked:" sleeps, built-in safety denials, `allowed_domains` notes) are neutral, and `transcripts.tool_errors` counts
+`permission_gate` as `denied` too. Commands are compared by a hash of the whole normalized command (a leading
+`cd ... &&` or `VAR=value` prefix and trailing `2>&1`, `/dev/null` redirects and pipes into tail/head/tee/grep/less/wc/cat
+dropped; arguments otherwise stay, so a varied selector is a different command, and long commands never merge); the hash
+never leaves the collector. `edit_test` pairs a successful Edit/Write/MultiEdit with the next test-like Bash command (the
+runner list `TEST_CMD_RE`, also used for test timing; widened 2026-10-25 with `python -m unittest`, `tox`, `nox`,
+`cargo nextest`, `deno test`, `dotnet test`, `just test`, `make check`). A passing run resets only the files edited since
+the previous test run; a denied, interrupted (`[Request interrupted`, `toolUseResult.interrupted`) or background-launched
+(`run_in_background`) run is neutral. NotebookEdit and edits made through Bash (`sed -i`, heredocs) are not tracked, and an
+edit whose own result is an error does not count. `command_heads` come from a fixed allowlist (test runners and common
+tools); any other first token, including project or script names, is `other`. Thresholds are 3 (`REPEAT_ERROR_MIN`,
+`EDIT_TEST_MIN` in `failure_loops.py`), a recommendation calibrated on fake transcripts and an aggregate smoke over real
+transcripts, not a documented limit. Tokens are main-thread assistant usage within the turn (subagent work inside it is
+not attributed). The snapshot block comes from the bounded transcript scan (`max_files`, most recent first); the ledger
+`failure_loops` selector scans every main transcript in its window, so their counts are not comparable. Background shell
+results, commands run through subagents and tests run by hooks are invisible here.
 
 Plugin runtime footprint (`plugin_written_rules`, `plugin_markers`, `plugin_state`, hook `decides_permissions`
 / `rewrites_input`, `transcripts.plugin_spawned`; fingerprint table dated 2026-10-25, from a survey of plugin sources,
