@@ -6,12 +6,53 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-25
+
+Request-level cost evidence, settings that can't take effect where they are set, a mods
+inventory, and path hashing for shared snapshots (docs fetched 2026-10-24/25).
+
 ### Added
 
+- `transcripts.subagent_models`: subagent spawns and tokens per agent type, requested model (from
+  each subagent's `.meta.json`, observed and undocumented) and actual model, with cache reads
+  split out, plus whether `CLAUDE_CODE_SUBAGENT_MODEL` / `_FORCE` are set (names only).
+  `COST-subagents` uses it to show how much subagent volume ran on a top-tier model and why: the
+  model passed per call outranks the variable, which is only a default since 2.1.251.
+- `transcripts.request_params`: per request source (main, SDK, agent, other), counts by model,
+  effort, thinking type and cache breakpoint TTL from `api-request` transcript records (observed,
+  undocumented). Only these fixed fields are read; never prompts, messages or blobs.
+- `HYG-scope-ignored`: settings keys a project or local file can't set (user, managed or global
+  config scope per the settings reference) and env names Claude Code ignores in project/local
+  `env`, recorded per settings file as `scope_ignored_keys` and `ignored_env_keys`. A repository
+  that sets telemetry exporters or `OTEL_LOG_RAW_API_BODIES` is also a security note. Cost
+  guidance names `idleCompaction` and per-model auto-compact.
+- Mods inventory: a plugin whose `hooks/hooks.json` names a JS hook module gets `mod` (module,
+  size, and the `on('<event>')` and `$.<ns>.<method>` names from a bounded static text scan; the
+  module is never run). Settings record the built-in guard options `allowManagedModsOnly` and
+  `allowModsToOverrideDenyRules` from managed `pluginConfigs`, whether a managed `prependPlugins`
+  still names the guard, and guard entries in files where they have no effect. `SEC-mods` weighs
+  them: mods run unsandboxed, and `tool.check` can approve past `ask` rules.
 - `collect.py --hash-paths` (with or without `--metadata-only`) replaces path-like kept strings with salted
   `h:<12 hex>` tags; `--hash-salt-file` makes tags stable across audits. Recorded in `coverage.privacy`
   (`hashed_paths`, `hashed_path_families`, `hash_salt`). `prune_permissions.py --snapshot` and project-scoped
-  `ledger.py` refuse hashed snapshots; `query_snapshot.py` prints a notice.
+  `ledger.py` refuse hashed snapshots; `query_snapshot.py` prints a notice. Any path-like kept string
+  no family names is hashed too (`other_paths`), so new fields fail closed.
+
+### Validation and limits
+
+- 699 local regression tests pass, with 95% coverage of the bundled scripts; the suite also passes
+  with the Claude Code Bash sandbox on. A 30-day collection of a real home with `--hash-paths`, with
+  and without `--metadata-only`, left no home path, username or project name in path fields. Hosted
+  validation has not run yet for this release. No paid model evaluations were run.
+- `subagent_models` and `request_params` read transcript shapes that are not documented
+  (`<agent>.meta.json`, `api-request` records) and may change without notice.
+- The mod scan is a static text heuristic: comments and strings can add names, and indirect API use
+  is missed. `claude plugin validate` is authoritative; the collector never runs it. A mod that
+  registers `settings.read` can rewrite merged settings, so the collected files may not be what
+  applies.
+- `--hash-paths` hashes whole values, so tags can't be opened, and comparing audits needs the same
+  salt file. In full mode, free text (hook commands, excerpts) keeps whatever follows a known
+  directory's tag. Model ids containing `/` are hashed and lose their tier.
 
 ## [0.10.1] - 2026-10-25
 
@@ -586,7 +627,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.8.0...v0.9.0

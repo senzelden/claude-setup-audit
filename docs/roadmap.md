@@ -94,6 +94,19 @@ Hosted validation passed all eight jobs at `499217f`:
 Hosted validation passed all eight jobs at `0022836`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/40137328278).
 
+## Shipped in 0.11.0: request evidence, scope, mods, path hashing
+
+- [x] Subagent model mix (requested vs actual model, cache reads split out) and per-request
+  model, effort, thinking and cache TTL counts; `COST-subagents` explains why subagents ran a
+  top-tier model.
+- [x] Settings keys and env names a project or local file can't set (`HYG-scope-ignored`);
+  `idleCompaction` and per-model auto-compact named as cost levers.
+- [x] Mods inventory (static scan of declared JS hook modules) and the built-in guard options
+  from managed settings (`SEC-mods`).
+- [x] `--hash-paths` with an optional salt file; fails closed for path-like kept strings.
+
+Hosted validation: pending for the 0.11.0 commits.
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
@@ -112,14 +125,12 @@ Hosted validation passed all eight jobs at `0022836`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
-- **Claude Code 2.1.286-2.1.310 follow-ups:** measure per-request harness overhead from the new
-  transcript `prompt_snapshot` attachments (system prompt and tools of each request, ~38% of one
-  local transcript's bytes; also a scan-budget concern); inventory plugin mods (JS hook modules,
-  including `settings.read` rewriting merged settings) beyond `hooks.json`; idle compaction
-  (`idleCompaction`) and per-model auto-compact as cost levers; project settings that can no
-  longer set Chrome, `CLAUDE_CODE_DISABLE_ATTACHMENTS` or `axScreenReader`.
-- **Privacy follow-ups:** optional path/name hashing (`--hash-paths`), metadata-only export of an
-  existing snapshot, and fuller provenance for free-text evidence. Tune detection against
+- **Claude Code 2.1.286-2.1.310 follow-ups:** mods, scope-ignored settings and the compaction
+  levers shipped in 0.11.0. Not pursued after measurement (2026-10-25): attributing cache breaks
+  to `shapeHash` changes (35 of 36 were followed by small writes) and skipping blob lines (a
+  30-day collection takes 13 s). `prompt_snapshot` records are per session start or compaction,
+  not per request, so they don't measure per-request overhead.
+- **Privacy follow-ups:** metadata-only and hashed export of an existing snapshot, and fuller provenance for free-text evidence. Tune detection against
   realistic fixtures.
 - **Deterministic apply:** widen the allowlist key by key with doc-grounded types; a paid
   approved-apply eval for sandbox ops needs separate approval; do not migrate the pruner or ledger
