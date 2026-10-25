@@ -105,7 +105,8 @@ Hosted validation passed all eight jobs at `0022836`:
   from managed settings (`SEC-mods`).
 - [x] `--hash-paths` with an optional salt file; fails closed for path-like kept strings.
 
-Hosted validation: pending for the 0.11.0 commits.
+Hosted validation passed all eight jobs at `a794fa1`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/40169646133).
 
 ## Next candidates, separately scoped
 

@@ -43,7 +43,9 @@ inventory, and path hashing for shared snapshots (docs fetched 2026-10-24/25).
 - 699 local regression tests pass, with 95% coverage of the bundled scripts; the suite also passes
   with the Claude Code Bash sandbox on. A 30-day collection of a real home with `--hash-paths`, with
   and without `--metadata-only`, left no home path, username or project name in path fields. Hosted
-  validation has not run yet for this release. No paid model evaluations were run.
+  validation passed all eight jobs at `a794fa1` ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/40169646133)), including Linux/macOS on Python
+  3.11/3.13/3.14, the coverage floor and strict plugin validation with Claude Code 2.1.310. No paid
+  model evaluations were run.
 - `subagent_models` and `request_params` read transcript shapes that are not documented
   (`<agent>.meta.json`, `api-request` records) and may change without notice.
 - The mod scan is a static text heuristic: comments and strings can add names, and indirect API use
