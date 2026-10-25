@@ -9,6 +9,7 @@ import stat
 from urllib.parse import urlsplit
 import harness
 import inventory
+import plugin_footprint
 
 MAX_ENTRIES = 100
 MAX_PLUGINS = 50
@@ -444,8 +445,8 @@ def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
     try:
-        handlers = [hook_summary(ev, group.get('matcher'), h) for ev, groups in hooks.items()
-                    for group in groups for h in group.get('hooks', [])]
+        handlers = [dict(hook_summary(ev, group.get('matcher'), h), **plugin_footprint.hook_effects(ev, h, root))
+                    for ev, groups in hooks.items() for group in groups for h in group.get('hooks', [])]
         component = dict(source=path, kind='hooks', handlers=handlers[:MAX_ENTRIES],
                          status='partial' if len(handlers) > MAX_ENTRIES else 'collected')
         if is_mod and root:

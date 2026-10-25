@@ -34,6 +34,7 @@ import harness
 import clarity
 import config_checks
 import drift_log
+import plugin_footprint
 import privacy
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
@@ -522,6 +523,16 @@ def mods_policy(d, managed):
     return mods
 
 
+_LEDGER_CACHE = {}
+
+
+def plugin_ledger():
+    """TokenEconomizer's ledger under the current HOME, read once per HOME (cleared by build_snapshot)."""
+    if HOME not in _LEDGER_CACHE:
+        _LEDGER_CACHE[HOME] = plugin_footprint.read_ledger(HOME)
+    return _LEDGER_CACHE[HOME]
+
+
 def summarize_settings(path, data=None, managed=False):
     raw = load_json(path) if data is None else data
     if raw is None:
@@ -564,6 +575,13 @@ def summarize_settings(path, data=None, managed=False):
     if shape_issues:
         summary["shape_issues"] = shape_issues
     if not managed:
+        written = plugin_footprint.written_rules(plugin_ledger(), path, [r for r in (perms.get("deny") or [])
+                                                                       if isinstance(r, str)])
+        if written:
+            summary["plugin_written_rules"] = written
+        found = plugin_footprint.markers(raw)
+        if found:
+            summary["plugin_markers"] = found
         ignored_keys, ignored_env = config_checks.scope_ignored(_settings_layer(path), d)
         if ignored_keys:
             summary["scope_ignored_keys"] = ignored_keys
@@ -681,6 +699,9 @@ def snapshot_coverage(snap, roots):
         sources.append(source_coverage("harness_overhead", scope,
                                       "collected" if harness_section["complete"] else "partial",
                                       **({"reason": ",".join(reasons)} if reasons else {})))
+    ledger = plugin_ledger()
+    sources.append(source_coverage("plugin_footprint.tokeneconomizer_ledger", scope,
+                                   ledger["status"], basis="observed", files=ledger["files"], unreadable=ledger["unreadable"]))
     conflicts = snap.get("config_conflicts")
     if conflicts:
         omitted = conflicts["hook_duplicates_omitted"] + conflicts["permission_overlaps_omitted"]
@@ -723,6 +744,9 @@ def collect_global():
         base = os.path.join(CLAUDE, kind)
         if os.path.isdir(base):
             out[kind] = sorted(os.listdir(base))
+    state = plugin_footprint.state_files(CLAUDE, "global")
+    if state:
+        out["plugin_state"] = state
     out["mcp_user"] = sorted((load_json(os.path.join(HOME, ".claude.json")) or {}).get("mcpServers", {}).keys())
     installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
     out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
@@ -735,10 +759,12 @@ def collect_global():
 
 
 def plugin_session_start_hooks(index):
-    """Enabled plugins with SessionStart hooks, with a file-size fallback estimate.
+    """Enabled plugins with SessionStart hooks, with a labelled file-size guess where one exists.
 
-    Measured injection comes from transcripts (harness_overhead.injected_context); this estimate
-    is only the fallback when no session in the window recorded injected context.
+    Measured injection comes from transcripts (harness_overhead.injected_context). The guess is
+    shaped after the superpowers plugin, whose hook injects its `skills/using-*/SKILL.md`; a plugin
+    without such a skill has no estimate (`basis: not_measured`), because nothing else says what its
+    hook prints.
     """
     found = {}
     for e in index:
@@ -751,9 +777,10 @@ def plugin_session_start_hooks(index):
     out = []
     for item in found.values():
         root = item.pop('root')
-        # Rough payload size: files the plugin's session-start hook script is likely to inject.
+        # Superpowers-shaped guess: the size of the `using-*` skill files its hook is known to inject.
         injected = sum(os.path.getsize(p) for p in glob.glob(os.path.join(root, "skills", "using-*", "SKILL.md")))
-        out.append(dict(item, est_injected_tokens=injected // 4 or None, basis='file_size_estimate'))
+        out.append(dict(item, est_injected_tokens=injected // 4 or None,
+                        basis='using_skill_file_size_guess' if injected else 'not_measured'))
     return sorted(out, key=lambda x: x['plugin'])
 
 
@@ -868,6 +895,9 @@ def collect_projects(roots):
                 for kind in ("skills", "agents", "commands", "hooks"):
                     if os.path.isdir(os.path.join(cdir, kind)):
                         entry[kind] = sorted(os.listdir(os.path.join(cdir, kind)))
+                state = plugin_footprint.state_files(cdir, "project")
+                if state:
+                    entry["plugin_state"] = state
                 entry["git"] = {n: git_status(dirpath, f".claude/{n}")
                                 for n in ("settings.json", "settings.local.json")
                                 if os.path.exists(os.path.join(cdir, n))}
@@ -1006,7 +1036,11 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
         if (a.get("type") == "hook_additional_context" and isinstance(a.get("hookEvent"), str)
                 and a.get("content") is not None):
             content = a["content"]
-            size = len(content) if isinstance(content, str) else len(json.dumps(content, separators=(",", ":")))
+            # Observed 2026-10-25: content is a list of strings; the cap counts characters of the text.
+            size = (len(content) if isinstance(content, str) else
+                    sum(len(x) if isinstance(x, str) else len(json.dumps(x, separators=(",", ":")))
+                        for x in content) if isinstance(content, list)
+                    else len(json.dumps(content, separators=(",", ":"))))
             raw["injections"].append((path, a["hookEvent"], tool_id, size))
         elif a.get("type") == "hook_success" and isinstance(a.get("command"), str):
             if tool_id:
@@ -1016,6 +1050,7 @@ def harness_record(raw, record, path, session_key, is_top, seen_ids):
             stdout = a.get("stdout")
             if isinstance(a.get("hookEvent"), str) and isinstance(stdout, str) and stdout.strip():
                 raw["event_commands"].setdefault((path, a["hookEvent"]), set()).add(a["command"])
+                raw["outputs"].append((path, a["hookEvent"], a["command"], len(stdout)))
     if record.get("type") == "assistant" and (not is_top or not record.get("isSidechain")):
         msg = record.get("message") if isinstance(record.get("message"), dict) else {}
         usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
@@ -1275,6 +1310,19 @@ def subagent_summary(rows, files, absent, unusable):
     }
 
 
+def spawned_summary(spawned, raw):
+    """Per-label counts and tokens of plugin-spawned sessions beside the all-session token total."""
+    total = sum(raw["main_tokens"].values()) + sum(raw["sub_tokens"].values())
+    rows = [{"label": label, "sessions": v["sessions"], "subagent_files": v["subagent_files"],
+             "tokens": sum(raw["main_tokens"].get(k, 0) + raw["sub_tokens"].get(k, 0) for k in v["keys"])}
+            for label, v in sorted(spawned.items())]
+    return {"rows": rows, "tokens_spawned": sum(r["tokens"] for r in rows), "tokens_total": total,
+            "basis": ("Sessions whose working directory is one a plugin is known to spawn Claude in "
+                      f"(table dated {plugin_footprint.FINGERPRINTS_DATED}); they stay in every cost total and are "
+                      "left out of tool-error counts, corrections, friction and the context baseline. "
+                      "Tokens are input + cache creation + cache read + output of main and subagent files.")}
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -1313,12 +1361,18 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     context_sizes, tool_search_observed = [], False
     request_stats, request_seen = _request_stats(), set()
     agent_rows, agent_files, agent_absent, agent_unusable = {}, 0, 0, 0
-    raw = {"sessions": 0, "injections": [], "commands": {}, "event_commands": {}, "listings": [],
+    raw = {"sessions": 0, "injections": [], "outputs": [], "commands": {}, "event_commands": {}, "listings": [],
            "entrypoints": Counter(), "file_entrypoints": {}, "main_tokens": defaultdict(int),
            "sub_tokens": defaultdict(int), "malformed": 0}
+    spawned = defaultdict(lambda: {"sessions": 0, "subagent_files": 0, "keys": set()})
     for path in top + sub:
-        need_baseline = is_top = path in top
+        is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
+        # Plugin-spawned (observer) sessions stay in every cost total but are not the user's own work:
+        # no tool-error counts and no context baseline from them (learning and startup analysis).
+        spawn = plugin_footprint.spawn_label_for_key(proj_key if is_top else os.path.basename(
+            os.path.dirname(os.path.dirname(os.path.dirname(path)))), HOME)
+        need_baseline = is_top and spawn is None
         names = {}  # tool_use id -> tool key, for pairing errors
         pending = {}  # Bash tool_use id -> start time, for test commands
         if is_top:
@@ -1370,7 +1424,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 usage.get("cache_read_input_tokens")) is int else 0
                             agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
-                    tool_error_record(record, path, names, tool_stats)
+                    if spawn is None:
+                        tool_error_record(record, path, names, tool_stats)
                     if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
                         entry_seen = True
                         ep = record.get("entrypoint")
@@ -1486,6 +1541,9 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         except OSError:
             coverage["main_files" if is_top else "subagent_files"]["omitted"] += 1
             continue
+        if active and spawn is not None:
+            spawned[spawn]["sessions" if is_top else "subagent_files"] += 1
+            spawned[spawn]["keys"].add(session_key)
         if active and not is_top:
             status, meta = read_agent_meta(path)
             agent_files += 1
@@ -1511,6 +1569,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
         "mcp_calls_by_server": mcp_calls.most_common(),
         "tool_errors": tool_error_summary(tool_stats),
+        "plugin_spawned": spawned_summary(spawned, raw),
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
         # None when no main-thread session fell in the window: nothing was scanned, so nothing is known.
@@ -1835,6 +1894,7 @@ def collect_usage(days, project_filter=None):
     recent_daily.sort(key=lambda d: d["date"])
 
     tools, err_cats, per_project = Counter(), Counter(), Counter()
+    spawned_meta = Counter()
     sessions = []
     metadata = {}
     for f in sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "session-meta", "*.json"))):
@@ -1855,19 +1915,25 @@ def collect_usage(days, project_filter=None):
         if project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter:
             c["omitted"] += 1
             continue
-        tools.update(m.get("tool_counts", {}))
-        err_cats.update(m.get("tool_error_categories", {}) or {})
+        # Plugin-spawned sessions stay in cost views (heaviest, per-project counts) and out of learning
+        # analysis (tool use, tool errors, friction).
+        spawn = plugin_footprint.spawn_label(os.path.expanduser(m.get("project_path") or ""), HOME)
+        if spawn is None:
+            tools.update(m.get("tool_counts", {}))
+            err_cats.update(m.get("tool_error_categories", {}) or {})
+        spawned_meta[spawn] += spawn is not None
         per_project[(m.get("project_path") or "?").replace(HOME, "~")] += 1
-        sessions.append({
+        sessions.append({**({"plugin_spawned": spawn} if spawn else {}),
             "project": (m.get("project_path") or "?").replace(HOME, "~"),
             "start": m.get("start_time"), "minutes": m.get("duration_minutes"),
             "out_tokens": m.get("output_tokens", 0), "tool_errors": m.get("tool_errors", 0),
             "interruptions": m.get("user_interruptions", 0), "agents": m.get("uses_task_agent"),
             "first_prompt": redact((m.get("first_prompt") or "")[:120]),
         })
-    n = len(sessions) or 1
+    own = [s for s in sessions if "plugin_spawned" not in s]
+    n = len(own) or 1
     heavy = sorted(sessions, key=lambda s: s["out_tokens"] or 0, reverse=True)[:8]
-    errorful = sorted(sessions, key=lambda s: (s["tool_errors"] or 0) + 3 * (s["interruptions"] or 0), reverse=True)[:8]
+    errorful = sorted(own, key=lambda s: (s["tool_errors"] or 0) + 3 * (s["interruptions"] or 0), reverse=True)[:8]
 
     friction, outcomes, details = Counter(), Counter(), []
     for f in sorted(glob.glob(os.path.join(CLAUDE, "usage-data", "facets", "*.json"))):
@@ -1885,6 +1951,9 @@ def collect_usage(days, project_filter=None):
             c["unattributable"] = c.get("unattributable", 0) + 1
         if stamp is None or not cutoff <= stamp <= now or (project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter):
             c["omitted"] += 1
+            continue
+        if plugin_footprint.spawn_label(os.path.expanduser(m.get("project_path") or ""), HOME):
+            c["omitted"] += 1  # a plugin's own session: not learning evidence
             continue
         friction.update(d.get("friction_counts", {}) or {})
         outcomes[d.get("outcome")] += 1
@@ -1907,8 +1976,9 @@ def collect_usage(days, project_filter=None):
         "daily_token_totals_recent": daily_totals,
         "stats_total_sessions": stats.get("totalSessions"),
         "session_meta_count": len(sessions),
-        "avg_tool_errors_per_session": round(sum(s["tool_errors"] or 0 for s in sessions) / n, 2),
-        "subagent_session_share": round(sum(1 for s in sessions if s["agents"]) / n, 2),
+        "avg_tool_errors_per_session": round(sum(s["tool_errors"] or 0 for s in own) / n, 2),
+        "subagent_session_share": round(sum(1 for s in own if s["agents"]) / n, 2),
+        "plugin_spawned_sessions": sum(spawned_meta.values()),
         "top_tools": tools.most_common(15),
         "tool_error_categories": err_cats.most_common(10),
         "sessions_per_project": per_project.most_common(15),
@@ -1941,6 +2011,8 @@ def collect_corrections(days, project_filter=None):
                 continue
             if project_filter is not None and os.path.expanduser(d.get("project") or "") not in project_filter:
                 continue
+            if plugin_footprint.spawn_label(os.path.expanduser(d.get("project") or ""), HOME):
+                continue  # a plugin's own session, not the user's correction
             ts = d.get("timestamp", 0)
             ts = ts if isinstance(ts, (int, float)) else 0
             text = (d.get("display") or "").strip()
@@ -1978,6 +2050,8 @@ def _history_rows(since, until, project_filter, counts):
                 continue
             if project_filter is not None and os.path.expanduser(d.get("project") or "") not in project_filter:
                 continue
+            if plugin_footprint.spawn_label(os.path.expanduser(d.get("project") or ""), HOME):
+                continue
             sid = d.get("sessionId")
             if not isinstance(sid, str) or not sid:
                 counts["complete"] = False
@@ -2008,6 +2082,8 @@ def _facet_rows(since, until, project_filter, counts):
         if not since <= stamp <= until:
             continue
         if project_filter is not None and os.path.expanduser(m.get("project_path") or "") not in project_filter:
+            continue
+        if plugin_footprint.spawn_label(os.path.expanduser(m.get("project_path") or ""), HOME):
             continue
         yield sid, d
 
@@ -2110,6 +2186,7 @@ def build_snapshot(a):
     hash_paths = getattr(a, "hash_paths", False)
     salt, salt_kind = privacy.resolve_salt(getattr(a, "hash_salt_file", None)) if hash_paths else (None, None)
     _RAW_PERMISSIONS.clear()
+    _LEDGER_CACHE.clear()
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
     contexts = []
     if a.scope == "global":

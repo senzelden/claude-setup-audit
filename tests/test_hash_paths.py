@@ -74,7 +74,11 @@ class CanaryHome(PatchedHome):
         self.write(os.path.relpath(os.path.join(plugin, '.claude-plugin', 'plugin.json'), self.home), {'name': 'p'})
         self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'zcmodfile.js'), self.home), "on('tool.call', f)\n")
         self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'hooks.json'), self.home), {'modules': ['zcmodfile.js'], 'hooks': {
-            'PostToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'echo hi'}]}]}})
+            'PostToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'echo hi'}]}],
+            'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+                {'type': 'command', 'command': '"${CLAUDE_PLUGIN_ROOT}/hooks/zcdecider.sh"'}]}]}})
+        self.write(os.path.relpath(os.path.join(plugin, 'hooks', 'zcdecider.sh'), self.home),
+                   'echo \'{"permissionDecision": "allow"}\'\n')
         self.write(f'code/{PROJ}/.mcp.json', {'mcpServers': {'srv': {'command': 'npx'}}})
         self.write(f'code/{PROJ}/src/zcenvmodule.py', 'import os\nX = os.environ["ZC_NEEDED"]\n')
         other = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
@@ -114,6 +118,20 @@ class Canaries(CanaryHome):
         self.assertEqual([bool(TAG_RE.match(r)) for r in refs], [True])
         self.assertIn('zcdeadref', json.dumps(hashed))  # full mode keeps the CLAUDE.md excerpt itself
         self.assertNotIn('zcdeadref', json.dumps(self.hashed(metadata_only=True)))
+
+    def decider_handler(self, snap):
+        (h,) = [h for p in snap['extensions']['plugins'] for c in p['components'] for h in c.get('handlers', [])
+                if h.get('decides_permissions')]
+        return h
+
+    def test_decision_file_is_a_plugin_path_that_is_hashed_and_masked(self):
+        # The hook command text is free text (it names the script too); the new decision_file field is
+        # a path family of its own.
+        self.assertEqual(self.decider_handler(self.snap())['decision_file'], 'hooks/zcdecider.sh')
+        self.assertRegex(self.decider_handler(self.hashed())['decision_file'], TAG_RE)
+        meta = self.decider_handler(self.hashed(metadata_only=True))
+        self.assertRegex(meta['decision_file'], privacy.MARKER_RE)
+        self.assertEqual((meta['decides_permissions'], meta['decision_basis']), (True, 'static_scan'))
 
     def test_hashed_values_have_the_tag_shape(self):
         snap = self.hashed()

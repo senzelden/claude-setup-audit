@@ -180,6 +180,12 @@ def scan_hooks(index):
 
 
 ENTRYPOINTS = ('cli', 'sdk-py', 'sdk-cli')
+# hooks.md "Hook output" (fetched 2026-10-25): additionalContext, systemMessage, initialUserMessage and
+# plain stdout are capped at 10,000 characters; Claude Code spills the rest to a file and passes a
+# 2,000-character preview. Whether a transcript attachment keeps the full text or the preview is not
+# documented, so an over-cap count can be an undercount.
+HOOK_OUTPUT_CAP = 10000
+OUTPUT_ROW_LIMIT = 30
 
 
 def _int(value):
@@ -241,21 +247,34 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
         reasons.add('malformed_records')
 
     per_session = defaultdict(lambda: defaultdict(int))  # source key -> session path -> chars
-    records = defaultdict(int)
+    records, over_cap, largest = defaultdict(int), defaultdict(int), defaultdict(int)
     for path, event, tool_id, chars in raw['injections']:
         plugin, attribution = _attribute(index, raw, path, event, tool_id)
         key = (plugin, attribution, event)
         per_session[key][path] += chars
         records[key] += 1
+        over_cap[key] += chars > HOOK_OUTPUT_CAP
+        largest[key] = max(largest[key], chars)
     sources = []
     for (plugin, attribution, event), sessions in per_session.items():
         values = list(sessions.values())
         median = pct(values, 0.5)
         sources.append(dict(plugin=plugin, attribution=attribution, hook_event=event, sessions=len(values),
                             records=records[(plugin, attribution, event)],
+                            chars_max=largest[(plugin, attribution, event)],
+                            over_cap=over_cap[(plugin, attribution, event)],
                             chars_per_session_median=_int(median), chars_per_session_p90=_int(pct(values, 0.9)),
                             est_tokens_per_session_median=_int(median / 4)))
     sources.sort(key=lambda s: (-s['sessions'], s['plugin'] or '', s['attribution'], s['hook_event']))
+    outputs = defaultdict(lambda: dict(records=0, chars_max=0, over_cap=0))
+    for path, event, command, chars in raw.get('outputs', ()):
+        plugin, attribution = match_command(index, command)
+        row = outputs[(plugin, attribution, event)]
+        row['records'] += 1
+        row['chars_max'] = max(row['chars_max'], chars)
+        row['over_cap'] += chars > HOOK_OUTPUT_CAP
+    output_rows = sorted((dict(plugin=p, attribution=a, hook_event=e, **v) for (p, a, e), v in outputs.items()),
+                         key=lambda r: (-r['chars_max'], r['plugin'] or '', r['attribution'], r['hook_event']))
 
     # SDK sessions list different skills than interactive ones; mixing them breaks the series.
     # No or unknown entrypoint counts as non-SDK.
@@ -295,5 +314,7 @@ def assemble(raw, index, index_reasons, extension_inventory, transcript_coverage
                 complete=not (reasons - {'not_observed'}),
                 incomplete_reasons=sorted(reasons),
                 injected_context=dict(sessions_with_injection=len({p for p, *_ in raw['injections']}),
-                                      sources=sources),
+                                      sources=sources, output_cap_chars=HOOK_OUTPUT_CAP,
+                                      hook_stdout=output_rows[:OUTPUT_ROW_LIMIT],
+                                      hook_stdout_omitted=max(0, len(output_rows) - OUTPUT_ROW_LIMIT)),
                 skill_listing_series=series, subagent_spend=spend, model_spawning_hooks=spawning)

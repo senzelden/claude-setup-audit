@@ -115,6 +115,8 @@ def handler_issues(event, matcher, handler):
     issues = ['unknown_event'] if spec is None else _matcher_issues(event, spec, matcher)
     if spec is not None and 'if' in handler and event not in TOOL_EVENTS:
         issues.append('if_never_runs')
+    if timeout_suspect(handler):
+        issues.append('timeout_suspect_ms')
     kind = handler.get('type', 'command')
     unknown = []
     if not isinstance(kind, str) or kind not in TYPE_FIELDS:
@@ -129,6 +131,17 @@ def handler_issues(event, matcher, handler):
             elif on_failure(handler) == 'block' and (event in ON_FAILURE_NO_EFFECT or background(handler)):
                 issues.append('on_failure_no_effect')
     return issues, unknown
+
+
+# hooks.md "Hook handler fields" `timeout` (fetched 2026-10-25): seconds, default 600 for command, http
+# and mcp_tool handlers. A larger number is almost certainly milliseconds, which sets no real limit.
+TIMEOUT_SUSPECT_SECONDS = 600
+
+
+def timeout_suspect(handler):
+    """True when `timeout` is a number above the 600-second default (likely written in milliseconds)."""
+    value = handler.get('timeout')
+    return type(value) in (int, float) and value > TIMEOUT_SUSPECT_SECONDS
 
 
 # hooks.md "Block the action when a hook fails" (fetched 2026-10-24): onFailure has no effect here.

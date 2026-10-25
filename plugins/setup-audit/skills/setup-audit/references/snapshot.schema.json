@@ -27,7 +27,22 @@
               "reason": {"type": "string", "enum": ["project_local", "every_file", "telemetry_unless_off", "ignored_if_1"]}
             }
           }
-        }
+        },
+        "plugin_written_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["plugin", "list", "rules", "rule_count", "ledger_only"],
+            "properties": {
+              "plugin": {"type": "string"},
+              "list": {"enum": ["deny"]},
+              "rules": {"type": "array", "items": {"type": "string"}},
+              "rule_count": {"type": "integer", "minimum": 0},
+              "ledger_only": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "plugin_markers": {"type": "array", "items": {"type": "string"}}
       }
     },
     "config_layer": {"enum": ["managed", "user", "project", "local", "plugin"]},
@@ -472,7 +487,8 @@
           "items": {
             "$ref": "#/$defs/settings_summary"
           }
-        }
+        },
+        "plugin_state": {"type": "object", "additionalProperties": {"const": true}}
       }
     },
     "managed_settings": {
@@ -661,6 +677,24 @@
             "basis": {
               "type": "string"
             }
+          }
+        },
+        "plugin_spawned": {
+          "type": "object",
+          "required": ["rows", "tokens_spawned", "tokens_total"],
+          "properties": {
+            "rows": {"type": "array", "items": {
+              "type": "object",
+              "required": ["label", "sessions", "subagent_files", "tokens"],
+              "properties": {
+                "label": {"type": "string"},
+                "sessions": {"type": "integer", "minimum": 0},
+                "subagent_files": {"type": "integer", "minimum": 0},
+                "tokens": {"type": "integer", "minimum": 0}
+              }}},
+            "tokens_spawned": {"type": "integer", "minimum": 0},
+            "tokens_total": {"type": "integer", "minimum": 0},
+            "basis": {"type": "string"}
           }
         },
         "request_params": {
@@ -1130,6 +1164,19 @@
           "required": ["sessions_with_injection", "sources"],
           "properties": {
             "sessions_with_injection": {"type": "integer", "minimum": 0},
+            "output_cap_chars": {"type": "integer", "minimum": 1},
+            "hook_stdout_omitted": {"type": "integer", "minimum": 0},
+            "hook_stdout": {"type": "array", "items": {
+              "type": "object",
+              "required": ["plugin", "attribution", "hook_event", "records", "chars_max", "over_cap"],
+              "properties": {
+                "plugin": {"type": ["string", "null"]},
+                "attribution": {"enum": ["matched", "ambiguous", "unattributed"]},
+                "hook_event": {"type": "string"},
+                "records": {"type": "integer", "minimum": 1},
+                "chars_max": {"type": "integer", "minimum": 0},
+                "over_cap": {"type": "integer", "minimum": 0}
+              }}},
             "sources": {"type": "array", "items": {
               "type": "object",
               "required": ["plugin", "attribution", "hook_event", "sessions", "records",
@@ -1140,6 +1187,8 @@
                 "hook_event": {"type": "string"},
                 "sessions": {"type": "integer", "minimum": 1},
                 "records": {"type": "integer", "minimum": 1},
+                "chars_max": {"type": "integer", "minimum": 0},
+                "over_cap": {"type": "integer", "minimum": 0},
                 "chars_per_session_median": {"type": "integer", "minimum": 0},
                 "chars_per_session_p90": {"type": "integer", "minimum": 0},
                 "est_tokens_per_session_median": {"type": "integer", "minimum": 0}

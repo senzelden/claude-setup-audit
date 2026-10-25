@@ -154,6 +154,8 @@ def mask_settings(s, counter):
     other = s.get('other') or {}
     if 'statusLine' in other:
         other['statusLine'] = mask_leaves(other['statusLine'], counter, 'status_line')
+    for written in s.get('plugin_written_rules') or []:
+        _mask_list(written.get('rules'), counter, 'plugin_written_rules')
     perms = s.get('permissions') or {}
     _mask_list(perms.get('deny'), counter, 'permission_deny')
     for rules in (perms.get('risky') or {}).values():
@@ -273,8 +275,10 @@ MCP_POLICY_KEEP = (  # collect.mcp_policy: names, or the string "invalid" in pla
     *(('mcp_policy', k, '*') for k in MCP_POLICY_LISTS),
     *(('mcp_policy', k, 'server_names', '*') for k in ('allowedMcpServers', 'deniedMcpServers')))
 HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
-                ('on_failure',), ('background',), ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
-SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'), ('shape_issues', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
+                ('on_failure',), ('background',), ('decision_basis',), ('scan_gap',), ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
+SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'),
+                 # plugin_markers: key paths from plugin_footprint.MARKERS; the rule names are masked (mask_settings)
+                 ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
                  ('other', 'autoUpdates'),  # scope_ignored_keys / ignored_env_keys: table vocabulary and env names (0.11.0)
@@ -317,6 +321,9 @@ SUBAGENT_KEEP = (  # transcripts.subagent_models / request_params: names and fix
     ('transcripts', 'subagent_models', 'basis'), ('transcripts', 'request_params', 'basis'),
     *(('transcripts', 'request_params', c, k, '*', '*')
       for c in ('main', 'sdk', 'agent', 'other') for k in ('by_model', 'by_effort', 'by_thinking')))
+FOOTPRINT_KEEP = (  # plugin_footprint.py: table labels, fixed vocabulary and notes (0.12.0)
+    ('transcripts', 'plugin_spawned', 'basis'), ('transcripts', 'plugin_spawned', 'rows', '*', 'label'),
+    ('usage', 'heaviest_sessions', '*', 'plugin_spawned'))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -348,7 +355,7 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
-KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + SINGLE
+KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP + MCP_POLICY_KEEP)
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)
@@ -456,8 +463,9 @@ PATH_FAMILIES = {
                'drift log path and the /insights report path',
         'leaves': (), 'maybe': _FILE_SOURCES},
     'plugin_paths': {
-        'doc': 'plugin install roots, plugin component files and declared mod modules',
-        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'mod', 'module'),), 'maybe': (('extensions', 'plugins', '*', 'source'),
+        'doc': 'plugin install roots, plugin component files, declared mod modules and hook scripts that decide permissions',
+        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'mod', 'module'),
+                   ('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', 'decision_file')), 'maybe': (('extensions', 'plugins', '*', 'source'),
                                 ('extensions', 'plugins', '*', 'components', '*', 'source'))},
     'referenced_files': {
         'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '

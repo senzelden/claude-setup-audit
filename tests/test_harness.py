@@ -45,7 +45,7 @@ class HookIndex(FakeHome):
         self.assertEqual(reasons, [])
         found = collect.plugin_session_start_hooks(index)
         self.assertEqual(found, [{'plugin': 'demo@market', 'version': '1', 'matchers': ['startup'],
-                                  'est_injected_tokens': 100, 'basis': 'file_size_estimate'}])
+                                  'est_injected_tokens': 100, 'basis': 'using_skill_file_size_guess'}])
 
     def test_disabled_plugin_and_inline_manifest_hooks(self):
         install(self, name='off', hooks=session_start('a'), enabled=False)
@@ -337,7 +337,8 @@ class Assemble(unittest.TestCase):
                           commands={('s1', 't1'): 'run-a', ('s1', 't2'): 'run-a'})
         src = self.build(raw)['injected_context']['sources']
         self.assertEqual(src, [{'plugin': 'a@m', 'attribution': 'matched', 'hook_event': 'SessionStart',
-                                'sessions': 1, 'records': 2, 'chars_per_session_median': 4000,
+                                'sessions': 1, 'records': 2, 'chars_max': 3000, 'over_cap': 0,
+                                'chars_per_session_median': 4000,
                                 'chars_per_session_p90': 4000, 'est_tokens_per_session_median': 1000}])
 
     def test_unpaired_injection_is_unattributed_and_ambiguous_is_kept_apart(self):
