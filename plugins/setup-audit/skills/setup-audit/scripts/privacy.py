@@ -461,11 +461,15 @@ PATH_FAMILIES = {
                                 ('extensions', 'plugins', '*', 'components', '*', 'source'))},
     'referenced_files': {
         'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '
-               'scripts, additional directories, memory file names, SDK call-site file names, MCP executables',
+               'scripts, additional directories, memory file names, `paths:` frontmatter, SDK call-site file names, MCP executables',
         'leaves': (*(('projects', '*', 'claude_md_dead_refs', '*'),),
                    *(p + ('missing_hook_scripts', '*') for p in _SETTINGS),
                    *(p + ('permissions', k, '*') for p in _SETTINGS for k in ('additional_dirs', 'missing_additional_dirs')),
                    ('memory', 'by_project', '*', 'entries', '*', 'file'),
+                   # rules/skill `paths:` frontmatter names repo files (kept raw, often multi-line)
+                   *(p + ('frontmatter', 'paths') + t
+                     for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
+                     for t in ((), ('*',))),
                    ('readiness', '*', 'env', 'undeclared', '*', 'files', '*'),
                    ('memory', 'similar_across_projects', '*', 'a'), ('memory', 'similar_across_projects', '*', 'b'),
                    ('memory', 'similar_across_projects', '*', 'a_file'),
@@ -516,7 +520,7 @@ def scrub_known_paths(snap, hasher, needles, dirs=()):
         return 0
     # A path needle ends at a path boundary, so `/h/u/code/app2` is not tagged as inside `/h/u/code/app`;
     # dash-encoded needles stay unbounded (their continuation is also dash-separated: fail closed).
-    alts = [re.escape(n) + ('' if '/' not in n and '-' in n else r'''(?=[/\s"'`:;),\]}]|\Z)''') for n in needles]
+    alts = [re.escape(n) + ('' if '/' not in n and '-' in n else r'(?![\w-]|\.[\w-])') for n in needles]
     rx = re.compile('|'.join(alts))
     count = [0]
     encoded = {_transcript_key(d): d for d in dirs}

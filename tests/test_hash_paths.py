@@ -234,6 +234,30 @@ class Review(CanaryHome):
         app, home = h('/h/u/code/app'), h('/h/u')
         self.assertEqual(snap['x'], f'run {home}/code/app2/x then {app}/y; "{app}"')
 
+    def test_scrub_treats_any_non_name_character_as_a_boundary(self):
+        h = privacy.PathHasher(b'k' * 16, '/h/u')
+        app, home = h('/h/u/code/app'), h('/h/u')
+        cases = {'cd /h/u/code/app&&ls': f'cd {app}&&ls', 'x >/h/u/code/app>log': f'x >{app}>log',
+                 '/h/u/code/app|wc': f'{app}|wc', 'see /h/u/code/app.': f'see {app}.',
+                 '/h/u/code/app\\x': f'{app}\\x', '/h/u/code/app.bak/x': f'{home}/code/app.bak/x',
+                 '/h/u/code/app-old': f'{home}/code/app-old'}
+        for raw, want in cases.items():
+            snap = {'x': raw}
+            privacy.scrub_known_paths(snap, h, privacy.path_needles('/h/u', [], ['/h/u/code/app']),
+                                      ['/h/u', '/h/u/code/app'])
+            self.assertEqual(snap['x'], want, raw)
+
+    def test_paths_frontmatter_is_hashed(self):
+        h = privacy.PathHasher(b'k' * 16, '/h/u')
+        raw = '\n  - "src/zcpkg/core.py"\n  - "tests/**"'
+        snap = {'instructions': {'entries': [{'frontmatter': {'paths': raw, 'name': 'zcrule'}}]},
+                'extensions': {'plugins': [{'components': [{'frontmatter': {'paths': ['src/zcpkg/**']}}]}]}}
+        privacy.hash_paths(snap, h, [])
+        fm = snap['instructions']['entries'][0]['frontmatter']
+        self.assertEqual(fm, {'paths': h(raw), 'name': 'zcrule'})
+        self.assertEqual(snap['extensions']['plugins'][0]['components'][0]['frontmatter']['paths'],
+                         [h('src/zcpkg/**')])
+
     def test_scrub_maps_dash_encoded_roots_to_the_root_tag(self):
         h = privacy.PathHasher(b'k' * 16, '/h/u')
         snap = {'m': {'x': 'dir -h-u-code-app/memory', '-h-u-code-app': 1}}
