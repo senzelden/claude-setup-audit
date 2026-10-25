@@ -37,6 +37,7 @@ import config_checks
 import drift_log
 import plugin_footprint
 import privacy
+import tool_usage
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
 
@@ -1385,6 +1386,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
            "sub_tokens": defaultdict(int), "malformed": 0}
     spawned = defaultdict(lambda: {"sessions": 0, "subagent_files": 0, "keys": set()})
     loop_sessions = []  # (project key, finished turns) of the user's own main sessions
+    usage_totals = tool_usage.Totals()
     for path in top + sub:
         is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
@@ -1394,6 +1396,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             os.path.dirname(os.path.dirname(os.path.dirname(path)))), HOME)
         need_baseline = is_top and spawn is None
         loops = failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE) if is_top and spawn is None else None
+        # Tool usage and MCP failures describe the user's own main-thread sessions only.
+        tool_session = tool_usage.Session() if need_baseline else None
         names = {}  # tool_use id -> tool key, for pairing errors
         pending = {}  # Bash tool_use id -> start time, for test commands
         if is_top:
@@ -1445,6 +1449,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 usage.get("cache_read_input_tokens")) is int else 0
                             agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
+                    if tool_session is not None:
+                        tool_session.record(record)
                     if spawn is None:
                         tool_error_record(record, path, names, tool_stats)
                     if loops is not None:
@@ -1567,6 +1573,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         if loops is not None:
             loops.finish()
             loop_sessions.append((proj_key, loops.turns))
+        if active and tool_session is not None:
+            usage_totals.add(tool_session)
         if active and spawn is not None:
             spawned[spawn]["sessions" if is_top else "subagent_files"] += 1
             spawned[spawn]["keys"].add(session_key)
@@ -1597,6 +1605,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "tool_errors": tool_error_summary(tool_stats),
         "failure_loops": failure_loops.summarize(loop_sessions),
         "plugin_spawned": spawned_summary(spawned, raw),
+        "tool_usage": usage_totals.usage(),
+        "mcp_failures": usage_totals.failures(),
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
         # None when no main-thread session fell in the window: nothing was scanned, so nothing is known.
@@ -2335,6 +2345,8 @@ def build_snapshot(a):
         configured |= set(entry.get("mcp_servers") or [])
     used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
     snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
+    for row in snap["transcripts"]["mcp_failures"]["servers"]:
+        row["configured"] = row["server"] in configured
     snap["transcripts"]["mcp_configured_but_unused_note"] = (
         "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")

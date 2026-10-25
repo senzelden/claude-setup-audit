@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in, model-free drift check: collect, derive five signals, compare, append one log line.
+"""Opt-in, model-free drift check: collect, derive six signals, compare, append one log line.
 
 Silent unless a threshold is crossed. Never installs a hook or schedule; see references/drift.md.
 """
@@ -13,6 +13,8 @@ import drift_log
 
 SIGNALS = drift_log.SIGNALS
 META_KEYS = ('scope', 'project', 'window_days')
+MCP_FAIL_MIN_SESSIONS = 3  # recommendation, not a documented limit
+MCP_FAIL_MIN_SHARE = 0.5
 
 
 def fingerprint(path, flag, rule):
@@ -43,6 +45,10 @@ def derive(snap, global_claude_md):
     series = h.get('skill_listing_series')
     sources = (h.get('injected_context') or {}).get('sources') or []
     top = sources[0] if sources else None
+    failing = [r for r in ((snap.get('transcripts') or {}).get('mcp_failures') or {}).get('servers') or []
+               if isinstance(r, dict) and type(r.get('sessions_failed')) is int and r['sessions_failed'] > 0]
+    observed = ((snap.get('transcripts') or {}).get('mcp_failures') or {}).get('sessions_observed')
+    worst = max(failing, key=lambda r: (r['sessions_failed'], str(r.get('server'))), default=None)
     signals = {
         'claude_md': claude_md or None,
         'cache_hit_ratio': None if ratio is None else {'value': ratio, 'complete': transcripts_complete},
@@ -53,6 +59,9 @@ def derive(snap, global_claude_md):
                                                  'plugin': top['plugin'], 'hook_event': top['hook_event'],
                                                  'attribution': top['attribution'], 'unit': INJECTION_UNIT,
                                                  'complete': bool(h.get('complete'))},
+        'mcp_failures': None if not worst or type(observed) is not int or observed < 1 else {
+            'value': worst['sessions_failed'], 'server': worst.get('server'), 'sessions_observed': observed,
+            'share': round(worst['sessions_failed'] / observed, 3), 'complete': transcripts_complete},
     }
     return signals, fps
 
@@ -122,6 +131,13 @@ def compare(signals, fingerprint_paths, entries, meta, thresholds):
         if new:
             crossings.append({'signal': 'broad_permissions', 'kind': 'new', 'fingerprints': new,
                               'paths': sorted({fingerprint_paths[f] for f in new if fingerprint_paths.get(f)})})
+    mcp = signals.get('mcp_failures')
+    if mcp and _number(mcp.get('value')) and _number(mcp.get('share')) \
+            and mcp['value'] >= thresholds.get('mcp_fail_min_sessions', MCP_FAIL_MIN_SESSIONS) \
+            and mcp['share'] >= thresholds.get('mcp_fail_min_share', MCP_FAIL_MIN_SHARE):
+        crossings.append({'signal': 'mcp_failures', 'kind': 'high_failure_rate', 'server': mcp.get('server'),
+                          'value': mcp['value'], 'share': mcp['share'], 'sessions_observed': mcp.get('sessions_observed'),
+                          'threshold': thresholds.get('mcp_fail_min_sessions', MCP_FAIL_MIN_SESSIONS)})
     for name in ('skill_listing_chars', 'injected_tokens'):
         current = signals[name]
         if not current or not _number(current.get('value')):
@@ -143,6 +159,8 @@ def summary_line(crossings, log_display):
             parts.append(f"{c['path']} {c['value']} lines > {c['threshold']}")
         elif c['kind'] == 'below_min':
             parts.append(f"cache_hit_ratio {c['value']} < {c['threshold']}")
+        elif c['kind'] == 'high_failure_rate':
+            parts.append(f"MCP server {c['server']} failed in {c['value']} of {c['sessions_observed']} sessions")
         elif c['kind'] == 'new':
             parts.append('new broad permission in ' + ', '.join(c['paths'] or ['an unknown settings file']))
         else:
@@ -188,10 +206,15 @@ def main(argv=None):
     ap.add_argument('--log', help='drift log (default: <claude dir>/audits/drift.jsonl)')
     ap.add_argument('--claude-md-max-lines', type=int, default=200)
     ap.add_argument('--cache-hit-min', type=lambda t: _fraction(t, 0, 1, '--cache-hit-min'), default=0.9)
+    ap.add_argument('--mcp-fail-min-sessions', type=int, default=MCP_FAIL_MIN_SESSIONS)
+    ap.add_argument('--mcp-fail-min-share', type=lambda t: _fraction(t, 0, 1, '--mcp-fail-min-share'),
+                    default=MCP_FAIL_MIN_SHARE)
     ap.add_argument('--growth-min', type=lambda t: _fraction(t, 0, 100, '--growth-min'), default=0.25)
     a = ap.parse_args(argv)
     if a.claude_md_max_lines < 1:
         ap.error('--claude-md-max-lines must be positive')
+    if a.mcp_fail_min_sessions < 1:
+        ap.error('--mcp-fail-min-sessions must be positive')
     collect.apply_collection_args(ap, a)
     audits = os.path.join(collect.CLAUDE, 'audits')
     allowed = collect._out_allowed_dirs()
@@ -215,7 +238,9 @@ def main(argv=None):
             'window_days': a.days}
     signals, fps = derive(snap, display(os.path.join(collect.CLAUDE, 'CLAUDE.md')))
     crossings = compare(signals, fps, entries, meta, {'claude_md_max_lines': a.claude_md_max_lines,
-                                                      'cache_hit_min': a.cache_hit_min, 'growth_min': a.growth_min})
+                                                      'cache_hit_min': a.cache_hit_min, 'growth_min': a.growth_min,
+                                                      'mcp_fail_min_sessions': a.mcp_fail_min_sessions,
+                                                      'mcp_fail_min_share': a.mcp_fail_min_share})
     entry = {'version': drift_log.VERSION, 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
              **meta, 'signals': signals, 'crossings': crossings}
     try:

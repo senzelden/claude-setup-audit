@@ -7,7 +7,7 @@ import math
 import os
 
 VERSION = 1
-SIGNALS = ('claude_md', 'cache_hit_ratio', 'broad_permissions', 'skill_listing_chars', 'injected_tokens')
+SIGNALS = ('claude_md', 'cache_hit_ratio', 'broad_permissions', 'skill_listing_chars', 'injected_tokens', 'mcp_failures')
 
 
 class DriftLogError(ValueError):

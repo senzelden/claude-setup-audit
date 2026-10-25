@@ -723,6 +723,44 @@
             "basis": {"type": "string"}
           }
         },
+        "tool_usage": {
+          "type": "object",
+          "required": ["sessions", "sessions_with_deferred_records", "used", "listed_never_called"],
+          "properties": {
+            "sessions": {"type": "integer", "minimum": 0},
+            "sessions_with_deferred_records": {"type": "integer", "minimum": 0},
+            "used": {"type": "array", "items": {
+              "type": "object", "required": ["tool", "sessions"],
+              "properties": {"tool": {"type": "string"}, "sessions": {"type": "integer", "minimum": 0}}}},
+            "used_omitted": {"type": "integer", "minimum": 0},
+            "listed_never_called": {"type": "array", "items": {
+              "type": "object", "required": ["tool", "sessions_listed"],
+              "properties": {"tool": {"type": "string"}, "sessions_listed": {"type": "integer", "minimum": 0}}}},
+            "listed_never_called_total": {"type": "integer", "minimum": 0},
+            "listed_never_called_omitted": {"type": "integer", "minimum": 0},
+            "basis": {"type": "string"}
+          }
+        },
+        "mcp_failures": {
+          "type": "object",
+          "required": ["sessions_observed", "servers"],
+          "properties": {
+            "sessions_observed": {"type": "integer", "minimum": 0},
+            "servers": {"type": "array", "items": {
+              "type": "object", "required": ["server", "sessions_failed", "sessions_pending", "error_codes"],
+              "properties": {
+                "server": {"type": "string"},
+                "sessions_failed": {"type": "integer", "minimum": 0},
+                "sessions_pending": {"type": "integer", "minimum": 0},
+                "configured": {"type": "boolean"},
+                "error_codes": {"type": "array", "items": {
+                  "type": "object", "required": ["code", "sessions"],
+                  "properties": {"code": {"type": "string"}, "sessions": {"type": "integer", "minimum": 0}}}}
+              }}},
+            "servers_omitted": {"type": "integer", "minimum": 0},
+            "basis": {"type": "string"}
+          }
+        },
         "request_params": {
           "type": "object",
           "required": [

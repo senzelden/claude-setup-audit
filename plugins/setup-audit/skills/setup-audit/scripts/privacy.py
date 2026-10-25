@@ -325,6 +325,12 @@ FOOTPRINT_KEEP = (  # plugin_footprint.py: table labels, fixed vocabulary and no
     ('transcripts', 'plugin_spawned', 'basis'), ('transcripts', 'plugin_spawned', 'rows', '*', 'label'),
     ('usage', 'heaviest_sessions', '*', 'plugin_spawned'),
     ('transcripts', 'failure_loops', 'basis'))  # counts, a command-head vocabulary (dict keys) and project-keyed maps
+TOOL_USAGE_KEEP = (  # tool, MCP server names and errorCode vocabulary (strict patterns at collection; 0.12.0)
+    ('transcripts', 'tool_usage', 'basis'), ('transcripts', 'mcp_failures', 'basis'),
+    ('transcripts', 'tool_usage', 'used', '*', 'tool'),
+    ('transcripts', 'tool_usage', 'listed_never_called', '*', 'tool'),
+    ('transcripts', 'mcp_failures', 'servers', '*', 'server'),
+    ('transcripts', 'mcp_failures', 'servers', '*', 'error_codes', '*', 'code'))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -356,7 +362,7 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
-KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + SINGLE
+KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + TOOL_USAGE_KEEP + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP + MCP_POLICY_KEEP)
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)
