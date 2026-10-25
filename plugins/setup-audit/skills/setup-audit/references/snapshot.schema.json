@@ -752,6 +752,8 @@
                 "server": {"type": "string"},
                 "sessions_failed": {"type": "integer", "minimum": 0},
                 "sessions_pending": {"type": "integer", "minimum": 0},
+                "sessions_needs_auth": {"type": "integer", "minimum": 0},
+                "sessions_present": {"type": "integer", "minimum": 0},
                 "configured": {"type": "boolean"},
                 "error_codes": {"type": "array", "items": {
                   "type": "object", "required": ["code", "sessions"],

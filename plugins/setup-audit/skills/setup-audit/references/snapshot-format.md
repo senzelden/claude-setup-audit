@@ -133,7 +133,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `sessions_with_deferred_records`, `used[]` (`tool`, `sessions`; 40 rows, `used_omitted`),
   `listed_never_called[]` (`tool`, `sessions_listed`; 40 rows, `listed_never_called_total`,
   `listed_never_called_omitted`), `basis`. `mcp_failures`: `sessions_observed`, `servers[]`
-  (`server`, `sessions_failed`, `sessions_pending`, `error_codes[]` of `code`, `sessions`, and
+  (`server`, `sessions_failed`, `sessions_pending`, `sessions_needs_auth`, `sessions_present`, `error_codes[]` of `code`, `sessions`, and
   `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.

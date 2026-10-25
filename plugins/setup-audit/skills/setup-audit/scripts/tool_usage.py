@@ -12,11 +12,16 @@ NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:@\- ]{0,119}\Z")
 CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{1,39}\Z")
 BASIS = ("Counts of main-thread sessions in the window (plugin-spawned sessions excluded). A tool is 'used' when an "
          "assistant tool_use carries its name. 'Listed' means a deferred_tools_delta attachment added, re-added or "
-         "surfaced it (observed, undocumented record). Always-loaded built-in tools are not listed in transcripts, so "
-         "their use is counted but their absence of use is not observable. A deferred tool costs about one listing "
-         "line until used, so pruning unused ones saves little.")
-FAILURE_BASIS = ("Sessions whose deferred_tools_delta attachments name the server in failedMcpServers or "
-                 "pendingMcpServers (observed, undocumented). errorCode classes are counted per session; the error "
+         "surfaced it (observed, undocumented record). 'used[].sessions' counts main-thread sessions only; for "
+         "'never called', calls from the user's own subagent files also count as use (plugin-spawned sessions never "
+         "do). Always-loaded built-in tools are not listed in transcripts, so their use is counted but their absence "
+         "of use is not observable. Observed: addedLines carries one line per added tool (1519 of 1520 records with "
+         "additions matched addedNames in length), so a deferred tool costs about one listing line until used and "
+         "pruning unused ones saves little; this is an observation, not a documented figure.")
+FAILURE_BASIS = ("Sessions whose deferred_tools_delta attachments name the server in failedMcpServers, "
+                 "pendingMcpServers or needsAuthMcpServers (observed, undocumented). sessions_present counts sessions "
+                 "where the server appears in any of those or has an mcp__<server>__ tool listed or used (name "
+                 "normalized by replacing characters outside [A-Za-z0-9_-] with _). errorCode classes are counted per session; the error "
                  "text is never stored. Sessions without such records say nothing about connection health.")
 
 
@@ -33,7 +38,7 @@ class Session:
 
     def __init__(self):
         self.used, self.listed = set(), set()
-        self.failed, self.pending = set(), set()
+        self.failed, self.pending, self.needs_auth = set(), set(), set()
         self.codes = set()  # (server, code)
         self.deferred = False
 
@@ -55,6 +60,9 @@ class Session:
         for key in ("addedNames", "readdedNames", "surfacedNames"):
             self.listed |= _names(att.get(key))
         self.pending |= _names(att.get("pendingMcpServers"))
+        needs = att.get("needsAuthMcpServers")
+        self.needs_auth |= _names([e.get("name") if isinstance(e, dict) else e
+                                   for e in needs] if isinstance(needs, list) else [])
         failed = att.get("failedMcpServers")
         for entry in failed if isinstance(failed, list) else []:
             server = _name(entry.get("name")) if isinstance(entry, dict) else None
@@ -70,13 +78,19 @@ class Totals:
         self.sessions = self.with_deferred = 0
         self.used, self.listed = Counter(), Counter()
         self.failed, self.pending, self.codes = Counter(), Counter(), Counter()
-        self.ever_used = set()
+        self.ever_used, self.needs, self.present = set(), Counter(), []
 
-    def add(self, s):
+    def add(self, s, main=True):
+        """main=False: a subagent file of the user's own session; it only marks tools as used."""
+        self.ever_used |= s.used
+        if not main:
+            return
         self.sessions += 1
         self.used.update(s.used)
-        self.ever_used |= s.used
         if s.deferred:
+            self.present.append((frozenset(s.failed | s.pending | s.needs_auth), frozenset(
+                n.split("__")[1] for n in s.listed | s.used if n.startswith("mcp__") and n.count("__") >= 2)))
+            self.needs.update(s.needs_auth)
             self.with_deferred += 1
             self.listed.update(s.listed)
             self.failed.update(s.failed)
@@ -97,9 +111,14 @@ class Totals:
 
     def failures(self, configured=None):
         """configured: set of configured MCP server names, or None when unknown."""
-        servers = sorted(set(self.failed) | set(self.pending),
-                         key=lambda n: (-self.failed[n], -self.pending[n], n))
+        servers = sorted(set(self.failed) | set(self.pending) | set(self.needs),
+                         key=lambda n: (-self.failed[n], -self.pending[n], -self.needs[n], n))
+        def present(n):
+            norm = re.sub(r"[^A-Za-z0-9_-]", "_", n)
+            return sum(n in names or norm in tools for names, tools in self.present)
+
         rows = [{"server": n, "sessions_failed": self.failed[n], "sessions_pending": self.pending[n],
+                 "sessions_needs_auth": self.needs[n], "sessions_present": present(n),
                  "error_codes": [{"code": c, "sessions": k} for (srv, c), k in
                                  sorted(self.codes.items(), key=lambda kv: (-kv[1], kv[0][1])) if srv == n],
                  **({} if configured is None else {"configured": n in configured})}

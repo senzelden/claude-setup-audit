@@ -49,6 +49,9 @@ def derive(snap, global_claude_md):
                if isinstance(r, dict) and type(r.get('sessions_failed')) is int and r['sessions_failed'] > 0]
     observed = ((snap.get('transcripts') or {}).get('mcp_failures') or {}).get('sessions_observed')
     worst = max(failing, key=lambda r: (r['sessions_failed'], str(r.get('server'))), default=None)
+    denominator = observed
+    if worst and type(worst.get('sessions_present')) is int and worst['sessions_present'] >= worst['sessions_failed']:
+        denominator = worst['sessions_present']  # sessions where this server appears at all
     signals = {
         'claude_md': claude_md or None,
         'cache_hit_ratio': None if ratio is None else {'value': ratio, 'complete': transcripts_complete},
@@ -59,9 +62,10 @@ def derive(snap, global_claude_md):
                                                  'plugin': top['plugin'], 'hook_event': top['hook_event'],
                                                  'attribution': top['attribution'], 'unit': INJECTION_UNIT,
                                                  'complete': bool(h.get('complete'))},
-        'mcp_failures': None if not worst or type(observed) is not int or observed < 1 else {
+        'mcp_failures': None if not worst or type(denominator) is not int or denominator < 1 else {
             'value': worst['sessions_failed'], 'server': worst.get('server'), 'sessions_observed': observed,
-            'share': round(worst['sessions_failed'] / observed, 3), 'complete': transcripts_complete},
+            'share': round(worst['sessions_failed'] / denominator, 3), 'sessions_present': denominator,
+            'complete': transcripts_complete},
     }
     return signals, fps
 

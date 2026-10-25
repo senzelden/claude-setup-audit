@@ -1,6 +1,9 @@
 """Tool usage and MCP connection failures from fake transcripts (deferred_tools_delta, observed and
 undocumented). Names and counts only: error text never appears, spawned sessions are excluded."""
+import contextlib
+import io
 import json
+import os
 import time
 
 from test_collect import FakeHome, collect
@@ -59,15 +62,30 @@ class Usage(Base):
         self.assertEqual((tu["sessions"], tu["sessions_with_deferred_records"], tu["listed_never_called"]),
                          (1, 0, []))
 
-    def test_spawned_sessions_and_subagent_files_are_excluded(self):
-        self.put("-a", "s1", [delta(added=["T1"]), calls("Bash")])
-        self.put(observer_key(self), "o1", [delta(added=["T2"], failed=[failure("srv")]), calls("Spawned")])
-        self.put("-a/s1/subagents", "agent-1", [delta(added=["T3"]), calls("SubTool")])
+    def test_spawned_sessions_are_excluded_and_own_subagent_calls_count_as_use(self):
+        self.put("-a", "s1", [delta(added=["T1", "T4", "T5"]), calls("Bash")])
+        self.put(observer_key(self), "o1", [delta(added=["T2"], failed=[failure("srv")]), calls("Spawned", "T5")])
+        self.put(observer_key(self) + "/o1/subagents", "agent-9", [calls("T1")])
+        self.put("-a/s1/subagents", "agent-1", [delta(added=["T3"], failed=[failure("sub")]), calls("T4")])
         t = self.scan()
         tu = t["tool_usage"]
+        # used[] stays main-thread; the subagent's T4 only clears it from never-called.
         self.assertEqual([r["tool"] for r in tu["used"]], ["Bash"])
-        self.assertEqual([r["tool"] for r in tu["listed_never_called"]], ["T1"])
+        self.assertEqual(sorted(r["tool"] for r in tu["listed_never_called"]), ["T1", "T5"])
+        self.assertEqual((tu["sessions"], tu["sessions_with_deferred_records"]), (1, 1))
         self.assertEqual(t["mcp_failures"]["servers"], [])
+        self.assertIn("subagent", tu["basis"])
+
+    def test_tool_search_observed_ignores_spawned_and_subagent_records(self):
+        self.put("-a", "s1", [calls("Bash")])
+        self.put(observer_key(self), "o1", [delta(added=["T"])])
+        self.assertIs(self.scan()["tool_search_observed"], False)
+        self.put("-a", "s2", [delta(added=["T"])])
+        self.assertIs(self.scan()["tool_search_observed"], True)
+
+    def test_tool_search_observed_is_null_with_only_spawned_sessions(self):
+        self.put(observer_key(self), "o1", [delta(added=["T"])])
+        self.assertIsNone(self.scan()["tool_search_observed"])
 
     def test_a_tool_called_in_another_session_is_not_never_called(self):
         self.put("-a", "s1", [delta(added=["T1"])])
@@ -120,6 +138,23 @@ class Failures(Base):
         self.assertEqual(rows["other-srv"]["error_codes"], [{"code": "other", "sessions": 1}])
         self.assertNotIn(SECRET, json.dumps(f))
         self.assertNotIn("bad code!", json.dumps(f))
+
+    def test_needs_auth_servers_are_counted_by_name(self):
+        rec = delta()
+        rec["attachment"]["needsAuthMcpServers"] = ["claude.ai Gmail", {"name": "docs"}, 7]
+        self.put("-a", "s1", [rec])
+        self.put("-a", "s2", [rec])
+        rows = {r["server"]: r for r in self.scan()["mcp_failures"]["servers"]}
+        self.assertEqual({k: v["sessions_needs_auth"] for k, v in rows.items()}, {"claude.ai Gmail": 2, "docs": 2})
+        self.assertEqual(rows["docs"]["sessions_failed"], 0)
+
+    def test_sessions_present_counts_sessions_where_the_server_appears_or_has_tools(self):
+        self.put("-a", "s1", [delta(failed=[failure("plugin:data:definite")])])
+        self.put("-a", "s2", [delta(added=["mcp__plugin_data_definite__q"])])
+        self.put("-a", "s3", [delta(added=["mcp__other__q"]), calls("mcp__plugin_data_definite__q")])
+        self.put("-a", "s4", [delta(added=["mcp__other__q"])])
+        (row,) = self.scan()["mcp_failures"]["servers"]
+        self.assertEqual((row["sessions_failed"], row["sessions_present"]), (1, 3))
 
     def test_names_that_are_not_identifier_like_are_dropped(self):
         self.put("-a", "s1", [delta(failed=[failure("/home/user/secret-server"), failure("x" * 500)],
@@ -190,6 +225,40 @@ class DriftSignal(FakeHome):
         self.assertEqual(self.cross(self.snap(2, 2))[1], [])  # below 3 sessions
         self.assertEqual(self.cross(self.snap(3, 10))[1], [])  # below half
 
+    def test_share_uses_sessions_where_the_server_appears(self):
+        snap = self.snap(3, 20)
+        snap["transcripts"]["mcp_failures"]["servers"][0]["sessions_present"] = 3
+        signals, crossings = self.cross(snap)
+        self.assertEqual((signals["mcp_failures"]["share"], signals["mcp_failures"]["sessions_present"]), (1.0, 3))
+        self.assertEqual(len(crossings), 1)
+
     def test_no_records_is_null(self):
         self.assertIsNone(self.cross(self.snap(0, 5))[0]["mcp_failures"])
         self.assertIsNone(drift.derive({"global": {}, "projects": {}, "transcripts": {}}, "g")[0]["mcp_failures"])
+
+
+class DriftCliFlags(FakeHome):
+    def run_drift(self, *extra):
+        out = io.StringIO()
+        log = os.path.join(self.home, "drift.jsonl")
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = drift.main(["--claude-dir", self.claude, "--log", log, *extra])
+        return code, out.getvalue()
+
+    def setUp(self):
+        super().setUp()
+        for i in range(2):  # two failing sessions of five with records
+            self.write(f".claude/projects/-a/s{i}.jsonl", json.dumps(delta(failed=[failure("srv")])))
+        for i in range(2, 5):
+            self.write(f".claude/projects/-a/s{i}.jsonl", json.dumps(delta(added=["mcp__srv__q"])))
+
+    def test_default_thresholds_do_not_cross(self):
+        self.assertEqual(self.run_drift(), (0, ""))
+
+    def test_flags_reach_the_comparison(self):
+        code, out = self.run_drift("--mcp-fail-min-sessions", "2", "--mcp-fail-min-share", "0.4")
+        self.assertEqual(code, 0)
+        self.assertIn("MCP server srv failed in 2 of 5 sessions", out)
+
+    def test_session_flag_alone_still_gates(self):
+        self.assertEqual(self.run_drift("--mcp-fail-min-sessions", "3", "--mcp-fail-min-share", "0.1"), (0, ""))

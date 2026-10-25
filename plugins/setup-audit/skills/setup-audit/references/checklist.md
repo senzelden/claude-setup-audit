@@ -230,7 +230,7 @@ readiness, cost metrics and harness overhead.
   Per-tool evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
   excluded): `used[]` counts sessions per tool name, `listed_never_called[]` names deferred tools
   listed in some session and never called in the window (with how many sessions listed each). State
-  the cost honestly: a deferred tool costs about one listing line until it is used, so pruning
+  the cost honestly: a deferred tool costs about one listing line until it is used (observed: `addedLines`, one per tool; not a documented figure), so pruning
   never-called tools saves little; the evidence supports a note, rarely a removal. Always-loaded
   built-in tools are not listed in transcripts, so their non-use is not observable, and this audit
   proposes no deny rules for built-in tools from usage. Read `sessions_with_deferred_records`

@@ -375,5 +375,11 @@ and `failedMcpServers` (`name`, `errorCode`, `error`); only names and `errorCode
 Always-loaded built-in tools are not listed anywhere, so only deferred tools (MCP, plugin and some built-ins)
 can be "listed but never called". Counts are per transcript file in the window, so resumed copies of a
 session can count twice; sessions without these records (older versions, no tool search) contribute to
-`sessions` but not to listing or failure evidence. A deferred tool costs about one listing line until used.
+`sessions` but not to listing or failure evidence. Observed (not documented): `addedLines` carries one line per added tool, so a deferred tool costs about one
+listing line until used. Calls in the user's own subagent files count as use for "never called" (plugin-spawned
+sessions do not); `used[].sessions` stays main-thread. `needsAuthMcpServers` is read as names (strings, or objects
+with `name`) into `sessions_needs_auth`; in the author's data the key is present in most records but was never
+non-empty, so its shape is unconfirmed. `sessions_present` counts sessions where a server appears in any of the
+three lists or has `mcp__<server>__*` tools listed or used (names normalized with `_`). `tool_search_observed`
+uses the same per-file pass and exclusions: any main-thread, non-spawned delta record in the window.
 A shape change shows up as zero `sessions_with_deferred_records`, not as an error.

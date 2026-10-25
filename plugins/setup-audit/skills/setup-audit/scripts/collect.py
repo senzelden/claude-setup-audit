@@ -1378,7 +1378,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
-    context_sizes, tool_search_observed = [], False
+    context_sizes = []
     request_stats, request_seen = _request_stats(), set()
     agent_rows, agent_files, agent_absent, agent_unusable = {}, 0, 0, 0
     raw = {"sessions": 0, "injections": [], "outputs": [], "commands": {}, "event_commands": {}, "listings": [],
@@ -1397,7 +1397,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         need_baseline = is_top and spawn is None
         loops = failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE) if is_top and spawn is None else None
         # Tool usage and MCP failures describe the user's own main-thread sessions only.
-        tool_session = tool_usage.Session() if need_baseline else None
+        # (Subagent files of the user's own sessions only mark tools as used.)
+        tool_session = tool_usage.Session() if spawn is None else None
         names = {}  # tool_use id -> tool key, for pairing errors
         pending = {}  # Bash tool_use id -> start time, for test commands
         if is_top:
@@ -1462,9 +1463,6 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             ep = ep if isinstance(ep, str) else "other"
                             raw["entrypoints"][ep] += 1
                             raw["file_entrypoints"][path] = ep
-                    if (is_top and record.get("type") == "attachment" and isinstance(record.get("attachment"), dict)
-                            and record["attachment"].get("type") == "deferred_tools_delta"):
-                        tool_search_observed = True  # observed, undocumented: see references/coverage.md
                     if is_top and not listed and record.get("type") == "attachment":
                         listed = harness_listing(raw, record, timestamp, path)
                     if is_top and '"tool_result"' in line:
@@ -1574,7 +1572,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             loops.finish()
             loop_sessions.append((proj_key, loops.turns))
         if active and tool_session is not None:
-            usage_totals.add(tool_session)
+            usage_totals.add(tool_session, main=is_top)
         if active and spawn is not None:
             spawned[spawn]["sessions" if is_top else "subagent_files"] += 1
             spawned[spawn]["keys"].add(session_key)
@@ -1610,7 +1608,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
         # None when no main-thread session fell in the window: nothing was scanned, so nothing is known.
-        "tool_search_observed": True if tool_search_observed else (False if raw["sessions"] else None),
+        # Observed, undocumented (references/coverage.md): same per-file pass and exclusions as tool_usage.
+        "tool_search_observed": (None if not usage_totals.sessions else usage_totals.with_deferred > 0),
         "cache": {
             "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
             "read_tokens": cache["read"],
