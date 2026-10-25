@@ -335,9 +335,10 @@ readiness, cost metrics and harness overhead.
   it in each proposal, from the table. Inform only; never hold or reorder a change for it.
   Mid-session edits to allow, ask and scoped deny rules keep the cache; a bare-name or
   tool-name-glob deny keeps it when tool search is active and invalidates it otherwise
-  (`transcripts.tool_search_observed` labels this); `model`, `effortLevel`, `modelSettings`, MCP
-  config and CLAUDE.md edits reach the running session only after restart, `/clear` or `/compact`
-  (CLAUDE.md edits keep the cache meanwhile); sandbox, hooks and env edits are `unknown`. Where a
+  (`transcripts.tool_search_observed` labels this, hedged when none was seen); `model`,
+  `effortLevel`, `modelSettings` and MCP config reach the running session only at the next session
+  start (restart); CLAUDE.md and auto-memory edits apply after `/clear`, `/compact` or restart, and
+  keep the cache meanwhile; sandbox, hooks and env edits are `unknown`. Where a
   change may invalidate, add the re-read estimate (`cache_effects.py estimate`): about the median
   cached context (`transcripts.cache.context_tokens`) at the write multiplier instead of the read
   multiplier, labelled an estimate.

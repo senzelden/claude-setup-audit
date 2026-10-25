@@ -544,7 +544,10 @@
       ],
       "properties": {
         "tool_search_observed": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "subagent_models": {
           "type": "object",

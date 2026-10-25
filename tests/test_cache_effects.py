@@ -59,10 +59,38 @@ class Table(unittest.TestCase):
         none = ce.effect_for('rule-deny', 'Bash', False)['label']
         both = ce.effect_for('rule-deny', 'Bash', None)['label']
         self.assertEqual(seen, 'keeps the cache (tool search observed)')
-        self.assertEqual(none, 'invalidates (no tool search observed)')
+        self.assertIn('may invalidate', none)
+        self.assertIn('on by default', none)
+        self.assertNotIn('invalidates (', none)
         self.assertIn('keeps the cache', both)
         self.assertIn('invalidates', both)
         self.assertNotIn('observed)', both)
+
+    def test_applies_next_session_label_names_when(self):
+        for key in ('model', 'effortLevel', 'modelSettings', 'enabledMcpjsonServers'):
+            row = ce.effect_for('setting', key)
+            self.assertEqual(row['applies_at'], 'restart', key)
+            self.assertIn('next session start', row['label'])
+            self.assertNotIn('/clear', row['label'])
+        for name in ('CLAUDE.md', '/h/p/memory/MEMORY.md'):
+            row = ce.effect_for('file', name)
+            self.assertEqual(row['applies_at'], 'clear', name)
+            self.assertIn('/clear, /compact or restart', row['label'])
+
+    def test_mcp_rules_with_parentheses_are_skipped_by_claude_code(self):
+        for kind in ('rule-deny', 'rule-allow', 'rule-ask'):
+            for rule in ('mcp__x__y(*)', 'mcp__x__y(path:/a)', 'mcp__x(*)'):
+                row = ce.effect_for(kind, rule)
+                self.assertEqual((row['effect'], row['family']), ('unknown', 'permission.mcp_parenthesized_rule'))
+        self.assertEqual(ce.effect_for('rule-deny', 'mcp__x__y')['effect'], 'invalidates_without_tool_search')
+
+    def test_all_form_equivalence_is_documented_only_for_bash_and_powershell(self):
+        for rule in ('Bash(*)', 'PowerShell(*)'):
+            self.assertNotIn('conservative', ce.effect_for('rule-deny', rule)['note'])
+        for rule in ('Read(*)', 'WebFetch(*)'):
+            row = ce.effect_for('rule-deny', rule)
+            self.assertEqual(row['effect'], 'invalidates_without_tool_search')
+            self.assertIn('conservative', row['note'])
 
     def test_read_once_keys_and_files_apply_next_session(self):
         for key in ('model', 'effortLevel', 'modelSettings'):
@@ -102,13 +130,34 @@ class Estimate(unittest.TestCase):
 
 class Signals(FakeHome):
     def test_load_signals(self):
-        snap = self.write('s.json', {'transcripts': {'tool_search_observed': True,
-                                                     'cache': {'context_tokens': {'median': 1234.6}}}})
-        self.assertEqual(ce.load_signals(snap), (True, 1235))
-        self.assertEqual(ce.load_signals(self.write('t.json', {'transcripts': {}})), (None, None))
-        self.assertEqual(ce.load_signals(self.write('u.json', '{')), (None, None))
-        self.assertEqual(ce.load_signals(os.path.join(self.home, 'missing')), (None, None))
-        self.assertEqual(ce.load_signals(None), (None, None))
+        snap = self.write('s.json', {'transcripts': {
+            'tool_search_observed': True,
+            'cache': {'context_tokens': {'median': 1234.6}, 'write_1h_share': 0.9},
+            'request_params': {'main': {'by_model': [['claude-opus-5-5', 5], ['claude-sonnet-5-5', 1]]}}}})
+        self.assertEqual(ce.load_signals(snap), {'tool_search': True, 'context_tokens': 1235,
+                                                 'ttl': '1h', 'model': 'claude-opus-5-5'})
+        empty = {'tool_search': None, 'context_tokens': None, 'ttl': None, 'model': None}
+        self.assertEqual(ce.load_signals(self.write('t.json', {'transcripts': {}})), empty)
+        self.assertEqual(ce.load_signals(self.write('u.json', '{')), empty)
+        self.assertEqual(ce.load_signals(os.path.join(self.home, 'missing')), empty)
+        self.assertEqual(ce.load_signals(None), empty)
+
+    def test_malformed_snapshots_never_raise(self):
+        for doc in ({'transcripts': 5}, {'transcripts': {'cache': 5}}, {'transcripts': {'cache': {'context_tokens': 3}}},
+                    {'transcripts': {'request_params': {'main': {'by_model': [5]}}}}, [1], 'x',
+                    {'transcripts': {'request_params': {'main': {'by_model': [[]]}}}}):
+            self.assertIsInstance(ce.load_signals(self.write('m.json', doc)), dict, doc)
+
+    def test_ttl_and_model_follow_the_snapshot(self):
+        def est(share, models):
+            snap = self.write('e.json', {'transcripts': {'cache': {
+                'context_tokens': {'median': 1000}, 'write_1h_share': share},
+                'request_params': {'main': {'by_model': models}}}})
+            return ce.estimate_from(ce.load_signals(snap))
+        self.assertEqual(est(0.8, [['claude-opus-5-5', 1]])['ttl'], '1h')
+        self.assertEqual(est(0.8, [['claude-opus-5-5', 1]])['read_multiplier'], 0.05)
+        self.assertEqual(est(0.2, [])['ttl'], '5m')
+        self.assertEqual(est(None, [])['read_multiplier'], 0.1)
 
 
 class ApplyOpsOutput(FakeHome):
@@ -146,6 +195,26 @@ class ApplyOpsOutput(FakeHome):
         self.assertTrue(plan['ok'] and done['ok'], done)
         self.assertEqual(done['targets'][0]['status'], 'applied')
         self.assertEqual(done['targets'][0]['ops'][0]['cache_effect']['effect'], 'invalidates_next_request')
+
+    def test_malformed_snapshot_cannot_lose_the_result_after_writes(self):
+        path = self.write('p/.claude/settings.local.json', {})
+        bad = self.write('bad.json', {'transcripts': {'cache': 5, 'request_params': 7}})
+        digest = apply_ops.run(self.ops())['targets'][0]['file_sha256']
+        done = apply_ops.run(self.ops(digest), apply=True, backup_dir=os.path.join(self.home, 'b'), snapshot=bad)
+        self.assertTrue(done['ok'], done)
+        self.assertIn('sandbox', json.loads(Path(path).read_text()))
+
+    def test_signals_load_before_any_write(self):
+        self.write('p/.claude/settings.local.json', {})
+        digest = apply_ops.run(self.ops())['targets'][0]['file_sha256']
+        calls, empty = [], {'tool_search': None, 'context_tokens': None, 'ttl': None, 'model': None}
+
+        def spy(_):
+            calls.append(Path(self.home, 'p/.claude/settings.local.json').read_text())
+            return empty
+        with mock.patch.object(ce, 'load_signals', side_effect=spy):
+            apply_ops.run(self.ops(digest), apply=True, backup_dir=os.path.join(self.home, 'b'))
+        self.assertEqual(calls, ['{}'])
 
     def test_estimate_appears_only_with_context_and_a_possibly_invalidating_effect(self):
         snap = self.write('s.json', {'transcripts': {'cache': {'context_tokens': {'median': 50000}}}})
@@ -209,8 +278,10 @@ class ToolSearchObserved(FakeHome):
         self.session('-a/s1/subagents/ag.jsonl', [self.delta()])
         self.assertIs(self.scan()['tool_search_observed'], False)
 
-    def test_false_on_empty_home(self):
-        self.assertIs(self.scan()['tool_search_observed'], False)
+    def test_null_when_no_main_thread_session_was_scanned(self):
+        self.assertIsNone(self.scan()['tool_search_observed'])
+        self.session('-a/s1/subagents/ag.jsonl', [self.delta(kind='skill_listing')])
+        self.assertIsNone(self.scan()['tool_search_observed'])
 
     def test_context_tokens_median_over_deduplicated_main_responses(self):
         def usage(i, w, r):
@@ -225,7 +296,7 @@ class SnapshotContract(unittest.TestCase):
     def test_schema_types_the_field(self):
         schema = json.loads((Path(SCRIPTS).parent / 'references' / 'snapshot.schema.json').read_text())
         self.assertEqual(schema['properties']['transcripts']['properties']['tool_search_observed'],
-                         {'type': 'boolean'})
+                         {'type': ['boolean', 'null']})
 
     def test_coverage_labels_the_field_observed_undocumented(self):
         text = (Path(SCRIPTS).parent / 'references' / 'coverage.md').read_text()

@@ -141,7 +141,8 @@ def main():
         ap.error("--apply requires --backup-dir")
 
     plan, total, skipped = [], 0, []
-    tool_search, context = cache_effects.load_signals(a.snapshot)
+    signals = cache_effects.load_signals(a.snapshot)
+    tool_search = signals["tool_search"]
     rule_effect = cache_effects.effect_for("rule-allow", "", tool_search)
     dir_effect = cache_effects.effect_for("setting", "permissions.additionalDirectories", tool_search)
     for path in a.files or settings_files(a.snapshot):
@@ -169,7 +170,7 @@ def main():
             plan[-1]["backup"] = backup.replace(collect.HOME, "~")
     out = {"applied": a.apply, "rules": total, "files": plan, "skipped": skipped,
            "cache_effects_note": cache_effects.INFORM_ONLY + " Docs fetched " + cache_effects.DOCS_FETCHED + "."}
-    estimate = cache_effects.estimate_reread(context) if context is not None else None
+    estimate = cache_effects.estimate_from(signals)
     if estimate and any(cache_effects.needs_estimate(e) for e in (rule_effect, dir_effect)):
         out["cache_estimate"] = estimate
     print(json.dumps(out, indent=1))

@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import shlex
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -103,6 +104,19 @@ class ApplyQuality(unittest.TestCase):
         self.assertTrue(result['artifact_checks_passed'])
         self.assertTrue(result['apply_workflow_verified'])
         self.assertEqual(result['source_changes'], {'added': 0, 'deleted': 0, 'modified': 0})
+
+    def dry_run_result(self, rules):
+        entry = {'file': str(self.workspace / 'claude-config/settings.json'), 'remove_dirs': [],
+                 'remove_rules': rules}
+        block = {'content': json.dumps({'applied': False, 'rules': 1, 'files': [entry], 'skipped': []})}
+        return sys.modules['apply_trace'].successful_result(block, 'dry_run', self.workspace)
+
+    def test_cache_effect_is_ignored_but_junk_rule_entries_are_not(self):
+        good = {'rule': 'Bash(curl:*)', 'reasons': ['network-wildcard']}
+        self.assertTrue(self.dry_run_result([good]))
+        self.assertTrue(self.dry_run_result([dict(good, cache_effect={'effect': 'keeps'})]))
+        self.assertFalse(self.dry_run_result([good, 'junk']))
+        self.assertFalse(self.dry_run_result([good, 5]))
 
     def test_no_apply_and_dry_run_do_not_count_as_success(self):
         before = quality.inventory(self.workspace, exclude_reports=True)

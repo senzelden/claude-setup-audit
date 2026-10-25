@@ -49,6 +49,10 @@ ROWS = {
     'permission.deny_scoped_rule': (
         'keeps', f'{PC} "Denying an entire tool"; {PM}',
         'a scoped deny such as Bash(rm *) leaves the tool available and is checked at call time'),
+    'permission.mcp_parenthesized_rule': (
+        'unknown', f'{PM} "Match by input parameter"',
+        'Claude Code skips any mcp__ rule with parentheses when it loads a settings file, so the '
+        'rule has no effect and no cache effect; only --disallowedTools takes one'),
     'permission.deny_bare_tool_rule': (
         'invalidates_without_tool_search', f'{PC} "Denying an entire tool"; {PM}',
         'a bare tool name, the Bash(*) form or a tool-name glob like "*" or "mcp__*" removes the '
@@ -110,6 +114,19 @@ ROWS = {
         'unknown', PC, 'no sentence covers this file or key'),
 }
 
+# When an applies_next_session edit reaches the session. "restart": read once at session start
+# (settings "When edits take effect"; MCP config, prompt-caching "Connecting or removing an MCP
+# server"). "clear": project context layer, reloaded on /clear, /compact or restart (prompt-caching
+# "Editing CLAUDE.md mid-session" and the layer table).
+APPLIES_AT = {
+    'settings.model': 'restart', 'settings.effort': 'restart', 'mcp.config': 'restart',
+    'memory.claude_md': 'clear', 'memory.auto_memory': 'clear',
+}
+APPLIES_LABEL = {
+    'restart': 'applies at the next session start (restart); keeps the running cache',
+    'clear': 'applies after /clear, /compact or restart; keeps the running cache',
+}
+
 SANDBOX_PREFIX = 'sandbox.'
 _BARE_TOOL = re.compile(r'^[A-Za-z_*?][\w.\-*?]*$')
 _ALL_FORM = re.compile(r'^[A-Za-z_*?][\w.\-*?]*\(\*\)$')
@@ -117,17 +134,27 @@ _ALL_FORM = re.compile(r'^[A-Za-z_*?][\w.\-*?]*\(\*\)$')
 
 def _row(family):
     effect, source, note = ROWS[family]
-    return {'effect': effect, 'family': family, 'source': source, 'note': note,
-            'docs_fetched': DOCS_FETCHED}
+    row = {'effect': effect, 'family': family, 'source': source, 'note': note,
+           'docs_fetched': DOCS_FETCHED}
+    if family in APPLIES_AT:
+        row['applies_at'] = APPLIES_AT[family]
+    return row
 
 
 def classify_rule(kind, rule):
     """kind: allow | ask | deny. A deny that names a tool (bare, Tool(*), or glob) removes it."""
+    if isinstance(rule, str) and rule.strip().startswith('mcp__') and '(' in rule:
+        return _row('permission.mcp_parenthesized_rule')
     if kind in ('allow', 'ask'):
         return _row('permission.allow_or_ask_rule')
     if not isinstance(rule, str) or not rule.strip():
         return _row('file.other')
     rule = rule.strip()
+    if _ALL_FORM.match(rule) and rule.split('(')[0] not in ('Bash', 'PowerShell'):
+        row = _row('permission.deny_bare_tool_rule')
+        row['note'] += ('; the docs state that Tool(*) equals the bare name only for Bash and '
+                        'PowerShell, so this classification is conservative')
+        return row
     if _BARE_TOOL.match(rule) or _ALL_FORM.match(rule):
         return _row('permission.deny_bare_tool_rule')
     return _row('permission.deny_scoped_rule')
@@ -189,7 +216,8 @@ def with_tool_search(row, tool_search=None):
     if tool_search is True:
         row['label'] = 'keeps the cache (tool search observed)'
     elif tool_search is False:
-        row['label'] = 'invalidates (no tool search observed)'
+        row['label'] = ('may invalidate: no tool-search records seen in the window; tool search is '
+                        'on by default on supported models')
     else:
         row['label'] = ('keeps the cache if tool search is active, invalidates if it is off '
                         '(not known from this run)')
@@ -200,14 +228,15 @@ def with_tool_search(row, tool_search=None):
 LABELS = {
     'keeps': 'keeps the cache',
     'invalidates_next_request': 'invalidates the cache on the next request',
-    'applies_next_session': 'does not reach the running session (next session, /clear or /compact); keeps the cache',
     'unknown': 'cache effect not documented',
 }
 
 
 def label_row(row, tool_search=None):
     row = with_tool_search(row, tool_search)
-    if row['effect'] in LABELS:
+    if row['effect'] == 'applies_next_session':
+        row['label'] = APPLIES_LABEL[row['applies_at']]
+    elif row['effect'] in LABELS:
         row['label'] = LABELS[row['effect']]
     return row
 
@@ -226,18 +255,41 @@ def effect_for(kind, key, tool_search=None):
 
 
 def load_signals(snapshot_path):
-    """(tool_search_observed, median_context_tokens) from a snapshot; None where absent."""
+    """Signals from a snapshot as a dict; never raises (malformed input gives all None).
+
+    tool_search: transcripts.tool_search_observed (bool or None); context_tokens: median cached
+    context; ttl: '1h' when the majority of cache writes were 1-hour, else '5m' (None when no
+    writes are known); model: top main-thread model of transcripts.request_params.
+    """
+    out = {'tool_search': None, 'context_tokens': None, 'ttl': None, 'model': None}
     if not snapshot_path:
-        return None, None
+        return out
     try:
         with open(snapshot_path) as f:
-            t = (json.load(f) or {}).get('transcripts') or {}
-    except (OSError, ValueError, AttributeError):
-        return None, None
-    obs = t.get('tool_search_observed')
-    ctx = ((t.get('cache') or {}).get('context_tokens') or {}).get('median')
-    ctx = round(ctx) if isinstance(ctx, (int, float)) and not isinstance(ctx, bool) and ctx >= 0 else None
-    return obs if isinstance(obs, bool) else None, ctx
+            t = json.load(f).get('transcripts')
+        t = t if isinstance(t, dict) else {}
+        obs = t.get('tool_search_observed')
+        out['tool_search'] = obs if isinstance(obs, bool) else None
+        cache = t.get('cache') if isinstance(t.get('cache'), dict) else {}
+        ctx = (cache.get('context_tokens') or {}).get('median')
+        if isinstance(ctx, (int, float)) and not isinstance(ctx, bool) and ctx >= 0:
+            out['context_tokens'] = round(ctx)
+        share = cache.get('write_1h_share')
+        if isinstance(share, (int, float)) and not isinstance(share, bool):
+            out['ttl'] = '1h' if share > 0.5 else '5m'
+        rows = ((t.get('request_params') or {}).get('main') or {}).get('by_model')
+        top = rows[0][0] if isinstance(rows, list) and rows and isinstance(rows[0], list) and rows[0] else None
+        out['model'] = top if isinstance(top, str) else None
+    except (OSError, ValueError, AttributeError, TypeError, IndexError, RecursionError):
+        pass
+    return out
+
+
+def estimate_from(signals):
+    """Estimate from load_signals output, or None without a context size."""
+    if signals.get('context_tokens') is None:
+        return None
+    return estimate_reread(signals['context_tokens'], signals.get('ttl') or '5m', signals.get('model'))
 
 
 # Multipliers on base input price, from references/checklist.md (prompt caching docs, fetched
@@ -294,18 +346,19 @@ def main(argv=None):
     s.add_argument('--snapshot')
     s.add_argument('--context-tokens', type=int)
     s.add_argument('--model')
-    s.add_argument('--ttl', choices=sorted(WRITE_MULT), default='5m')
+    s.add_argument('--ttl', choices=sorted(WRITE_MULT), help='default: majority TTL of the snapshot, else 5m')
     sub.add_parser('table')
     a = ap.parse_args(argv)
     if a.cmd == 'table':
         print(json.dumps({'docs_fetched': DOCS_FETCHED, 'note': INFORM_ONLY,
                           'rows': {k: _row(k) for k in ROWS}}, indent=1))
         return 0
-    obs, ctx = load_signals(a.snapshot)
+    sig = load_signals(a.snapshot)
     if a.cmd == 'effect':
-        print(json.dumps(effect_for(a.kind, a.key, obs), indent=1))
+        print(json.dumps(effect_for(a.kind, a.key, sig['tool_search']), indent=1))
         return 0
-    est = estimate_reread(a.context_tokens if a.context_tokens is not None else ctx, a.ttl, a.model)
+    ctx = a.context_tokens if a.context_tokens is not None else sig['context_tokens']
+    est = estimate_reread(ctx, a.ttl or sig['ttl'] or '5m', a.model or sig['model'])
     print(json.dumps({'estimate': est, 'note': INFORM_ONLY}, indent=1))
     return 0 if est else 1
 

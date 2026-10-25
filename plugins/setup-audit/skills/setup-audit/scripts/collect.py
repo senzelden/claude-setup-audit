@@ -1513,7 +1513,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "tool_errors": tool_error_summary(tool_stats),
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
-        "tool_search_observed": tool_search_observed,
+        # None when no main-thread session fell in the window: nothing was scanned, so nothing is known.
+        "tool_search_observed": True if tool_search_observed else (False if raw["sessions"] else None),
         "cache": {
             "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
             "read_tokens": cache["read"],

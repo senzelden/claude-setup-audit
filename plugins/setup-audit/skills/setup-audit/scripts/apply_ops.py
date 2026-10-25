@@ -516,6 +516,8 @@ def run(raw, apply=False, backup_dir=None, snapshot=None):
     except OpsError as exc:
         result['error'] = exc.reason
         return result
+    signals = cache_effects.load_signals(snapshot)  # before any write; never raises
+    tool_search = signals['tool_search']
     plans = [plan_target(t) for t in targets]
     resolved = [p['_path'] for p in plans if p['_path']]
     if len(set(resolved)) != len(resolved):
@@ -545,11 +547,10 @@ def run(raw, apply=False, backup_dir=None, snapshot=None):
                 for p, t in zip(plans, targets):
                     if p['status'] == 'planned':
                         apply_target(p, t['expect_file'], directory)
-    tool_search, context = cache_effects.load_signals(snapshot)
     result['targets'] = [_public(p, tool_search) for p in plans]
     result['cache_effects_note'] = (cache_effects.INFORM_ONLY + ' Docs fetched '
                                     + cache_effects.DOCS_FETCHED + '.')
-    estimate = cache_effects.estimate_reread(context) if context is not None else None
+    estimate = cache_effects.estimate_from(signals)
     if estimate and any(cache_effects.needs_estimate(r['cache_effect'])
                         for t in result['targets'] for r in t['ops']):
         result['cache_estimate'] = estimate
