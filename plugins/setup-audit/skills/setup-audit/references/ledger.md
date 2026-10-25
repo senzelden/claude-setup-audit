@@ -61,6 +61,7 @@ Escalating writes a new entry with `supersedes` set to the old one.
 - `selector`, one of:
   - `{"type": "keywords", "source": "corrections" | "friction_details", "any": [...]}`
   - `{"type": "friction_category", "name": "..."}`
+  - `{"type": "failure_loops", "kind": "any" | "repeat_error" | "edit_test"}`
   - `{"type": "metric", "name": "...", "basis": "...", "unit": "...", "source": "..."}`
 - Each edit is exactly `{file, kind, backup}`, plus `pointer` for the two `json_*` kinds. For
   `json_array_append` the pointer names the appended element (for example `/permissions/deny/3`);
@@ -84,6 +85,7 @@ Escalating writes a new entry with `supersedes` set to the old one.
 | `keywords`, source `corrections` | sessions whose correction prompts (`history.jsonl`) match a correction pattern and contain a keyword |
 | `keywords`, source `friction_details` | sessions whose `/insights` facet `friction_detail` contains a keyword |
 | `friction_category` | the facet `friction_counts` for one category name |
+| `failure_loops` | turns with a failing-cycle loop (`transcripts.failure_loops`); matched sessions are main sessions with at least one such turn, scanned sessions those with any turn in the window |
 | `metric` | one labeled report metric (name, basis, unit, source) compared between reports |
 
 Keywords: 1 to 5 per selector, each 1 to 40 characters, literal strings (no regular expressions),

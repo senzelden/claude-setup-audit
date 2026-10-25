@@ -388,6 +388,22 @@ metric that motivated it, so the next run can check whether it moved.
   for fixes applied before the ledger existed). Act on processor proposals: escalate after two
   consecutive `not_dropped` verdicts, retire quiet memory/rule entries. A verdict is not causal
   proof.
+- **LRN-failure-loops** (`transcripts.failure_loops`, measured counts; thresholds in `thresholds`). A turn
+  (real user prompt to the next, main thread) that repeats one failing Bash command (`repeat_error`) or
+  edits one file and fails the tests again (`edit_test`) 3 or more times. Evidence is counts only: `turns_with_loop`
+  of `turns_scanned`, `by_kind`, `max_repeats`, `command_heads` (first token, e.g. `pytest`, `npm`; `other` when not an
+  identifier), `by_project`; command text and file paths are not stored, so ask the user which commands, or read the
+  repo's test setup, before proposing. Weigh by `tokens_in_loop_turns` against `tokens_scanned` (volume incl.
+  cache reads, not spend); propose only when loops recur in 3+ sessions or 2+ projects (`sessions_with_loop`,
+  `by_project`), and skip a single outlier. Lightest durable fix that fits the cause:
+  - the loop's command fails for an environmental reason (missing variable, service, wrong interpreter): an
+    environment fact in the repo's CLAUDE.md ("run tests with ...; needs X"), or `RDY-env-*`;
+  - `edit_test` on a slow or broad suite: `RDY-test-loop` (a fast subset target, a file-relevant test script);
+  - the same mistake each time: a PreToolUse or PostToolUse hook that runs the right command, per `LRN-enforce`.
+  Never propose a runtime intervention (interrupting or redirecting a turn): the audit sees the pattern after the
+  fact only. The sibling idea is TokenEconomizer's turn-duration redirect (microsoft/TokenEconomizer, as summarized in
+  the 0.12.0 plan, not re-fetched); this check uses repetition counts, not durations. Plugin-spawned sessions are excluded. Record the metric (ledger
+  selector `{"type": "failure_loops", "kind": ...}`) so the next run can show whether loops dropped.
 
 ## Hygiene (`HYG-`)
 

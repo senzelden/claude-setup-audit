@@ -236,6 +236,18 @@ request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching,
 variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
 as an error.
 
+Failure loops (`transcripts.failure_loops`): turns are delimited by user records that are not tool results, meta,
+compact summaries, sidechain or system-injected text (`<system-reminder>`, `<local-command...>`, `<task-notification>`,
+interruption notices); observed, undocumented record shapes, so a change in a later Claude Code release shows up as
+fewer turns, not an error. A failure is an `is_error` result that is not a permission denial or user rejection. Commands
+are compared after dropping a leading `cd ... &&` or `VAR=value` prefix and trailing `2>&1`, `/dev/null` redirects and
+pipes into tail/head/tee/grep/less/wc/cat; arguments otherwise stay, so a varied selector is a different command.
+`edit_test` pairs Edit/Write/MultiEdit with the next test-like Bash command (the runner list of the readiness test
+timing); a passing run resets the files it followed. Thresholds are 3 (`REPEAT_ERROR_MIN`, `EDIT_TEST_MIN` in
+`failure_loops.py`), a recommendation calibrated on fake transcripts and an aggregate smoke over real transcripts, not
+a documented limit. Tokens are main-thread assistant usage within the turn (subagent work inside it is not attributed).
+Background shell results, commands run through subagents and tests run by hooks are invisible here.
+
 Plugin runtime footprint (`plugin_written_rules`, `plugin_markers`, `plugin_state`, hook `decides_permissions`
 / `rewrites_input`, `transcripts.plugin_spawned`; fingerprint table dated 2026-10-25, from a survey of plugin sources,
 `docs/research/2026-10-25-plugin-side-effects.md`): only fingerprints that are a named file, key or directory are
