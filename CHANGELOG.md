@@ -6,6 +6,81 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-25
+
+Coexisting with runtime plugins such as TokenEconomizer: what plugins do outside their own files,
+the cache cost of applied changes, MCP connection failures, and failing loops within a turn
+(docs fetched 2026-10-25; plugin survey in `docs/research/2026-10-25-plugin-side-effects.md`).
+
+### Added
+
+- Plugin runtime footprint (`HYG-plugin-footprint`):
+  - From a small dated table of robust fingerprints:
+    - Deny rules TokenEconomizer wrote, read from its ledger
+      (`~/.tokeneconomizer/**/untool_applied.json`, bounded and never followed through symlinks)
+      and recorded per settings file as `plugin_written_rules`.
+    - The quartermaster auto-approve marker key (`plugin_markers`).
+    - Known plugin state files per project and globally (`plugin_state`).
+  - Generic signals for any plugin:
+    - Hook handlers that decide permissions or rewrite tool input, from a bounded static text
+      scan of their scripts, which are never run (`decides_permissions`, `rewrites_input`,
+      `decision_basis`, `scan_gap`).
+    - Hook timeouts that look like milliseconds (`timeout_suspect_ms`).
+    - Measured hook stdout per source, checked against the 10,000-char output cap
+      (`harness_overhead.injected_context.hook_stdout`).
+  - Sessions a plugin spawned, such as claude-mem observers (`transcripts.plugin_spawned`), are
+    labelled and kept in cost totals. They are excluded from the learning analyses, the baseline,
+    tool usage, MCP call counts and project discovery. The pruner never touches deny rules, so it
+    never removes a plugin-written rule.
+- Cache effect of applied changes: `apply_ops.py` and `prune_permissions.py` print a
+  `cache_effect` for each op (`keeps`, `invalidates_next_request`,
+  `invalidates_without_tool_search`, `applies_next_session` with when it applies, or `unknown`) from
+  `references/cache-effects.md`, with a labelled estimate of one cache
+  re-write from `transcripts.cache.context_tokens`. This is information only: apply never holds
+  a change. `transcripts.tool_search_observed` records whether tool search was active.
+- `transcripts.tool_usage`: per-tool session counts for main-thread sessions, plus deferred tools
+  listed but never called, from the observed, undocumented `deferred_tools_delta` records. A
+  deferred tool costs about one listing line. This is observation only: there are no deny
+  proposals for built-in tools.
+- `transcripts.mcp_failures`: per MCP server, the sessions where it failed, was pending or needed
+  auth, and its `errorCode` classes. The error text is never stored. Drift gains an
+  `mcp_failures` signal (`--mcp-fail-min-sessions`, default 3; `--mcp-fail-min-share`, default
+  0.5 of the sessions where the server appears).
+- `transcripts.failure_loops` (`LRN-failure-loops`) counts turns where the same failing command,
+  or a failing test after edits to the same file, repeats at least 3 times. It records only
+  counts and command heads from a fixed allowlist, never commands or paths. It is also a ledger
+  selector (`{"type": "failure_loops", "kind": ...}`).
+- `permission_gate` tool-error category: answers from the permission system, such as classifier
+  verdicts, approval prompts and working-directory blocks. These count as denied, not as command
+  failures. The patterns are anchored, so an MCP "request was blocked by proxy" error stays a
+  failure.
+
+### Fixed
+
+- A tool result or message whose id is not a string no longer aborts the collection.
+
+### Validation and limits
+
+- 865 local regression tests pass, with 95% coverage of the bundled scripts. Strict plugin
+  validation passes on a clean export. No paid model evaluations were run, and hosted CI has not
+  yet run on this release.
+- Results from a 30-day collection of a real home (400 sessions):
+  - Tool search was active.
+  - The median context was about 157k tokens.
+  - One MCP server failed in 15 of 15 sessions with `ENDPOINT_NOT_FOUND`.
+  - 120 Bash errors were permission gates.
+  - No plugin-spawned sessions were present.
+  - With `--hash-paths`, the snapshot contained no username.
+- Failure-loop thresholds are uncalibrated. The real home had 0 loops over 758 turns, and 0 in
+  the uncapped ledger pass over 1,592 sessions, so only fake transcripts exercise a detection.
+- `deferred_tools_delta`, `hook_additional_context` and `hook_success` records are observed and
+  undocumented, and may change without notice. Always-loaded built-in tools are not observable,
+  so the potential savings from trimming tools are small.
+- The plugin fingerprints are dated (2026-10-25) and cover only the listed plugins. Permission
+  decisions made by hooks are found by a text heuristic.
+- The cache effects follow the prompt-caching docs, not TokenEconomizer's advice to wait for an
+  idle gap before every change. Effects of sandbox, hook and env changes are `unknown`.
+
 ## [0.11.0] - 2026-10-25
 
 Request-level cost evidence, settings that can't take effect where they are set, a mods
@@ -629,7 +704,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.9.0...v0.10.0

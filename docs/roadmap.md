@@ -108,27 +108,24 @@ Hosted validation passed all eight jobs at `0022836`:
 Hosted validation passed all eight jobs at `a794fa1`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/40169646133).
 
-## Candidate 0.12.0: learning from TokenEconomizer
+## Shipped in 0.12.0: coexisting with runtime plugins
 
-[TokenEconomizer](https://github.com/microsoft/TokenEconomizer) (UC Berkeley, Microsoft Research,
-Microsoft Security; [arXiv 2610.22732](https://arxiv.org/abs/2610.22732); README read 2026-10-25)
-is a runtime cost-control plugin for Claude Code, Codex, the Copilot CLI and Pi. It injects
-learned environment facts at session start, adds unused tools to `.claude/settings.local.json`
-deny rules (automatically by default), and redirects stuck failing loops. It is complementary
-to this audit (runtime and automatic vs. one-shot, read-only and approved), so the candidates
-below are about coexisting with it and borrowing what fits. Verify its current behaviour from its
-own docs before implementation. Its stated Claude Code support was 2.1.300 to 2.1.307.
+Prompted by [TokenEconomizer](https://github.com/microsoft/TokenEconomizer) (UC Berkeley,
+Microsoft Research, Microsoft Security; [arXiv 2610.22732](https://arxiv.org/abs/2610.22732)) and
+a survey of common plugins' runtime side effects
+([evidence](research/2026-10-25-plugin-side-effects.md)).
 
-- [ ] **Recognize it when installed:** attribute its deny entries, session-start injection and
-  fail-open hooks to the plugin so `prune_permissions`, harness-overhead and `SEC-hooks` don't
-  misread them as hand-written rules, unexplained overhead or unsafe guards.
-- [ ] **Cache-aware apply timing:** changing tools or settings in a conversation that is resumed
-  rewrites its prompt cache; apply guidance (and `COST-cache-health`) should prefer an idle gap,
-  or say what a change costs mid-session.
-- [ ] **Unused individual tools:** from transcripts, tools that are loaded but never called across
-  recent sessions, beyond whole unused MCP servers; proposals only.
-- [ ] **Failure-loop signal:** a deterministic ledger signal for the same failing command and
-  edit repeated within one turn.
+- [x] **Recognize runtime plugins:** plugin-written deny rules, known state files, hooks that
+  decide permissions or rewrite input, suspect timeouts, measured hook injection, and
+  plugin-spawned sessions (kept in cost, excluded from learning analysis) (`HYG-plugin-footprint`).
+- [x] **Cache effect of applied changes:** each apply and prune op states its documented cache
+  effect, with an estimated re-write cost; information only.
+- [x] **Tool usage:** per-tool use and deferred tools listed but never called; MCP connection
+  failures per server, with a drift signal. Observation only.
+- [x] **Failure-loop signal:** repeated failing commands and edit-test cycles within one turn, with
+  a ledger selector (`LRN-failure-loops`). Thresholds are uncalibrated: no real loops yet.
+
+Hosted validation: not yet run.
 
 ## Next candidates, separately scoped
 
@@ -158,7 +155,8 @@ own docs before implementation. Its stated Claude Code support was 2.1.300 to 2.
 - **Deterministic apply:** widen the allowlist key by key with doc-grounded types; a paid
   approved-apply eval for sandbox ops needs separate approval; do not migrate the pruner or ledger
   flows without a design.
-- **Deeper checks follow-ups:** a ledger tool-error source and a drift signal for MCP failure rate.
+- **Deeper checks follow-ups:** a ledger tool-error source; calibrate failure-loop thresholds
+  once real loops are observed.
   Verify proposed signals against current official documentation before implementation.
 - **Enterprise posture:** opt-in data-handling assessment that separates locally observable
   settings from provider/account/admin facts requiring verification. Keep training, retention,
