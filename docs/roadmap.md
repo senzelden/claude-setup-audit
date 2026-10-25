@@ -108,6 +108,28 @@ Hosted validation passed all eight jobs at `0022836`:
 Hosted validation passed all eight jobs at `a794fa1`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/40169646133).
 
+## Candidate 0.12.0: learning from TokenEconomizer
+
+[TokenEconomizer](https://github.com/microsoft/TokenEconomizer) (UC Berkeley, Microsoft Research,
+Microsoft Security; [arXiv 2610.22732](https://arxiv.org/abs/2610.22732); README read 2026-10-25)
+is a runtime cost-control plugin for Claude Code, Codex, the Copilot CLI and Pi. It injects
+learned environment facts at session start, adds unused tools to `.claude/settings.local.json`
+deny rules (automatically by default), and redirects stuck failing loops. It is complementary
+to this audit (runtime and automatic vs. one-shot, read-only and approved), so the candidates
+below are about coexisting with it and borrowing what fits. Verify its current behaviour from its
+own docs before implementation. Its stated Claude Code support was 2.1.300 to 2.1.307.
+
+- [ ] **Recognize it when installed:** attribute its deny entries, session-start injection and
+  fail-open hooks to the plugin so `prune_permissions`, harness-overhead and `SEC-hooks` don't
+  misread them as hand-written rules, unexplained overhead or unsafe guards.
+- [ ] **Cache-aware apply timing:** changing tools or settings in a conversation that is resumed
+  rewrites its prompt cache; apply guidance (and `COST-cache-health`) should prefer an idle gap,
+  or say what a change costs mid-session.
+- [ ] **Unused individual tools:** from transcripts, tools that are loaded but never called across
+  recent sessions, beyond whole unused MCP servers; proposals only.
+- [ ] **Failure-loop signal:** a deterministic ledger signal for the same failing command and
+  edit repeated within one turn.
+
 ## Next candidates, separately scoped
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
