@@ -19,7 +19,7 @@ import snapshot_contract
 
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
 USER, PROJ = 'zcuserhome', 'zcprojalpha'
-LOOP_CANARIES = ('zcloopfile', 'zcloopcmd')  # planted in a loop transcript; must never reach any snapshot
+LOOP_CANARIES = ('zcloopfile', 'zcloopcmd', 'zcleadcanary')  # planted in a loop transcript; must never reach any snapshot
 CANARIES = (USER, PROJ, 'zcmemfile', 'zcauditname', 'zcsdkfile', 'zcpluginroot', 'zcmissingdir', 'zcenvmodule',
             'zcotherproj', 'zcmodfile')
 
@@ -91,9 +91,14 @@ class CanaryHome(PatchedHome):
                 {'type': 'tool_use', 'id': f'c{i}', 'name': 'Bash', 'input': {'command': 'make zcloopcmd'}}]}},
                      {'type': 'user', 'timestamp': later, 'toolUseResult': {}, 'message': {'content': [
                          {'type': 'tool_result', 'tool_use_id': f'c{i}', 'is_error': True, 'content': 'Exit code 1'}]}}]
+        for i in range(3):  # a project-specific tool name as the first token
+            loop += [{'type': 'assistant', 'timestamp': stamp, 'message': {'id': f'x{i}', 'content': [
+                {'type': 'tool_use', 'id': f'x{i}', 'name': 'Bash', 'input': {'command': 'zcleadcanary-deploy --go'}}]}},
+                     {'type': 'user', 'timestamp': later, 'toolUseResult': {}, 'message': {'content': [
+                         {'type': 'tool_result', 'tool_use_id': f'x{i}', 'is_error': True, 'content': 'Exit code 1'}]}}]
         self.write(f'.claude/projects/{self.key}/loop.jsonl', '\n'.join(map(json.dumps, loop)))
         other_key = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
-        self.write(f'.claude/projects/{other_key}/loop.jsonl', '\n'.join(map(json.dumps, loop)))  # a project not collected
+        self.write(f'.claude/projects/{other_key}/loop.jsonl', '\n'.join(map(json.dumps, loop)))  # a transcript directory outside the collected roots
         for i in range(3):  # three assistant turns with usage give a per-project context baseline
             self.write(f'.claude/projects/{self.key}/b{i}.jsonl', json.dumps({
                 'type': 'assistant', 'sessionId': f'b{i}', 'timestamp': stamp,
@@ -124,7 +129,7 @@ class Canaries(CanaryHome):
             with self.subTest(mode=mode):
                 snap = self.snap(**mode)
                 loops = snap['transcripts']['failure_loops']
-                self.assertEqual((loops['turns_with_loop'], loops['command_heads']), (2, {'make': 2}))
+                self.assertEqual((loops['turns_with_loop'], loops['command_heads']), (2, {'make': 2, 'other': 2}))
                 self.assertEqual([c for c in LOOP_CANARIES if c in json.dumps(snap)], [])
                 if mode.get('hash_paths'):
                     self.assertEqual([k for k in loops['by_project'] if not TAG_RE.match(k)], [])

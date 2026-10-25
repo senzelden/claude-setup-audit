@@ -1,5 +1,7 @@
 """Failure loops: repeated failing cycles inside one turn, from fake transcripts. Counts only."""
 import json
+import os
+import shutil
 import re
 import unittest
 from unittest import mock
@@ -42,13 +44,14 @@ def result(tid, text="ok", error=False):
     return {"type": "user", "timestamp": stamp(2), "toolUseResult": {}, "message": {"content": [item]}}
 
 
-def run(cmd, fail, text="Exit code 1\nboom"):
+def run(cmd, fail, text=None):
     c, tid = call("Bash", {"command": cmd})
-    return [c, result(tid, text if fail else "ok", error=fail)]
+    return [c, result(tid, text or ("Exit code 1\nboom" if fail else "ok"), error=fail)]
 
 
-def edit(path, name="Edit"):
-    return [call(name, {"file_path": path})[0]]
+def edit(path, name="Edit", fail=False):
+    c, tid = call(name, {"file_path": path})
+    return [c, result(tid, "File has not been read yet" if fail else "updated", error=fail)]
 
 
 def cycle(path, fail=True, cmd=TEST_CMD):
@@ -155,6 +158,74 @@ class EditTest(Base):
         self.assertEqual(self.one([prompt()] + recs)["by_kind"]["edit_test"], 1)
 
 
+class Gates(Base):
+    GATES = ["The server-side auto mode classifier gave no verdict (error); try again",
+             "This command requires approval", "This Bash command contains multiple operations. The following "
+             "part(s) requires approval: x", "Blocked: sleep 30 followed by another command", "allowed_domains "
+             "applies only when the sandbox is enabled", "Permission for this command was denied by a built-in "
+             "Claude Code safety check", "The command was blocked by policy", "A variable in this command can't be "
+             "checked: $X"]
+
+    def test_permission_system_answers_are_not_command_failures(self):
+        for text in self.GATES:
+            with self.subTest(text=text[:40]):
+                self.assertEqual(collect.tool_error_category(text), "permission_gate")
+                self.assertTrue(collect.tool_error_denied(text))
+                t = self.one([prompt()] + flat(*[run("make build", True, text) for _ in range(4)]), rel=f"-g/{len(text)}.jsonl")
+                self.assertEqual(t["turns_with_loop"], 0)
+
+    def test_real_failures_are_not_swallowed_by_the_gate_patterns(self):
+        for text in ("Exit code 1\nrequires approval of the PR", "Exit code 2\nconnection was blocked", "boom"):
+            self.assertFalse(collect.tool_error_denied(text), text)
+
+    def test_tool_errors_report_gates_as_denied(self):
+        self.transcript("-a/s.jsonl", [prompt()] + run("make x", True, self.GATES[0]) + run("make y", True))
+        with mock.patch.object(collect.time, "time", return_value=NOW):
+            (row,) = collect.collect_transcripts(1)["tool_errors"]["by_tool"]
+        self.assertEqual((row["errors"], row["denied"], row["categories"]), (2, 1, {"nonzero_exit": 1, "permission_gate": 1}))
+
+
+class NeutralResults(Base):
+    def neutral_runs(self):
+        denied = run("pytest -k n", True, "Permission to use Bash with command x has been denied.")
+        interrupted_error = run("pytest -k n", True, "[Request interrupted by user for tool use]")
+        interrupted_ok = run("pytest -k n", False, "[Request interrupted by user]")
+        c, tid = call("Bash", {"command": "pytest -k n", "run_in_background": True})
+        flagged = [c, result(tid, "Started with id abc")]
+        c, tid = call("Bash", {"command": "pytest -k n"})
+        text_only = [c, result(tid, "Command running in background with ID: abc")]
+        return {"denied": denied, "interrupted_error": interrupted_error, "interrupted_ok": interrupted_ok,
+                "background_flag": flagged, "background_text": text_only}
+
+    def scenario(self, neutral, follow):
+        shutil.rmtree(os.path.join(self.claude, "projects"), ignore_errors=True)  # one scenario per count
+        recs = (cycle("/r/a.py", cmd="pytest -k c1") + cycle("/r/a.py", cmd="pytest -k c2") + edit("/r/a.py")
+                + neutral + (cycle("/r/a.py", cmd="pytest -k c3") if follow else []))
+        return self.one([prompt()] + recs)
+
+    def test_neutral_test_runs_neither_count_as_failures_nor_reset_cycles(self):
+        for name in self.neutral_runs():
+            with self.subTest(kind=name):
+                self.assertEqual(self.scenario(self.neutral_runs()[name], False)["by_kind"]["edit_test"], 0)
+                self.assertEqual(self.scenario(self.neutral_runs()[name], True)["by_kind"]["edit_test"], 1)
+
+    def test_interrupted_flag_in_the_tool_use_result_is_neutral(self):
+        c, tid = call("Bash", {"command": "pytest -k z"})
+        r = dict(result(tid, "partial", error=False), toolUseResult={"interrupted": True})
+        recs = cycle("/r/a.py", cmd="pytest -k 1") + cycle("/r/a.py", cmd="pytest -k 2") + edit("/r/a.py") + [c, r] \
+            + cycle("/r/a.py", cmd="pytest -k 3")
+        self.assertEqual(self.one([prompt()] + recs)["by_kind"]["edit_test"], 1)
+
+    def test_a_failed_edit_does_not_count_and_a_real_pass_still_resets(self):
+        recs = flat(*[edit("/r/a.py", fail=True) + run(f"pytest -k {i}", True) for i in range(5)])
+        self.assertEqual(self.one([prompt()] + recs)["by_kind"]["edit_test"], 0)
+
+    def test_long_commands_sharing_a_prefix_stay_distinct(self):
+        base = "make build " + "x" * 600
+        t = self.one([prompt()] + flat(*[run(base + str(i), True) for i in range(5)]))
+        self.assertEqual(t["turns_with_loop"], 0)
+
+
 class Aggregation(Base):
     def looping(self):
         return [prompt()] + flat(*[run("npm test", True) for _ in range(3)])
@@ -184,8 +255,10 @@ class Aggregation(Base):
         secret = "ZZ-Sentinel_9f3a2"
         recs = flat(*[run(f"./Scripts/{secret}.sh", True) for _ in range(3)]
                     + [edit(f"/r/{secret}.py") + run("pytest " + secret, True) for _ in range(3)])
+        recs += flat(*[run("acmesecretproj-deploy --go", True) for _ in range(3)])
         t = self.one([prompt()] + recs)
-        self.assertEqual(t["command_heads"], {"other": 1, "pytest": 2})  # one per looping kind
+        self.assertEqual(t["command_heads"], {"other": 2, "pytest": 2})  # one per looping kind
+        self.assertNotIn("acmesecretproj", json.dumps(t))
         self.assertNotIn(secret, json.dumps(t))
         self.assertNotIn("/r/", json.dumps(t))
 
@@ -250,11 +323,27 @@ class LedgerSelector(Base):
         self.assertFalse(self.count("any")["complete"])
 
 
+class TestRunners(Base):
+    def test_common_runners_are_test_commands(self):
+        for cmd in ("python -m unittest discover", "python3 -m unittest -v", "tox -e py", "nox -s tests",
+                    "cargo nextest run", "deno test", "dotnet test", "just test", "make check", "pnpm run test"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(collect.TEST_CMD_RE.search(cmd))
+                shutil.rmtree(os.path.join(self.claude, "projects"), ignore_errors=True)
+                recs = flat(*[cycle("/r/a.py", cmd=f"{cmd} {i}") for i in range(3)])
+                self.assertEqual(self.one([prompt()] + recs)["by_kind"]["edit_test"], 1)
+
+    def test_lookalikes_are_not_test_commands(self):
+        for cmd in ("make build", "python3 -m http.server", "cargo build", "echo detox"):
+            self.assertFalse(collect.TEST_CMD_RE.search(cmd), cmd)
+
+
 class Normalizer(unittest.TestCase):
-    def test_head_is_a_strict_identifier(self):
+    def test_head_is_on_the_fixed_allowlist(self):
         rx = collect.TEST_CMD_RE
         for text, want in (("npm run test", "npm"), ("python3 -m pytest x", "pytest"), ("./x/Bin.sh a", "other"),
-                           ("deploy-prod.sh a", "other"), ("python3.12 x.py", "python3.12"), ("/usr/bin/make", "other"),
+                           ("deploy-prod.sh a", "other"), ("acmesecretproj-deploy x", "other"), ("make x", "make"),
+                           ("python3 -m unittest -v", "python3"), ("/usr/bin/make", "other"),
                            ("cargo test", "cargo"), ("go test ./...", "go"), ("", "other")):
             self.assertEqual(failure_loops.command_head(failure_loops.normalize_command(text), rx), want, text)
 

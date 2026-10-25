@@ -1086,6 +1086,13 @@ def harness_listing(raw, record, timestamp, path):
 TOOL_ERROR_CATEGORIES = [
     ("user_rejected", re.compile(r"doesn.t want to (proceed|take this action)|user rejected", re.I)),
     ("permission_denied", re.compile(r"^Permission (for this action|to use)\b")),
+    # The permission system answering instead of the command running (observed 2026-10-25): the auto-mode
+    # classifier without a verdict, approval required, compound-command and variable checks, built-in
+    # safety denials, blocked sleeps and sandbox-domain notes. Not a failure of the command itself.
+    ("permission_gate", re.compile(
+        r"^(?!Exit code)(?s:.*?)(auto mode classifier|requires? approval|^Permission for this\b|^Blocked:|"
+        r"allowed_domains applies only|was blocked\b|variable in this command can.t be checked|"
+        r"contains multiple operations)", re.I)),
     ("sandbox", re.compile(r"\b(bwrap|apply-seccomp|sandbox-exec|seatbelt)\b", re.I)),
     ("timeout", re.compile(r"timed out|\btimeout\b", re.I)),
     ("nonzero_exit", re.compile(r"^Exit code \d+")),
@@ -1097,7 +1104,7 @@ TOOL_ERROR_CATEGORIES = [
     ("connection", re.compile(r"ECONNREFUSED|ECONNRESET|ENOTFOUND|not connected|"
                               r"connection (closed|refused|reset|error)|fetch failed", re.I)),
 ]
-DENIAL_CATEGORIES = {"user_rejected", "permission_denied"}
+DENIAL_CATEGORIES = {"user_rejected", "permission_denied", "permission_gate"}
 TOOL_ERROR_LIMIT = 15
 MIN_CALLS_FOR_RATE = 5
 BUILTIN_TOOL_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
@@ -1630,7 +1637,9 @@ ENV_ERROR_RE = re.compile(
     r"KeyError: .{0,3}[A-Z][A-Z0-9_]{3,}"
     r"|(?i:env(?:ironment)? ?var(?:iable)?s?)[^\n]{0,60}?(?i:not set|missing|required|undefined)"
     r"|\b[A-Z][A-Z0-9_]{3,}\b (?i:is not set|not set|is required)")
-TEST_CMD_RE = re.compile(r"\b(pytest|vitest|jest|go test|cargo test|(?:npm|pnpm|yarn|bun) (?:run )?test|make test|mix test|rspec|phpunit)\b")
+TEST_CMD_RE = re.compile(r"\b(pytest|vitest|jest|go test|cargo (?:test|nextest)|(?:python3?|py) -m unittest|"
+                         r"(?:npm|pnpm|yarn|bun) (?:run )?test|(?:make|just) (?:test|check)|mix test|rspec|phpunit|"
+                         r"tox|nox|deno test|dotnet test)\b")
 BIG_REWRITE = 50_000  # cache-write tokens on a mid-session turn that indicate the prefix was re-cached
 SOURCE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".rb")
 SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__", "dist", "build", ".next", "target",

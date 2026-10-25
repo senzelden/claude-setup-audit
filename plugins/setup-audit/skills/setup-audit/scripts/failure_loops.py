@@ -7,13 +7,17 @@ records and system or meta records do not start one). Within a turn two loops ar
 - repeat_error: one normalized Bash command whose tool_result is an error, REPEAT_ERROR_MIN or more
   times (permission denials and user rejections are not failures);
 - edit_test: an Edit/Write/MultiEdit on one file followed by a failing test-like Bash command,
-  EDIT_TEST_MIN or more times on the same file, with no passing test run in between.
+  EDIT_TEST_MIN or more times on the same file. A passing test run resets only the files edited since
+  the previous test run; a denied, interrupted or background-launched run changes nothing.
+  Only Edit/Write/MultiEdit are tracked: NotebookEdit and edits made through Bash (sed -i, heredocs)
+  are invisible, and an edit whose own result is an error does not count.
 
 Only counts, a command head (first token, strict identifier pattern) and the project key leave this
 module; normalized commands and file paths are held in memory for one turn and never stored.
 Inspired by TokenEconomizer's turn-duration redirect (microsoft/TokenEconomizer), but nothing here
 intervenes at runtime. The transcript record shapes are observed, undocumented. Stdlib only.
 """
+import hashlib
 import re
 from collections import Counter
 
@@ -21,8 +25,13 @@ REPEAT_ERROR_MIN = 3   # same failing command in one turn
 EDIT_TEST_MIN = 3      # failing test runs after edits of the same file in one turn
 KINDS = ('repeat_error', 'edit_test')
 EDIT_TOOLS = ('Edit', 'Write', 'MultiEdit')
-COMMAND_CAP = 500      # characters of a normalized command that distinguish it
-HEAD_RE = re.compile(r'[a-z][a-z0-9_+-]{0,23}(?:\.\d{1,3}){0,2}\Z')  # no path, no file extension
+# Command heads leave the tracker only from this fixed list (test runners and common tools); anything
+# else, including project, script and tool names, is `other`.
+HEAD_ALLOW = frozenset('''
+    pytest vitest jest go cargo python python3 py npm pnpm yarn npx bun bunx deno node make just mix rspec phpunit tox nox
+    dotnet uv uvx pip pip3 rustc git gh docker kubectl bash sh zsh curl wget mkdir rm cp mv ls cat grep rg find sed awk jq
+    tsc eslint prettier ruff mypy black flake8 pyright gradle mvn ant ruby bundle rake php composer java javac gcc clang
+    cmake sudo timeout cd echo test head tail diff tar unzip chmod'''.split())
 TOKEN_FIELDS = ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens')
 # Text that begins a record Claude Code writes as a "user" record without the user typing it.
 NOT_A_PROMPT = ('<local-command', '<task-notification', '<system-reminder', '<command-message>',
@@ -40,15 +49,15 @@ def normalize_command(command):
     text = command if isinstance(command, str) else ''
     text = _LEADING.sub('', text, count=1)
     text = _TRAILING.sub('', text)
-    return _SPACE.sub(' ', text).strip()[:COMMAND_CAP]
+    return _SPACE.sub(' ', text).strip()
 
 
 def command_head(normalized, test_re):
-    """First token (or test runner) when it matches a strict identifier pattern, else `other`."""
+    """The test runner (or else the first token) when it is on HEAD_ALLOW, else `other`."""
     match = test_re.search(normalized)
     token = (match.group(1) if match else (normalized.split(' ', 1)[0] if normalized else ''))
     token = token.split(' ', 1)[0]
-    return token if HEAD_RE.match(token) else 'other'
+    return token if token in HEAD_ALLOW else 'other'
 
 
 def real_prompt(record):
@@ -73,6 +82,20 @@ def real_prompt(record):
     return bool(text.strip()) and not text.lstrip().startswith(NOT_A_PROMPT)
 
 
+def _text(content):
+    if isinstance(content, list):
+        content = ' '.join(b['text'] for b in content if isinstance(b, dict) and isinstance(b.get('text'), str))
+    return content if isinstance(content, str) else ''
+
+
+def _interrupted(item, record):
+    """A result of an interrupted run or a background launch notice (observed, undocumented shapes)."""
+    summary = record.get('toolUseResult') if isinstance(record, dict) else None
+    if isinstance(summary, dict) and (summary.get('interrupted') is True or summary.get('backgroundTaskId')):
+        return True
+    return _text(item.get('content')).lstrip().startswith(('[Request interrupted', 'Command running in background'))
+
+
 def _usage_total(usage):
     return sum(v for k in TOKEN_FIELDS if type(v := usage.get(k)) is int)
 
@@ -90,7 +113,7 @@ class LoopTracker:
 
     def _begin(self):
         self._close()
-        self._open = {'tokens': 0, 'calls': {}, 'fails': Counter(), 'cycles': Counter(), 'pending': set(),
+        self._open = {'tokens': 0, 'calls': {}, 'edits': {}, 'fails': Counter(), 'cycles': Counter(), 'pending': set(),
                       'heads': {}}
 
     def _close(self):
@@ -130,7 +153,7 @@ class LoopTracker:
                 if item.get('type') == 'tool_use':
                     self._call(turn, item)
                 elif item.get('type') == 'tool_result':
-                    self._result(turn, item)
+                    self._result(turn, item, record)
 
     def _call(self, turn, item):
         tid, name, args = item.get('id'), item.get('name'), item.get('input')
@@ -139,25 +162,38 @@ class LoopTracker:
             if tid in self.seen_tools:
                 return
             self.seen_tools.add(tid)
-        if name in EDIT_TOOLS and isinstance(args.get('file_path'), str) and args['file_path']:
-            turn['pending'].add(args['file_path'])
+        if name in EDIT_TOOLS and isinstance(tid, str) and isinstance(args.get('file_path'), str) and args['file_path']:
+            turn['edits'][tid] = args['file_path']  # pending only once its own result is not an error
         elif name == 'Bash' and isinstance(tid, str) and isinstance(args.get('command'), str):
             norm = normalize_command(args['command'])
             if norm:
-                turn['calls'][tid] = (norm, bool(self.test_re.search(norm)))
+                # The comparison key is a digest: long commands never merge, and no text is kept.
+                key = hashlib.sha256(norm.encode('utf-8', 'replace')).hexdigest()
+                turn['calls'][tid] = (key, bool(self.test_re.search(norm)), command_head(norm, self.test_re),
+                                      args.get('run_in_background') is True)
 
-    def _result(self, turn, item):
-        call = turn['calls'].pop(item.get('tool_use_id'), None)
+    def _result(self, turn, item, record=None):
+        tid = item.get('tool_use_id')
+        path = turn['edits'].pop(tid, None)
+        if path is not None:
+            if item.get('is_error') is not True:
+                turn['pending'].add(path)
+            return
+        call = turn['calls'].pop(tid, None)
         if call is None:
             return
-        norm, is_test = call
-        failed = item.get('is_error') is True and not self.is_denial(item.get('content'))
-        head = command_head(norm, self.test_re)
-        if failed:
-            turn['fails'][norm] += 1
-            turn['heads'][('cmd', norm)] = head
+        key, is_test, head, background = call
+        error = item.get('is_error') is True
+        if error and self.is_denial(item.get('content')):
+            return  # a permission answer says nothing about the command
+        if _interrupted(item, record) or (background and not error):
+            return  # no verdict: neither a failure nor a pass
+        if error:
+            turn['fails'][key] += 1
+            turn['heads'][('cmd', key)] = head
         if not is_test:
             return
+        failed = error
         for path in turn['pending']:
             if failed:
                 turn['cycles'][path] += 1
@@ -201,6 +237,8 @@ def summarize(per_session):
     out['basis'] = ('Main-thread turns from a real user prompt to the next; observed, undocumented record shapes. '
                     'Tokens are the turn\'s main-thread assistant usage (input, cache and output, once per message id); '
                     'subagent work inside a turn is not attributed. Plugin-spawned sessions are excluded. '
+                    'This block is built from the bounded transcript scan (most recent files first); the ledger '
+                    'failure_loops selector scans every main transcript in the window, so do not compare the two. '
                     'Command text and file paths are not stored.')
     return out
 
