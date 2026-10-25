@@ -323,7 +323,8 @@ SUBAGENT_KEEP = (  # transcripts.subagent_models / request_params: names and fix
       for c in ('main', 'sdk', 'agent', 'other') for k in ('by_model', 'by_effort', 'by_thinking')))
 FOOTPRINT_KEEP = (  # plugin_footprint.py: table labels, fixed vocabulary and notes (0.12.0)
     ('transcripts', 'plugin_spawned', 'basis'), ('transcripts', 'plugin_spawned', 'rows', '*', 'label'),
-    ('usage', 'heaviest_sessions', '*', 'plugin_spawned'))
+    ('usage', 'heaviest_sessions', '*', 'plugin_spawned'),
+    ('transcripts', 'failure_loops', 'basis'))  # counts, a command-head vocabulary (dict keys) and project-keyed maps
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -457,7 +458,7 @@ PATH_FAMILIES = {
                    ('memory', 'similar_across_projects', '*', 'a_project'),
                    ('memory', 'similar_across_projects', '*', 'b_project')),
         'keys': (('memory', 'by_project'), ('transcripts', 'env_error_hits_by_project'),
-                 ('transcripts', 'test_run_seconds_by_project'))},
+                 ('transcripts', 'test_run_seconds_by_project'), ('transcripts', 'failure_loops', 'by_project'))},
     'config_files': {
         'doc': 'settings, instruction, managed and MCP config file paths, previous audit file names, the '
                'drift log path and the /insights report path',

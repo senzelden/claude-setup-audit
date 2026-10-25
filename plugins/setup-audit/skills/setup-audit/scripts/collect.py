@@ -30,6 +30,7 @@ import time
 from collections import Counter, defaultdict
 import inventory
 import extensions
+import failure_loops
 import harness
 import clarity
 import config_checks
@@ -1109,6 +1110,11 @@ def tool_error_category(content):
     return next((name for name, rx in TOOL_ERROR_CATEGORIES if rx.search(text)), "other")
 
 
+def tool_error_denied(content):
+    """True for a permission denial or user rejection: not a failure of the command itself."""
+    return tool_error_category(content) in DENIAL_CATEGORIES
+
+
 def _tool_key(name):
     if name.startswith("mcp__"):
         parts = name.split("__")
@@ -1324,6 +1330,12 @@ def spawned_summary(spawned, raw):
                       "Tokens are input + cache creation + cache read + output of main and subagent files.")}
 
 
+def _project_key_matcher(project_filter):
+    """key -> bool for a transcript directory name, by Claude Code's own dash-encoding of project roots."""
+    allowed_keys = {re.sub(r"[^A-Za-z0-9]", "-", r) for r in project_filter}
+    return lambda key: key in allowed_keys or any(key.startswith(k + "--") for k in allowed_keys)
+
+
 def collect_transcripts(days, max_files=400, project_filter=None):
     """Measured signals from session transcripts, not estimates.
 
@@ -1341,8 +1353,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     top = glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl"))
     sub = glob.glob(os.path.join(CLAUDE, "projects", "*", "*", "subagents", "*.jsonl"))
     if project_filter is not None:
-        allowed_keys = {re.sub(r"[^A-Za-z0-9]", "-", r) for r in project_filter}
-        matches = lambda key: key in allowed_keys or any(key.startswith(k + "--") for k in allowed_keys)  # noqa: E731
+        matches = _project_key_matcher(project_filter)
         top = [f for f in top if matches(os.path.basename(os.path.dirname(f)))]
         sub = [f for f in sub if matches(os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(f)))))]
     coverage = {k: _coverage() for k in ("main_files", "subagent_files", "records")}
@@ -1366,6 +1377,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
            "entrypoints": Counter(), "file_entrypoints": {}, "main_tokens": defaultdict(int),
            "sub_tokens": defaultdict(int), "malformed": 0}
     spawned = defaultdict(lambda: {"sessions": 0, "subagent_files": 0, "keys": set()})
+    loop_sessions = []  # (project key, finished turns) of the user's own main sessions
     for path in top + sub:
         is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
@@ -1374,6 +1386,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         spawn = plugin_footprint.spawn_label_for_key(proj_key if is_top else os.path.basename(
             os.path.dirname(os.path.dirname(os.path.dirname(path)))), HOME)
         need_baseline = is_top and spawn is None
+        loops = failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE) if is_top and spawn is None else None
         names = {}  # tool_use id -> tool key, for pairing errors
         pending = {}  # Bash tool_use id -> start time, for test commands
         if is_top:
@@ -1427,6 +1440,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
                     if spawn is None:
                         tool_error_record(record, path, names, tool_stats)
+                    if loops is not None:
+                        loops.feed(record)
                     if is_top and not entry_seen and record.get("type") in ("user", "assistant"):
                         entry_seen = True
                         ep = record.get("entrypoint")
@@ -1542,6 +1557,9 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         except OSError:
             coverage["main_files" if is_top else "subagent_files"]["omitted"] += 1
             continue
+        if loops is not None:
+            loops.finish()
+            loop_sessions.append((proj_key, loops.turns))
         if active and spawn is not None:
             spawned[spawn]["sessions" if is_top else "subagent_files"] += 1
             spawned[spawn]["keys"].add(session_key)
@@ -1570,6 +1588,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             ((p, pct(v, 0.5), len(v)) for p, v in per_project.items() if len(v) >= 3), key=lambda x: -(x[1] or 0))[:12],
         "mcp_calls_by_server": mcp_calls.most_common(),
         "tool_errors": tool_error_summary(tool_stats),
+        "failure_loops": failure_loops.summarize(loop_sessions),
         "plugin_spawned": spawned_summary(spawned, raw),
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
@@ -2104,6 +2123,35 @@ def _category_count(facet, name, counts):
     return _positive(table.get(name))
 
 
+def _loop_rows(kind, since, until, project_filter, counts):
+    """Yield (session key, looping turns of `kind`) per own main session with a turn in the bounds."""
+    files = glob.glob(os.path.join(CLAUDE, "projects", "*", "*.jsonl"))
+    matches = _project_key_matcher(project_filter) if project_filter is not None else None
+    for path in sorted(files):
+        key = os.path.basename(os.path.dirname(path))
+        if (matches is not None and not matches(key)) or plugin_footprint.spawn_label_for_key(key, HOME):
+            continue
+        tracker = failure_loops.LoopTracker(tool_error_denied, TEST_CMD_RE)
+        try:
+            with open(path, errors="replace") as f:
+                for line in f:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        counts["complete"] = counts["complete"] and not line.strip()
+                        continue
+                    stamp = _dated(record.get("timestamp")) if isinstance(record, dict) else None
+                    if stamp is not None and since <= stamp <= until:
+                        tracker.feed(record)
+        except OSError:
+            counts["complete"] = False
+            continue
+        tracker.finish()
+        if tracker.turns:
+            yield (key, os.path.basename(path)), sum(1 for t in tracker.turns if kind == "any" and t["kinds"]
+                                                       or kind in t["kinds"])
+
+
 def count_selector(selector, since, until, project_filter=None):
     """Count one ledger selector between epoch-second bounds (inclusive). Counts only, never text."""
     counts = dict(matches=0, sessions_matched=0, sessions_scanned=0, complete=True)
@@ -2115,6 +2163,8 @@ def count_selector(selector, since, until, project_filter=None):
     elif kind == "keywords":
         rows = ((sid, int(any(w in str(d.get("friction_detail") or "").lower() for w in words)))
                 for sid, d in _facet_rows(since, until, project_filter, counts))
+    elif kind == "failure_loops":
+        rows = _loop_rows(selector["kind"], since, until, project_filter, counts)
     elif kind == "friction_category":
         rows = ((sid, _category_count(d, selector["name"], counts))
                 for sid, d in _facet_rows(since, until, project_filter, counts))

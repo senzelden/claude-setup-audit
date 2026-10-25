@@ -25,6 +25,7 @@ MECHANISMS = ('memory', 'rule', 'hook', 'skill', 'setting')
 LADDER = ('memory', 'rule', 'hook', 'skill')
 STATES = ('active', 'removed', 'superseded')
 SOURCES = ('corrections', 'friction_details')
+LOOP_KINDS = ('any', 'repeat_error', 'edit_test')
 KINDS = ('markdown_block', 'hook_script', 'json_array_append', 'json_set')
 SCOPES = ('global', 'project', 'all')
 ID_RE = re.compile(r'L-\d{8}-\d{1,4}\Z')
@@ -96,6 +97,8 @@ def validate_selector(selector):
         require(all(_text(w, 40) for w in words), 'keywords must be 1 to 40 characters')
     elif kind == 'friction_category':
         require(set(selector) == {'type', 'name'} and _text(selector['name'], 60), 'invalid selector fields')
+    elif kind == 'failure_loops':
+        require(set(selector) == {'type', 'kind'} and selector['kind'] in LOOP_KINDS, 'invalid selector fields')
     elif kind == 'metric':
         require(set(selector) == {'type', 'name', 'basis', 'unit', 'source'}, 'invalid selector fields')
         require(all(_text(selector[k], 120) for k in ('name', 'basis', 'unit', 'source')), 'invalid selector fields')

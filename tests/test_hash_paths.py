@@ -19,6 +19,7 @@ import snapshot_contract
 
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
 USER, PROJ = 'zcuserhome', 'zcprojalpha'
+LOOP_CANARIES = ('zcloopfile', 'zcloopcmd')  # planted in a loop transcript; must never reach any snapshot
 CANARIES = (USER, PROJ, 'zcmemfile', 'zcauditname', 'zcsdkfile', 'zcpluginroot', 'zcmissingdir', 'zcenvmodule',
             'zcotherproj', 'zcmodfile')
 
@@ -83,6 +84,16 @@ class CanaryHome(PatchedHome):
         self.write(f'code/{PROJ}/src/zcenvmodule.py', 'import os\nX = os.environ["ZC_NEEDED"]\n')
         other = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
         self.write(f'.claude/projects/{other}/memory/zcmemfile.md', '---\ndescription: d\n---\n')
+        loop = [{'type': 'user', 'timestamp': stamp, 'message': {'content': 'fix it'}}]
+        for i in range(3):  # a failing edit-and-test loop whose command and file name carry canaries
+            loop += [{'type': 'assistant', 'timestamp': stamp, 'message': {'id': f'l{i}', 'content': [
+                {'type': 'tool_use', 'id': f'e{i}', 'name': 'Edit', 'input': {'file_path': f'{self.root}/src/zcloopfile.py'}},
+                {'type': 'tool_use', 'id': f'c{i}', 'name': 'Bash', 'input': {'command': 'make zcloopcmd'}}]}},
+                     {'type': 'user', 'timestamp': later, 'toolUseResult': {}, 'message': {'content': [
+                         {'type': 'tool_result', 'tool_use_id': f'c{i}', 'is_error': True, 'content': 'Exit code 1'}]}}]
+        self.write(f'.claude/projects/{self.key}/loop.jsonl', '\n'.join(map(json.dumps, loop)))
+        other_key = re.sub(r'[^A-Za-z0-9]', '-', os.path.join(self.home, 'code', 'zcotherproj'))
+        self.write(f'.claude/projects/{other_key}/loop.jsonl', '\n'.join(map(json.dumps, loop)))  # a project not collected
         for i in range(3):  # three assistant turns with usage give a per-project context baseline
             self.write(f'.claude/projects/{self.key}/b{i}.jsonl', json.dumps({
                 'type': 'assistant', 'sessionId': f'b{i}', 'timestamp': stamp,
@@ -107,6 +118,16 @@ class Canaries(CanaryHome):
                 text = json.dumps(self.hashed(**mode))
                 self.assertEqual([c for c in CANARIES if c in text], [])
                 self.assertNotIn(self.tmp.name, text)
+
+    def test_failure_loop_text_is_never_stored_and_its_project_key_is_hashed(self):
+        for mode in ({}, {'hash_paths': True}, {'hash_paths': True, 'metadata_only': True}):
+            with self.subTest(mode=mode):
+                snap = self.snap(**mode)
+                loops = snap['transcripts']['failure_loops']
+                self.assertEqual((loops['turns_with_loop'], loops['command_heads']), (2, {'make': 2}))
+                self.assertEqual([c for c in LOOP_CANARIES if c in json.dumps(snap)], [])
+                if mode.get('hash_paths'):
+                    self.assertEqual([k for k in loops['by_project'] if not TAG_RE.match(k)], [])
 
     def test_per_run_salt_snapshot_hides_canaries_too(self):
         self.assertEqual([c for c in CANARIES if c in json.dumps(self.snap(hash_paths=True))], [])
@@ -155,6 +176,7 @@ class Joins(CanaryHome):
         self.assertIn(tag, snap['memory']['by_project'])  # transcript key of the root maps to its tag
         self.assertEqual(set(snap['transcripts']['env_error_hits_by_project']), {tag})
         self.assertEqual(set(snap['transcripts']['test_run_seconds_by_project']), {tag})
+        self.assertIn(tag, snap['transcripts']['failure_loops']['by_project'])
 
     def test_readiness_env_join_ran_before_hashing(self):
         plain, hashed = self.snap(), self.hashed()

@@ -679,6 +679,32 @@
             }
           }
         },
+        "failure_loops": {
+          "type": "object",
+          "required": ["turns_scanned", "turns_with_loop", "sessions_scanned", "sessions_with_loop", "by_kind",
+                       "max_repeats", "tokens_scanned", "tokens_in_loop_turns", "by_project", "command_heads",
+                       "thresholds"],
+          "properties": {
+            "turns_scanned": {"type": "integer", "minimum": 0},
+            "turns_with_loop": {"type": "integer", "minimum": 0},
+            "sessions_scanned": {"type": "integer", "minimum": 0},
+            "sessions_with_loop": {"type": "integer", "minimum": 0},
+            "by_kind": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "max_repeats": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "tokens_scanned": {"type": "integer", "minimum": 0},
+            "tokens_in_loop_turns": {"type": "integer", "minimum": 0},
+            "by_project": {"type": "object", "additionalProperties": {
+              "type": "object",
+              "required": ["turns", "loop_turns", "tokens"],
+              "properties": {
+                "turns": {"type": "integer", "minimum": 0},
+                "loop_turns": {"type": "integer", "minimum": 0},
+                "tokens": {"type": "integer", "minimum": 0}}}},
+            "command_heads": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+            "thresholds": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+            "basis": {"type": "string"}
+          }
+        },
         "plugin_spawned": {
           "type": "object",
           "required": ["rows", "tokens_spawned", "tokens_total"],
