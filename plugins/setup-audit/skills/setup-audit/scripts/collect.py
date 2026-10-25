@@ -1310,6 +1310,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     baselines, per_project, mcp_calls = [], defaultdict(list), Counter()
     env_hits, test_durations = Counter(), defaultdict(list)
     cache, rewrites = Counter(), Counter()
+    context_sizes, tool_search_observed = [], False
     request_stats, request_seen = _request_stats(), set()
     agent_rows, agent_files, agent_absent, agent_unusable = {}, 0, 0, 0
     raw = {"sessions": 0, "injections": [], "commands": {}, "event_commands": {}, "listings": [],
@@ -1377,6 +1378,9 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             ep = ep if isinstance(ep, str) else "other"
                             raw["entrypoints"][ep] += 1
                             raw["file_entrypoints"][path] = ep
+                    if (is_top and record.get("type") == "attachment" and isinstance(record.get("attachment"), dict)
+                            and record["attachment"].get("type") == "deferred_tools_delta"):
+                        tool_search_observed = True  # observed, undocumented: see references/coverage.md
                     if is_top and not listed and record.get("type") == "attachment":
                         listed = harness_listing(raw, record, timestamp, path)
                     if is_top and '"tool_result"' in line:
@@ -1420,6 +1424,10 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             written = u.get("cache_creation_input_tokens") or 0
                             cache["read"] += u.get("cache_read_input_tokens") or 0
                             cache["write"] += written
+                            context = sum(v for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+                                          if type(v := u.get(k)) is int)
+                            if context:
+                                context_sizes.append(context)
                             split = u.get("cache_creation") or {}
                             cache["write_1h"] += split.get("ephemeral_1h_input_tokens") or 0
                             cache["write_5m"] += split.get("ephemeral_5m_input_tokens") or 0
@@ -1505,10 +1513,13 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "tool_errors": tool_error_summary(tool_stats),
         "subagent_models": subagent_summary(agent_rows, agent_files, agent_absent, agent_unusable),
         "request_params": request_params_summary(request_stats),
+        "tool_search_observed": tool_search_observed,
         "cache": {
             "hit_ratio": round(cache["read"] / (cache["read"] + cache["write"]), 3) if cache["read"] + cache["write"] else None,
             "read_tokens": cache["read"],
             "write_tokens": cache["write"],
+            "context_tokens": {"median": pct(context_sizes, 0.5), "p90": pct(context_sizes, 0.9),
+                               "responses": len(context_sizes)},
             "write_1h_share": round(cache["write_1h"] / (cache["write_1h"] + cache["write_5m"]), 3)
                               if cache["write_1h"] + cache["write_5m"] else None,
             "big_rewrites": {"threshold_tokens": BIG_REWRITE, "total": sum(rewrites.values()),

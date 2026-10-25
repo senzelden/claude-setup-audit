@@ -543,6 +543,9 @@
         "coverage"
       ],
       "properties": {
+        "tool_search_observed": {
+          "type": "boolean"
+        },
         "subagent_models": {
           "type": "object",
           "required": [

@@ -205,6 +205,15 @@ occurrence, so resumed copies of a session can inflate them. Caps: 15 built-in t
 3 failing tools per server; `failure_rate` (excluding permission denials and user rejections)
 is null below 5 calls. The session-meta `tool_error_categories` remain separate and coarse.
 
+Tool search (`transcripts.tool_search_observed`; observed, undocumented, Claude Code 2.1.310,
+2026-10-25): true when any main-thread transcript record in the window is an attachment of type
+`deferred_tools_delta` (the record Claude Code writes when deferred tool definitions are listed or
+change). Claude Code documents tool search (mcp, "Scale with MCP tool search") but not this record.
+False means none was seen in the scanned window, not that tool search is off: an empty window, an
+older Claude Code or a scan cap give the same value. Only the record type is read, never its names.
+Cache effects use it only to label bare-name deny changes ("tool search observed"); nothing gates
+on it.
+
 Subagent models and request parameters (`transcripts.subagent_models`, `transcripts.request_params`;
 observed, undocumented, Claude Code 2.1.310, 2026-10-25): Claude Code documents neither shape.
 `<agent>.meta.json` beside each subagent transcript supplies `agentType` and `model`; only those two

@@ -95,6 +95,12 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `by_effort`, `by_thinking` (`[value, count]` pairs, value null when absent) and `cache_breakpoints`
   (`1h`, `5m`, `other`). Names, counts and booleans only; agent descriptions, tool-use ids, prompts,
   blobs and hashes are never stored. Additive within snapshot v1.
+- `transcripts.tool_search_observed` (boolean) and `transcripts.cache.context_tokens`
+  (`median`, `p90`, `responses`): optional, additive within snapshot v1. `tool_search_observed` is
+  true when any main-thread record in the window is a `deferred_tools_delta` attachment (observed,
+  undocumented; `coverage.md`). `context_tokens` is input + cache-creation + cache-read tokens per
+  deduplicated main-thread response (measured), the basis for the cache re-read estimate in
+  `references/cache-effects.md`.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,
