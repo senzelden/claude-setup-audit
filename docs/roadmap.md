@@ -125,7 +125,8 @@ a survey of common plugins' runtime side effects
 - [x] **Failure-loop signal:** repeated failing commands and edit-test cycles within one turn, with
   a ledger selector (`LRN-failure-loops`). Thresholds are uncalibrated: no real loops yet.
 
-Hosted validation: not yet run.
+Hosted validation passed all eight jobs at `2f0cdd0`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/40277575521).
 
 ## Next candidates, separately scoped
 

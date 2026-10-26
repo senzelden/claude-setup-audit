@@ -62,8 +62,10 @@ the cache cost of applied changes, MCP connection failures, and failing loops wi
 ### Validation and limits
 
 - 865 local regression tests pass, with 95% coverage of the bundled scripts. Strict plugin
-  validation passes on a clean export. No paid model evaluations were run, and hosted CI has not
-  yet run on this release.
+  validation passes on a clean export. Hosted validation passed all eight jobs at `2f0cdd0`
+  ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/40277575521)), including
+  Linux/macOS on Python 3.11/3.13/3.14, the coverage floor and strict plugin validation with Claude
+  Code 2.1.310. No paid model evaluations were run.
 - Results from a 30-day collection of a real home (400 sessions):
   - Tool search was active.
   - The median context was about 157k tokens.
