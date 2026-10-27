@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-10-28
+
+The directory still held 0.14.4 under its MCP credential rule, whose docs link is the MCP
+connection page. The collector opened MCP config files, where servers keep `env` and `headers`
+credentials, even though it kept only shape facts. It no longer reads them at all.
+
+### Removed
+
+- The MCP inventory: project `.mcp.json`, managed MCP files and installed plugins' MCP
+  definitions are not opened. `extensions.mcp_servers`, `projects[].mcp_servers`,
+  `transcripts.mcp_configured_but_unused` and the `configured` flag on MCP failure rows are gone.
+- `SEC-mcp` and `SEC-mcp-exposure`. `SEC-mcp-review` replaces them with guidance: run
+  `claude mcp list` and review project `.mcp.json` files yourself.
+
+### Changed
+
+- MCP call counts and failures still come from transcript tool names. `COST-mcp-unused` asks you
+  to compare them with your own `claude mcp list` output.
+- A bundle test keeps the inventory out of shipped files, and the fake-home test asserts no MCP
+  config file is opened.
+
 ## [0.14.4] - 2026-10-27
 
 The directory still held 0.14.3 for reading a credential that could be sent to a server. This
