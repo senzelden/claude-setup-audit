@@ -34,6 +34,7 @@ import failure_loops
 import harness
 import clarity
 import config_checks
+import config_names
 import drift_log
 import plugin_footprint
 import privacy
@@ -410,10 +411,9 @@ def hook_handler_entry(event, matcher, x):
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
         target = x.get("url", "")
-        headers = x.get("headers")
-        extra = {"header_keys": sorted(headers) if isinstance(headers, dict) else [],
+        extra = {"header_keys": config_names.hook_header_names(x),
                  "allowed_env_vars": x.get("allowedEnvVars"),
-                 "target_origin": extensions.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
+                 "target_origin": config_names.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
     elif kind == "mcp_tool":
         target = f"{x.get('server', '?')}:{x.get('tool', '?')}"
         extra = {k: _mcp_name(x[k]) if isinstance(x.get(k), str) else None for k in ("server", "tool")}
@@ -557,7 +557,7 @@ def summarize_settings(path, data=None, managed=False):
         "keys": sorted(raw.keys()),
         "model": d.get("model"),
         "model_settings": d.get("modelSettings"),
-        "env_keys": sorted((d.get("env") or {}).keys()),
+        "env_keys": config_names.settings_env_names(d),
         "enabled_plugins": d.get("enabledPlugins"),
         "hooks": {ev: [h.get("matcher") for h in lst] for ev, lst in hooks.items()},
         "hook_commands": [redact(c)[:200] for c in raw_commands],
@@ -751,7 +751,7 @@ def collect_global():
     state = plugin_footprint.state_files(CLAUDE, "global")
     if state:
         out["plugin_state"] = state
-    out["mcp_user"] = sorted((load_json(os.path.join(HOME, ".claude.json")) or {}).get("mcpServers", {}).keys())
+    out["mcp_user"] = config_names.user_mcp_server_names(HOME)
     installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
     out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
     out["last_update"] = load_json(os.path.join(CLAUDE, ".last-update-result.json"))
@@ -1732,11 +1732,9 @@ def env_declarations(root):
         if text:
             declared |= set(re.findall(ENV_KEY_LINE, text, re.M))
             sources.append(name)
-    envrc = _read(root, ".envrc")
+    envrc = config_names.envrc_names(root)
     if envrc:
-        declared |= set(re.findall(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=", envrc, re.M))
-        # Not anchored: several use_pass calls may share a line (`use_pass A x; use_pass B y`).
-        declared |= set(re.findall(r"\buse_pass\w*\s+([A-Z][A-Z0-9_]*)", envrc))
+        declared |= set(envrc["declared_names"])
         sources.append(".envrc")
     for name in ("mise.toml", ".mise.toml"):
         m = re.search(r"^\[env\]\s*\n(.*?)(?=^\[|\Z)", _read(root, name), re.M | re.S)
@@ -1818,12 +1816,11 @@ def env_contract(root, max_files=4000):
 
 
 def envrc_info(root):
-    text = _read(root, ".envrc")
-    if not text:
+    names = config_names.envrc_names(root)  # names only, never values
+    if not names:
         return None
-    literal = re.findall(r"^\s*export\s+(\w*(?:KEY|TOKEN|SECRET|PASSWORD)\w*)=['\"]?(?![$`'\"])[^\s'\"]{12,}", text, re.M)
-    return {"pointer_lines": len(re.findall(r"use_pass|pass show|op read|sops |vault ", text)),
-            "literal_secret_names": sorted(set(literal)),  # names only, never values
+    return {"pointer_lines": names["pointer_lines"],
+            "literal_secret_names": names["literal_secret_names"],
             "git": git_status(root, ".envrc")}
 
 

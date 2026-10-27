@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import warnings
+import config_names
 
 DEFAULT, NARROW = 'default', 'narrow'
 # hooks.md (fetched 2026-09-29, re-verified 2026-09-30), "Hook lifecycle" event table and "Matcher patterns":
@@ -546,6 +547,5 @@ def scope_ignored(layer, data):
                 parent in SETTINGS_SCOPES and layer in SCOPE_IGNORED_IN[SETTINGS_SCOPES[parent]]
                 and _present(data, parent)):
             keys.append({'key': key, 'scope': klass})
-    env = data.get('env')
-    names = sorted(n for n in env if isinstance(n, str)) if isinstance(env, dict) else []
+    names = config_names.settings_env_names(data)
     return keys, [{'name': n, 'reason': r} for n in names for r in [_env_reason(n, layer)] if r]

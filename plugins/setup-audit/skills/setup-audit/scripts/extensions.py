@@ -1,12 +1,10 @@
 """Bounded MCP/plugin provenance. Never connects, installs, or runs discovered components."""
 from collections import defaultdict
-import ipaddress
-import json
 import os
 from pathlib import Path
 import re
 import stat
-from urllib.parse import urlsplit
+import config_names
 import harness
 import inventory
 import plugin_footprint
@@ -14,31 +12,12 @@ import plugin_footprint
 MAX_ENTRIES = 100
 MAX_PLUGINS = 50
 NAME_CAP = 120
-PROJECT_STATE_LISTS = ('enabledMcpjsonServers', 'disabledMcpjsonServers', 'disabledMcpServers', 'enabledMcpServers')
 OBS_LIMIT = 20
 
 # mcp.md, fetched 2026-09-29: reserved built-in names ("including"; not exhaustive), remote types
 # (streamable-http is an alias of http), and the tool-name normalization for plugin servers.
 RESERVED_NAMES = frozenset({'workspace', 'claude-in-chrome', 'computer-use', 'Claude Preview', 'Claude Browser'})
 REMOTE_TYPES = frozenset({'http', 'streamable-http', 'sse', 'ws'})
-VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z_0-9]*)(?::-[^}]*)?\}')
-
-
-def split_url(url):
-    """urlsplit with the WHATWG rule that '\\' equals '/' in special schemes (http, https, ws, wss)."""
-    if url.split(':', 1)[0].lower() in ('http', 'https', 'ws', 'wss'):
-        url = url.replace('\\', '/')
-    return urlsplit(url)
-
-
-def url_origin(url):
-    """scheme://host for http/https/ws/wss URLs with a host; else 'dynamic_or_unknown' ('invalid_url' on ValueError)."""
-    try:
-        parts = split_url(url)
-    except ValueError:
-        return 'invalid_url'
-    return (f'{parts.scheme}://{parts.hostname}' if parts.scheme in ('http', 'https', 'ws', 'wss')
-            and parts.hostname else 'dynamic_or_unknown')
 
 
 def tool_prefix(name, plugin=None):
@@ -47,83 +26,37 @@ def tool_prefix(name, plugin=None):
     return f'plugin_{norm(plugin)}_{norm(name)}' if plugin else norm(name)
 
 
-def endpoint_locality(url):
-    """Locality from the URL text alone; never resolves names."""
-    if '${' in url:
-        return 'dynamic'
-    try:
-        host = split_url(url).hostname
-    except ValueError:
-        return 'invalid'
-    if not host:
-        return 'invalid'
-    if host == 'localhost':
-        return 'loopback'
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return 'named_host'
-    if ip.is_loopback:
-        return 'loopback'
-    if ip.is_private or ip.is_link_local:
-        return 'private_address'
-    return 'public_address'
-
-
 def json_object(path, scope, sources):
-    text, info = inventory.read_text(path, 1024 * 1024)
-    data = {}
-    if text is not None and not info.get('truncated'):
-        try:
-            data = json.loads(text)
-            if not isinstance(data, dict):
-                raise ValueError()
-        except ValueError:
-            data = {}
-            info.update(status='unavailable', reason='invalid_json_object')
+    data, info = inventory.read_json_object(path)
     sources.append(inventory.source(path, scope, **info))
     return data
 
 
-def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
+def mcp_summary(name, facts, path, scope, redact, project=None, plugin=None):
+    """One server row from config_names.server_facts (None: the config was not an object)."""
     item = inventory.source(path, scope, 'collected', name=redact(name), project=project,
                             active_state='unknown', representation='selected_fields')
-    if not isinstance(config, dict):
+    if facts is None:
         return dict(item, status='unavailable', reason='invalid_server')
-    command = config.get('command')
-    item['transport'] = config.get('type', 'stdio') if isinstance(config.get('type', 'stdio'), str) else 'unknown'
-    # Arguments and URL paths may hold unlabeled credentials; do not serialize them.
-    item['executable'] = (redact(command) if isinstance(command, str) and
-                          re.fullmatch(r'[\w./${}-]+', command) else 'unknown_or_complex')
-    args = config.get('args', [])
-    item['argument_count'] = len(args) if isinstance(args, list) else None
-    item['package_version_evidence'] = 'unknown'
-    if isinstance(command, str) and os.path.basename(command) in ('npx', 'uvx') and isinstance(args, list):
-        packages = [a for a in args if isinstance(a, str) and not a.startswith('-')]
-        if packages:
-            candidate = packages[0]
-            item['package_version_evidence'] = ('exact_version_shape' if re.fullmatch(
-                r'(?:@[\w.-]+/)?[\w.-]+(?:@|==)\d+\.\d+\.\d+(?:-[\w.-]+)?', candidate) else 'no_exact_version_observed')
-    url = config.get('url')
-    if isinstance(url, str):
-        item['endpoint_origin'] = url_origin(url)
+    item['transport'] = facts['transport']
+    # Arguments and URL paths may hold unlabeled credentials; config_names reduces them to counts and labels.
+    item['executable'] = redact(facts['executable']) if facts['executable'] is not None else 'unknown_or_complex'
+    item['argument_count'] = facts['argument_count']
+    item['package_version_evidence'] = facts['package_version_evidence']
+    if facts['endpoint_origin'] is not None:
+        item['endpoint_origin'] = facts['endpoint_origin']
         item['endpoint_detail'] = 'path, query, fragment, port and userinfo omitted'
     mechanisms = []
-    for key in ('env', 'headers'):
-        values = config.get(key)
-        item[key + '_keys'] = sorted(values) if isinstance(values, dict) else []
-        if isinstance(values, dict) and values:
-            refs = sorted({m.group(1) for v in values.values() if isinstance(v, str)
-                           for m in VAR_RE.finditer(v)})
-            item[key + '_variable_references'] = refs
-            mechanisms.append(key + ('_references_or_literals' if refs else '_configured_values_omitted'))
-    for key in ('oauth', 'headersHelper'):
-        if key in config:
-            mechanisms.append(key + '_configured')
+    mappings = (('env', facts['env_names']), ('headers', facts['headers_names']))
+    for prefix, names in mappings:
+        item[prefix + '_keys'] = names['keys'] if names else []
+        if names and names['keys']:
+            refs = names['variable_references']
+            item[prefix + '_variable_references'] = refs
+            mechanisms.append(prefix + ('_references_or_literals' if refs else '_configured_values_omitted'))
+    mechanisms.extend(key + '_configured' for key in facts['configured_mechanisms'])
     item['credential_mechanisms'] = mechanisms or ['not_observed_in_selected_fields']
-    declared = config.get('type')
-    declared = declared if declared is None or isinstance(declared, str) else '<invalid>'
-    has_url = 'url' in config
+    declared, has_url = facts['declared_type'], facts['has_url']
     notes = []
     if declared is None and has_url:
         notes.append('url_without_type')
@@ -133,33 +66,26 @@ def mcp_summary(name, config, path, scope, redact, project=None, plugin=None):
         notes.append('sse_deprecated')
     if name in RESERVED_NAMES:
         notes.append('reserved_name')
-    if declared in REMOTE_TYPES and url == '':
+    if declared in REMOTE_TYPES and facts['url_is_empty']:
         notes.append('empty_url_placeholder')
     item['config_notes'] = notes
     item['transport_class'] = ('skipped' if declared == 'sdk' or (declared is None and has_url) else
                                'remote' if declared in REMOTE_TYPES else
                                'local_process' if declared in (None, 'stdio') else 'unknown')
-    if isinstance(url, str) and url:
-        item['endpoint_locality'] = endpoint_locality(url)
-        try:
-            parts = split_url(url)
-            scheme, userinfo, query = parts.scheme, '@' in parts.netloc, bool(parts.query)
-        except ValueError:
-            scheme, userinfo, query = '', False, False
-        item['url_has_userinfo'], item['url_has_query'] = userinfo, query
-        item['plaintext_transport'] = scheme in ('http', 'ws') and item['endpoint_locality'] != 'loopback'
-        item['url_variable_references'] = sorted({redact(m.group(1))[:NAME_CAP] for m in VAR_RE.finditer(url)})[:MAX_ENTRIES]
-    for key in ('env', 'headers'):
-        values = config.get(key)
-        if isinstance(values, dict):
-            item[key + '_literal_keys'] = sorted(k for k, v in values.items()
-                                                 if isinstance(v, str) and v and not VAR_RE.search(v))[:MAX_ENTRIES]
-    oauth = config.get('oauth')
-    if isinstance(oauth, dict):
-        item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth if isinstance(k, str))[:MAX_ENTRIES]
-        scopes = oauth.get('scopes')
-        item['oauth_scopes'] = (sorted({redact(t[:64]) for t in scopes.split()})[:20]
-                                if isinstance(scopes, str) else None)
+    url = facts['url_facts']
+    if url is not None:
+        item['endpoint_locality'] = url['endpoint_locality']
+        item['url_has_userinfo'], item['url_has_query'] = url['url_has_userinfo'], url['url_has_query']
+        item['plaintext_transport'] = url['plaintext_transport']
+        item['url_variable_references'] = sorted({redact(n)[:NAME_CAP] for n in url['url_variable_names']})[:MAX_ENTRIES]
+    for prefix, names in mappings:
+        if names is not None:
+            item[prefix + '_literal_keys'] = names['literal_keys'][:MAX_ENTRIES]
+    oauth = facts['oauth']
+    if oauth is not None:
+        item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth['keys'])[:MAX_ENTRIES]
+        item['oauth_scopes'] = (sorted({redact(t) for t in oauth['scopes']})[:20]
+                                if oauth['scopes'] is not None else None)
     item['tool_prefix'] = tool_prefix(redact(name), redact(plugin) if plugin else None)[:NAME_CAP]
     if plugin:
         item['plugin'] = redact(plugin)[:NAME_CAP]
@@ -252,8 +178,11 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     sources, servers, plugins = [], [], []
 
     def servers_from(data, path, scope, project=None, key='mcpServers', bare=False, plugin=None):
-        values = data.get(key, data if bare else {})
-        if not isinstance(values, dict):
+        add_servers(config_names.server_map(data, key, bare), path, scope, project, plugin)
+
+    def add_servers(values, path, scope, project=None, plugin=None):
+        """values: {name: config_names.server_facts} or None for a server map that is not an object."""
+        if values is None:
             sources.append(inventory.source(path, scope, 'unavailable', reason='invalid_server_map'))
             return
         remaining = max(0, MAX_ENTRIES - len(servers))
@@ -262,22 +191,21 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
             sources.append(inventory.source(path, scope, 'partial', reason='server_limit', omitted=len(names)-remaining))
         servers.extend(mcp_summary(n, values[n], path, scope, redact, project, plugin) for n in names[:remaining])
 
-    user_path = os.path.join(home, '.claude.json')
-    user = json_object(user_path, 'user', sources)
-    servers_from(user, user_path, 'user')
+    user = config_names.user_mcp_state(home)
+    user_path = user['path']
+    sources.append(user['source'])
+    add_servers(user.get('mcpServers', {}), user_path, 'user')
     project_paths = sorted(set(roots) | {c['session_cwd'] for c in contexts})
-    local = user.get('projects', {})
     project_state = []
     for root in project_paths:
-        entry = local.get(root) if isinstance(local, dict) else None
-        if isinstance(entry, dict):
-            servers_from(entry, user_path, 'local', root)
+        entry = user['projects'].get(root)
+        if entry is not None:
+            add_servers(entry.get('mcpServers', {}), user_path, 'local', root)
             state = {'project': root, 'source': user_path}
-            for key in PROJECT_STATE_LISTS:
-                if isinstance(entry.get(key), list):
-                    state[key] = sorted({redact(x)[:NAME_CAP] for x in entry[key] if isinstance(x, str)})[:MAX_ENTRIES]
-            trust = entry.get('hasTrustDialogAccepted')
-            state['trust_accepted'] = trust if isinstance(trust, bool) else None
+            for key in config_names.PROJECT_STATE_LISTS:
+                if key in entry:
+                    state[key] = sorted({redact(x)[:NAME_CAP] for x in entry[key]})[:MAX_ENTRIES]
+            state['trust_accepted'] = entry['hasTrustDialogAccepted']
             project_state.append(state)
         path = os.path.join(root, '.mcp.json')
         before = len(servers)

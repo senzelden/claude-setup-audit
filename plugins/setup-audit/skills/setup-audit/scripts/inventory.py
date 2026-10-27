@@ -51,6 +51,21 @@ def read_text(path, limit=MAX_BYTES):
         return None, dict(status='unavailable', reason='read_failed')
 
 
+def read_json_object(path, limit=1024 * 1024):
+    """(dict, collection metadata) for a bounded JSON object file; {} when absent, truncated or not an object."""
+    text, info = read_text(path, limit)
+    data = {}
+    if text is not None and not info.get('truncated'):
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError()
+        except ValueError:
+            data = {}
+            info.update(status='unavailable', reason='invalid_json_object')
+    return data, info
+
+
 def frontmatter(text):
     """Extract selected YAML fields as text, not a YAML evaluator or an effective value parser."""
     if not text.startswith('---\n'):
