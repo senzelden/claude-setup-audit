@@ -36,7 +36,7 @@ printed instead. If it fails, times out or is not found, the logger's own line i
 Default `<CLAUDE config dir>/audits/rate-limits.jsonl` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`).
 One line per change:
 `{"version":1,"at":"<UTC ISO>","windows":{"five_hour":{"used_percentage":23.5,"resets_at":1738425600},...}}`.
-A line is appended only when a window appeared or disappeared, a `resets_at` changed, or the
+A line is appended only when a window appeared or disappeared (never when no window is present, which is normal at every session start), a `resets_at` changed, or the
 whole-number part of a `used_percentage` changed; "last logged" is read from the last 4 KB. Concurrent
 sessions may write a duplicate; readers tolerate it. `spend_limit` may also carry `period`
 (`daily`, `weekly` or `monthly`).

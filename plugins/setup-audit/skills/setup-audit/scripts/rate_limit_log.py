@@ -110,8 +110,8 @@ def _allowed_dirs(audits):
 def _log(path, windows, now, audits):
     allowed = _allowed_dirs(audits)
     path = drift_log.check_path(path, allowed)
-    if not windows and not os.path.exists(path):
-        return
+    if not windows:
+        return  # absent until the first API response in every session: never log an empty entry
     if not changed(last_entry(path), windows):
         return
     try:

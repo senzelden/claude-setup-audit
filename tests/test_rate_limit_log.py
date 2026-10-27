@@ -66,8 +66,15 @@ class Logging(Base):
         self.assertEqual(len(self.lines()), 2)
         self.run_main(status(five_hour={'used_percentage': 24.0, 'resets_at': 1738440000}))
         self.assertEqual(len(self.lines()), 3)
-        self.run_main(status())
+        self.run_main(status(five_hour={'used_percentage': 24.0, 'resets_at': 1738440000},
+                             seven_day=SEVEN))
         self.assertEqual(len(self.lines()), 4)
+        self.run_main(status(seven_day=SEVEN))  # partial disappearance is logged
+        self.assertEqual(len(self.lines()), 5)
+        self.run_main(status())  # no windows at all (fresh session): never logged
+        self.run_main(b'{"model": {}}')
+        self.assertEqual(len(self.lines()), 5)
+        self.assertNotIn('"windows":{}', Path(self.log).read_text())
 
     def test_bad_stdin_is_silent(self):
         bad = [b'', b'not json', b'[]']
