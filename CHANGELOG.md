@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+These changes respond to the plugin directory's automated review of 0.13.0.
+
+### Added
+
+- Listing icon, declared as `icon` in `plugin.json` (the directory reads it from the manifest).
+- `evals/helpers/stage_plugin.py` stages the plugin together with the eval suite for
+  `claude plugin eval`, and prints where results land and how to copy them back.
+
+### Changed
+
+- The eval suite moved out of the shipped plugin, from `plugins/setup-audit/evals/` to `evals/`.
+- Credential-bearing configuration (MCP `env`/`headers`/`url`/`args`, settings `env`, http hook
+  `headers`, `~/.claude.json`, `.envrc`) is read through one module, `config_names.py`, which
+  returns names, counts and labels only.
+- Current docs are fetched with the bundled `scripts/fetch_doc.py` (fixed host
+  `code.claude.com`, output under `$TMPDIR` or `<Claude config dir>/audits`) instead of `curl`.
+
+### Fixed
+
+- Hook fingerprints no longer hash header values, so http hooks that differ only by a header
+  value now group as duplicates.
+- `mcp_user` no longer crashes when `~/.claude.json` is valid JSON but not an object.
+
 ## [0.13.0] - 2026-10-27
 
 ### Added

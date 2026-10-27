@@ -140,6 +140,16 @@ Hosted validation passed all eight jobs at `1167473`:
 
 ## Next candidates, separately scoped
 
+- **Directory-scan follow-ups** (deferred from the 0.13.1 review): `~/.claude.json` is read twice
+  (unbounded for `mcp_user`, capped for the names-only view); collect.py's `plugin_relative` check
+  JSON-dumps the whole hook handler, header values included, to compute a boolean;
+  `handler_fingerprint` still hashes the raw command and URL (use the redacted command and the
+  URL's origin and path shape); `stage_plugin.py` copies the working tree (`__pycache__`,
+  `.claude/`) and leaves its temp dir behind on failure, and its symlink test covers only
+  `evals/`; `fetch_doc.py`'s `O_TRUNC` write keeps an existing file's mode and leaves a partial
+  file after a failed write; `test_shipped_bundle` could also assert the manifest and eval case
+  directories.
+
 - **Subscription usage follow-ups** (deferred from the 0.13.0 review): a `spend_limit` change of
   `period` alone is not logged; two sessions rotating at once can drop `.1` history; schema enum
   and date patterns for `early_resets[].window`/`at` and the `limit_events` dates; the rotated `.1`
