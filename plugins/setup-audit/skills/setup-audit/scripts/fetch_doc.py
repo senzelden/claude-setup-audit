@@ -8,6 +8,8 @@ HTTPS GET to https://code.claude.com/docs/<PAGE> and writes the response bytes t
 user data (only a fixed User-Agent, no request body), reads no local file, imports no other plugin
 module and executes nothing it downloads. OUT must sit under a system temp directory, $TMPDIR or
 <Claude config dir>/audits; missing parent directories of OUT inside those are created (mode 0700).
+Every directory between the allowed directory and OUT must be a real directory (no symlink) owned
+by the current user and not group- or other-writable, otherwise nothing is written.
 Exit 0 on success, 2 on bad arguments, 1 on fetch or write failure.
 """
 import os
@@ -56,15 +58,59 @@ def _out_is_allowed(out):
     return any(parent == d or parent.startswith(d + os.sep) for d in _allowed_dirs())
 
 
-def _make_parent(out):
-    # os.makedirs applies its mode only to the last directory, so create each missing one here.
-    missing = []
-    parent = os.path.dirname(os.path.abspath(out))
-    while not os.path.isdir(parent):
-        missing.append(parent)
-        parent = os.path.dirname(parent)
-    for directory in reversed(missing):
-        os.mkdir(directory, 0o700)
+class _Refused(Exception):
+    pass
+
+
+def _allowed_root(parent):
+    """Split PARENT into (prefix, remaining names) at the deepest prefix that is an allowed dir."""
+    allowed = _allowed_dirs()
+    names = []
+    prefix = parent
+    while True:
+        real = os.path.realpath(prefix)
+        if real in allowed:
+            return prefix, real, list(reversed(names))
+        head, name = os.path.split(prefix)
+        if head == prefix:
+            raise _Refused("OUT is not under an allowed directory")
+        names.append(name)
+        prefix = head
+
+
+def _open_parent(out):
+    """Return a descriptor for OUT's parent, walked and created one directory at a time.
+
+    Each step opens the next directory relative to the previous descriptor with O_NOFOLLOW and
+    checks the opened directory itself, so a path swapped by another user after a check is not the
+    one written to.
+    """
+    prefix, real, names = _allowed_root(os.path.dirname(os.path.abspath(out)))
+    fd = os.open(prefix, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        root, expected = os.fstat(fd), os.stat(real)
+        if (root.st_dev, root.st_ino) != (expected.st_dev, expected.st_ino):
+            raise _Refused(f"{prefix} changed while being opened")
+        for name in names:
+            try:
+                os.mkdir(name, 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            try:
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as exc:
+                raise _Refused(f"{name}: not a real directory ({exc.strerror})") from None
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            if info.st_uid != os.getuid():
+                raise _Refused(f"{name}: owned by another user")
+            if info.st_mode & 0o022:
+                raise _Refused(f"{name}: writable by group or others")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def main(argv):
@@ -90,14 +136,17 @@ def main(argv):
         print(f"refused: response larger than {MAX_BYTES} bytes", file=sys.stderr)
         return 1
     try:
-        _make_parent(out)
-        if not _out_is_allowed(out):
-            print("refused: OUT's parent left the allowed directories while being created",
-                  file=sys.stderr)
-            return 1
-        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        parent_fd = _open_parent(out)
+        try:
+            fd = os.open(os.path.basename(out), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
         with os.fdopen(fd, "wb") as handle:
             handle.write(body)
+    except _Refused as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
     except OSError as exc:
         print(f"write failed: {exc}", file=sys.stderr)
         return 1

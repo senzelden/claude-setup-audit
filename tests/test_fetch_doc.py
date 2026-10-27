@@ -118,6 +118,61 @@ class FetchDoc(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertFalse(os.path.exists(os.path.join(outside, 'new')))
 
+    def assert_refused_nothing_written(self, allowed, dest):
+        with self.only_allowed(allowed):
+            code, _, err, _ = run('llms.txt', dest, response=FakeResponse(b'x'))
+        self.assertEqual(code, 1, err)
+        self.assertIn('refused:', err)
+        self.assertFalse(os.path.lexists(dest))
+        return err
+
+    def test_group_or_other_writable_parent_refused(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        shared = os.path.join(allowed, 'setup-audit-docs')
+        os.mkdir(shared)
+        os.chmod(shared, 0o777)
+        self.assertIn('writable by group or others',
+                      self.assert_refused_nothing_written(allowed, os.path.join(shared, 'p.md')))
+        os.chmod(shared, 0o720)
+        self.assert_refused_nothing_written(allowed, os.path.join(shared, 'p.md'))
+
+    def test_parent_owned_by_other_user_refused(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        sub = os.path.join(allowed, 'setup-audit-docs')
+        os.mkdir(sub, 0o700)
+        with mock.patch.object(fetch_doc.os, 'getuid', return_value=os.getuid() + 1):
+            err = self.assert_refused_nothing_written(allowed, os.path.join(sub, 'p.md'))
+        self.assertIn('owned by another user', err)
+
+    def test_symlinked_component_inside_allowed_dir_refused(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        real = os.path.join(allowed, 'real')
+        os.mkdir(real, 0o700)
+        os.symlink(real, os.path.join(allowed, 'link'))
+        err = self.assert_refused_nothing_written(allowed, os.path.join(allowed, 'link', 'p.md'))
+        self.assertIn('not a real directory', err)
+        self.assertEqual(os.listdir(real), [])
+
+    def test_root_swapped_after_resolution_refused(self):
+        # Simulates the allowed-root prefix pointing elsewhere by the time it is opened.
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        other = tempfile.mkdtemp(prefix='fetchdoc.other.')
+        dest = os.path.join(allowed, 'p.md')
+        swapped = (other, os.path.realpath(allowed), [])
+        with self.only_allowed(allowed), mock.patch.object(fetch_doc, '_allowed_root', return_value=swapped):
+            code, _, err, _ = run('llms.txt', dest, response=FakeResponse(b'x'))
+        self.assertEqual(code, 1)
+        self.assertIn('changed while being opened', err)
+        self.assertEqual(os.listdir(other), [])
+
+    def test_out_directly_in_allowed_root_written(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        os.chmod(allowed, 0o777)  # the allowed directory itself (like /tmp) is not checked
+        dest = os.path.join(allowed, 'p.md')
+        with self.only_allowed(allowed):
+            code, *_ = run('llms.txt', dest, response=FakeResponse(b'x'))
+        self.assertEqual(code, 0)
+
     def test_parent_not_created_when_fetch_fails(self):
         allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
         dest = os.path.join(allowed, 'new', 'page.md')
@@ -231,8 +286,14 @@ class Isolation(unittest.TestCase):
                  if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)]
         self.assertNotIn(('os', 'system'), attrs)
         self.assertNotIn(('os', 'popen'), attrs)
-        # exactly one file open, the O_NOFOLLOW write of OUT
-        self.assertEqual(attrs.count(('os', 'open')), 1)
+        # os.open only opens directories or the O_NOFOLLOW write of OUT; no file is read
+        opens = [ast.unparse(n) for n in ast.walk(self.tree) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == 'open'
+                 and isinstance(n.func.value, ast.Name) and n.func.value.id == 'os']
+        writes = [c for c in opens if 'O_DIRECTORY' not in c]
+        self.assertEqual(len(writes), 1, opens)
+        for flag in ('O_WRONLY', 'O_CREAT', 'O_NOFOLLOW'):
+            self.assertIn(flag, writes[0])
         self.assertNotIn(('os', 'getenv'), attrs)
 
     def test_fixed_host_only(self):
