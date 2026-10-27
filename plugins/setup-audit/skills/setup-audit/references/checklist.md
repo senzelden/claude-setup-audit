@@ -597,10 +597,9 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   3. Export everything through the hook: zero friction, but every key is visible to every command
      Claude runs and can end up in transcripts.
 
-  With the sandbox on, also ask whether `sandbox.credentials` masking is set up
-  (`settings[].sandbox_credentials_configured` is presence only; the audit does not copy its
-  contents; see "Protect credentials" / "Mask credentials" in the sandboxing docs) before
-  proposing option 3.
+  With the sandbox on, also point to credential masking ("Protect credentials" / "Mask
+  credentials" in the sandboxing docs) before proposing option 3. The audit does not check whether
+  it is set up and never writes it; the user configures it by hand.
 - **RDY-format-guardrails** (`precommit`, `formatter_config`): a formatter is configured but not
   enforced. Evidence: edit rounds that only change formatting. Propose both a git pre-commit
   hook (humans) and a Claude PostToolUse format-on-edit hook (agent), in the repo's existing tool.

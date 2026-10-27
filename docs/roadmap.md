@@ -157,7 +157,7 @@ Hosted validation passed all eight jobs at `1167473`:
 - **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still
   hashes the raw command and URL (use the redacted command and the URL's origin and path shape);
   `stage_plugin.py` copies the working tree (`__pycache__`, `.claude/`) and leaves its temp dir
-  behind on failure, and its symlink test covers only `evals/`; `fetch_doc.py`'s `O_TRUNC` write
+  behind on failure, and its symlink test covers only `evals/`; `fetch_doc.py` (removed in 0.14.4; moot)'s `O_TRUNC` write
   keeps an existing file's mode and leaves a partial file after a failed write, and when OUT sits
   directly in a shared allowed root it writes into a pre-existing file another user owns (fstat the
   write fd: refuse a foreign owner or `st_nlink > 1`; SKILL.md always writes into the checked

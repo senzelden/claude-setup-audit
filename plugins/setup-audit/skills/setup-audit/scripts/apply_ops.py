@@ -61,8 +61,6 @@ SANDBOX_KEYS = {
     'sandbox.network.strictAllowlist': ('bool', USER),
     'sandbox.network.httpProxyPort': ('port', ANY),
     'sandbox.network.socksProxyPort': ('port', ANY),
-    'sandbox.credentials.files': ('credential_files', ANY),   # mask entries: user only
-    'sandbox.credentials.envVars': ('credential_env', ANY),   # mask entries: user only
 }
 EXCLUDED_KEYS = {
     'sandbox.bwrapPath': 'managed settings only',
@@ -71,11 +69,10 @@ EXCLUDED_KEYS = {
     'sandbox.network.allowManagedDomainsOnly': 'managed settings only',
     'sandbox.ripgrep': 'points the sandbox at an executable',
     'sandbox.network.tlsTerminate': 'names CA certificate and key files',
-    'sandbox.credentials.allowPlaintextInject': 'credential proxy tuning, not in this version',
-    'sandbox.credentials.awsPairs': 'credential proxy tuning, not in this version',
-    'sandbox.credentials.sigv4': 'credential proxy tuning, not in this version',
 }
-PARENTS = frozenset({'sandbox', 'sandbox.filesystem', 'sandbox.network', 'sandbox.credentials'})
+PARENTS = frozenset({'sandbox', 'sandbox.filesystem', 'sandbox.network'})
+# The credential proxy subtree forwards credentials to chosen hosts: refused whole, set up by hand.
+CREDENTIAL_PROXY = 'sandbox.credentials'
 REASONS = (
     'invalid_ops_file', 'duplicate_path', 'duplicate_target',
     'relative_path', 'managed_refused', 'target_not_settings', 'symlink', 'unreadable', 'too_large',
@@ -91,9 +88,6 @@ MAX_TARGETS, MAX_OPS = 20, 50
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 FILE_SHA_RE = re.compile(r'sha256:[0-9a-f]{64}\Z')
 PATH_RE = re.compile(r'[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*\Z')
-FILE_MASK_FIELDS = frozenset({'extract', 'onExtractNoMatch', 'decode', 'maskClaims', 'maskDuplicates',
-                              'injectHosts'})
-ENV_MASK_FIELDS = FILE_MASK_FIELDS - {'maskDuplicates'}
 
 
 class OpsError(ValueError):
@@ -115,7 +109,7 @@ def check_key(path, scope):
         if scope is not None and scope not in scopes:
             raise OpsError('scope_not_honored')
         return kind
-    if path in EXCLUDED_KEYS:
+    if path in EXCLUDED_KEYS or path == CREDENTIAL_PROXY or path.startswith(CREDENTIAL_PROXY + '.'):
         raise OpsError('excluded_key')
     if path in PARENTS:
         raise OpsError('not_a_leaf')
@@ -124,45 +118,9 @@ def check_key(path, scope):
     raise OpsError('not_allowlisted')
 
 
-def _mask_field_ok(name, v):
-    if name == 'extract':
-        return isinstance(v, str) and bool(v)
-    if name == 'onExtractNoMatch':
-        return v in ('warn', 'deny', 'error')
-    if name == 'decode':
-        return v == 'jwt'
-    if name == 'maskClaims':
-        return _str_list(v) and bool(v)
-    if name == 'maskDuplicates':
-        return isinstance(v, bool)
-    return _str_list(v)  # injectHosts
-
-
-def _credential_entries(value, ident, mask_fields, scope):
-    if not isinstance(value, list):
-        raise OpsError('invalid_value')
-    for e in value:
-        if not (isinstance(e, dict) and isinstance(e.get(ident), str) and e[ident]
-                and e.get('mode') in ('deny', 'mask')):
-            raise OpsError('invalid_value')
-        extra = set(e) - {ident, 'mode'}
-        if (e['mode'] == 'deny' and extra) or extra - mask_fields \
-                or not all(_mask_field_ok(k, e[k]) for k in extra) \
-                or ('maskClaims' in e and 'decode' not in e):
-            raise OpsError('invalid_value')
-        if ident == 'name' and 'decode' in e and ('extract' in e or e.get('onExtractNoMatch', 'warn') != 'warn'):
-            raise OpsError('invalid_value')
-        if e['mode'] == 'mask' and scope != 'user':
-            raise OpsError('scope_not_honored')
-
-
 def validate_value(path, value, scope):
     kind = check_key(path, scope)
-    if kind == 'credential_files':
-        _credential_entries(value, 'path', FILE_MASK_FIELDS, scope)
-    elif kind == 'credential_env':
-        _credential_entries(value, 'name', ENV_MASK_FIELDS, scope)
-    elif kind == 'bool':
+    if kind == 'bool':
         ok = isinstance(value, bool)
     elif kind in ('str_list', 'path_list'):
         ok = _str_list(value)
@@ -170,7 +128,7 @@ def validate_value(path, value, scope):
         ok = type(value) is int and 1 <= value <= 65535
     else:  # str_to_str_list
         ok = isinstance(value, dict) and all(k and _str_list(v) for k, v in value.items())
-    if kind not in ('credential_files', 'credential_env') and not ok:
+    if not ok:
         raise OpsError('invalid_value')
     warnings = set()
     if kind == 'path_list':

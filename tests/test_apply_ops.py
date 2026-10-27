@@ -64,25 +64,15 @@ class Values(unittest.TestCase):
         self.assertEqual(apply_ops.validate_value('sandbox.filesystem.allowWrite', ['~/build/**'], 'user'), [])
         self.assertEqual(apply_ops.validate_value('sandbox.filesystem.denyRead', ['~/secrets/*'], 'user'), [])
 
-    def test_credential_entries(self):
-        files, env = 'sandbox.credentials.files', 'sandbox.credentials.envVars'
-        self.assertEqual(apply_ops.validate_value(files, [{'path': '~/.aws/credentials', 'mode': 'deny'}], 'project'), [])
-        self.assertEqual(apply_ops.validate_value(
-            files, [{'path': '~/.config/gh/hosts.yml', 'mode': 'mask', 'extract': 'oauth_token: (\\S+)',
-                     'maskDuplicates': True, 'injectHosts': ['api.github.com']}], 'user'), [])
-        self.assertEqual(reason(apply_ops.validate_value, files, [{'path': '~/x', 'mode': 'mask'}], 'local'),
-                         'scope_not_honored')
-        for bad in ([{'path': '~/x', 'mode': 'deny', 'extract': 'a(b)'}],   # mask field on deny
-                    [{'path': '~/x', 'mode': 'hide'}],
-                    [{'path': '~/x', 'mode': 'mask', 'colour': 'red'}],
-                    [{'path': '~/x', 'mode': 'mask', 'maskClaims': ['sub']}],  # maskClaims needs decode
-                    [{'mode': 'deny'}], {'path': '~/x', 'mode': 'deny'}):
-            self.assertEqual(reason(apply_ops.validate_value, files, bad, 'user'), 'invalid_value', bad)
-        for bad in ([{'name': 'TOKEN', 'mode': 'mask', 'maskDuplicates': True}],
-                    [{'name': 'TOKEN', 'mode': 'mask', 'extract': 'x(y)', 'decode': 'jwt'}],
-                    [{'name': 'TOKEN', 'mode': 'mask', 'decode': 'jwt', 'onExtractNoMatch': 'deny'}]):
-            self.assertEqual(reason(apply_ops.validate_value, env, bad, 'user'), 'invalid_value', bad)
-        self.assertEqual(apply_ops.validate_value(env, [{'name': 'AWS_SECRET_ACCESS_KEY', 'mode': 'deny'}], 'local'), [])
+    def test_credential_proxy_settings_are_refused(self):
+        # 0.14.4: the credential proxy forwards a credential to chosen hosts; users set it up by hand.
+        for path in ('sandbox.credentials', 'sandbox.credentials.envVars', 'sandbox.credentials.files',
+                     'sandbox.credentials.sigv4', 'sandbox.credentials.anyNewKey'):
+            for scope in ('user', 'project', None):
+                self.assertEqual(reason(apply_ops.check_key, path, scope), 'excluded_key', path)
+            self.assertEqual(reason(apply_ops.validate_value, path, [{'name': 'X', 'mode': 'deny'}], 'user'),
+                             'excluded_key', path)
+        self.assertFalse([k for k in apply_ops.SANDBOX_KEYS if k.startswith('sandbox.credentials')])
 
     def test_key_classes(self):
         self.assertEqual(reason(apply_ops.check_key, 'permissions.allow', 'user'), 'not_allowlisted')
@@ -103,13 +93,13 @@ class Values(unittest.TestCase):
     def test_tables_are_disjoint_dated_and_sandbox_only(self):
         self.assertEqual(apply_ops.DOCS_FETCHED, '2026-09-29')
         self.assertFalse(set(apply_ops.SANDBOX_KEYS) & set(apply_ops.EXCLUDED_KEYS))
-        kinds = {'bool', 'str_list', 'path_list', 'port', 'str_to_str_list', 'credential_files', 'credential_env'}
+        kinds = {'bool', 'str_list', 'path_list', 'port', 'str_to_str_list'}
         for key, (kind, scopes) in apply_ops.SANDBOX_KEYS.items():
             self.assertTrue(key.startswith('sandbox.'), key)
             self.assertIn(kind, kinds)
             self.assertTrue(scopes <= apply_ops.ANY and scopes)
-        self.assertEqual(len(apply_ops.SANDBOX_KEYS), 26)
-        self.assertEqual(len(apply_ops.EXCLUDED_KEYS), 9)
+        self.assertEqual(len(apply_ops.SANDBOX_KEYS), 24)
+        self.assertEqual(len(apply_ops.EXCLUDED_KEYS), 6)
 
 
 class OpsFile(unittest.TestCase):
@@ -582,7 +572,7 @@ class Run(FakeHome):
     def test_output_is_sanitized_and_has_no_internal_fields(self):
         canary = 'ghp_' + 'a' * 36
         out = apply_ops.run(self.ops(self.target('~/.claude/settings.json', op(
-            'sandbox.credentials.envVars', [{'name': 'GH_TOKEN', 'mode': 'mask', 'extract': canary + '(x)'}]))))
+            'sandbox.excludedCommands', [canary]))))
         text = json.dumps(out)
         self.assertTrue(out['ok'], text)
         self.assertNotIn(canary, text)
@@ -669,7 +659,7 @@ class Docs(unittest.TestCase):
     def test_reference_matches_constants(self):
         ref = self.read(self.SKILL, 'references', 'apply-ops.md')
         rows = {line.split('`')[1] for line in ref.splitlines() if line.startswith('| `sandbox')}
-        self.assertEqual(rows, set(apply_ops.SANDBOX_KEYS) | set(apply_ops.EXCLUDED_KEYS))
+        self.assertEqual(rows, set(apply_ops.SANDBOX_KEYS) | set(apply_ops.EXCLUDED_KEYS) | {apply_ops.CREDENTIAL_PROXY})
         for text in (*apply_ops.REASONS, 'fetched 2026-09-29', *apply_ops.DOCS_SOURCES, 'expect_file',
                      'file_sha256', 'wildcard_ignored_on_linux', 'shared_project_file'):
             self.assertIn(text, ref)

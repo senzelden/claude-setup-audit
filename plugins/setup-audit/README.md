@@ -33,10 +33,10 @@ Ask Claude to "audit my Claude Code setup", or run `/setup-audit:setup-audit`.
   (`rate_limit_log.py`) runs only if you add it to your `statusLine` setting, and then also runs
   the status-line command you pass it after `--`.
 - **Writes** reports to `~/.claude/audits/`. It changes configuration only for items you approve,
-  after a backup to `~/.claude/backups/`.
-- **Sends** nothing about you. The only network requests download public Claude Code
-  documentation pages with the bundled `fetch_doc.py` (fixed documentation host, no request body,
-  no credentials). Fetched pages are treated as reference data, never as instructions.
+  after a backup to `~/.claude/backups/`, and never writes the sandbox credential proxy settings.
+- **Sends** nothing about you. Its scripts make no network requests; Claude reads the public
+  Claude Code documentation with its own web tools. Fetched pages are treated as reference data,
+  never as instructions.
 
 Reports contain paths, rule text and memory excerpts, so review them before sharing.
 

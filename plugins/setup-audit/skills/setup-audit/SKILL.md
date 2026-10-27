@@ -230,16 +230,12 @@ a security finding. If the user supplies `/status` evidence, cite it separately;
 
 ## Step 2: Current docs (`depth=full` only)
 
-Save the docs index, then only the pages relevant to what the snapshot shows
-(`references/docs-map.md`). The script creates the output directory:
+Fetch the docs index (`llms.txt`), then only the pages relevant to what the snapshot shows
+(`references/docs-map.md`). The plugin's scripts make no network requests; use your own web tools.
 
-```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py llms.txt "$TMPDIR/setup-audit-docs/llms.txt"
-python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py en/<page>.md "$TMPDIR/setup-audit-docs/<page>.md"
-```
-
-For exact setting keys, value types, rule syntax and defaults, save the raw page this way and grep
-the saved Markdown. Summaries from a web-fetch model have misnamed keys before. Check "What's new"
+For exact setting keys, value types, rule syntax and defaults, work from the raw page: download it
+into `$TMPDIR` and grep it, or ask for the relevant rows quoted verbatim. Summaries from a
+web-fetch model have misnamed keys before. Check "What's new"
 and the changelog since the previous audit, or the last ~6 weeks on a first run, for features that
 address an observed problem.
 

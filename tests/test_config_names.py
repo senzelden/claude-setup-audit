@@ -94,7 +94,7 @@ def keychain_uses(tree):
 def credential_value_reads(tree):
     hits = []
     allowed = {id(n) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
-               and f.name in ('documented_env_set', 'sandbox_credentials_configured')
+               and f.name == 'documented_env_set'
                for n in ast.walk(f)}
     for node in ast.walk(tree):
         if id(node) in allowed:
@@ -241,7 +241,7 @@ class FakeHomeCanary(FakeHome):
             self.assertNotIn(text, snap)
         self.assertIn('projectsrv', snap)
 
-    def test_settings_sandbox_credentials_and_helpers_are_presence_only(self):
+    def test_settings_sandbox_credentials_are_dropped_and_helpers_presence_only(self):
         root, *_ = self.build()
         snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root))
         text = json.dumps(snap)
@@ -251,7 +251,7 @@ class FakeHomeCanary(FakeHome):
         found += [s for p in snap['projects'].values() for s in p.get('settings', []) if 'sandbox' in s]
         self.assertGreaterEqual(len(found), 2)
         for s in found:
-            self.assertIs(s['sandbox_credentials_configured'], True)
+            self.assertNotIn('sandbox_credentials_configured', s)  # 0.14.4: not even presence
             self.assertEqual(s['sandbox'], {'enabled': True})
             self.assertTrue(set(HELPER_KEYS) <= set(s['keys']))  # key presence is allowed, values are not
         entry = next(iter(snap['readiness'].values()))

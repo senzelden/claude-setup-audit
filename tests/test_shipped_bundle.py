@@ -24,6 +24,10 @@ URL = re.compile(r'https?://')
 # send. Kept out of shipped files from 0.14.1.
 EXPORT_VOCABULARY = re.compile(r'OTEL_|BETA_TRACING|GatewayUrl|\benv\.get\b|\bhttp\.fetch\b')
 # Also added in 0.11.0: --hash-salt-file read a key (the HMAC salt) from a user file. Gone from 0.14.2.
+# The sandbox credential proxy forwards a credential to chosen hosts. apply_ops wrote its entries and
+# collect recorded whether it was set; from 0.14.4 neither does (apply_ops refuses the whole subtree).
+CREDENTIAL_PROXY = re.compile(r'sandbox\.credentials\.(?:files|envVars)|sandbox_credentials|injectHosts'
+                              r'|maskClaims|maskDuplicates|onExtractNoMatch|credential_files|credential_env')
 SALT_FILE = re.compile(r'salt[ _-]file|hash-salt|hash_salt', re.I)
 
 # Also added in 0.11.0: HYG-scope-ignored, whose tables named credential-adjacent settings and env
@@ -77,6 +81,20 @@ class ShippedBundleTests(unittest.TestCase):
         for path, text in shipped_text_files():
             match = EXPORT_VOCABULARY.search(text)
             self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_file_configures_the_credential_proxy(self):
+        for path, text in shipped_text_files():
+            match = CREDENTIAL_PROXY.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_script_makes_network_requests(self):
+        # 0.14.4: fetch_doc.py was the only sender; docs now come through Claude's own web tools.
+        net = re.compile(r'^\s*(?:import|from)\s+(?:urllib(?!\.parse\b)|http|socket|ssl|ftplib|smtplib)\b', re.M)
+        for path, text in shipped_text_files():
+            self.assertNotIn('fetch_doc', text, path.relative_to(ROOT))
+            if path.suffix == '.py':
+                match = net.search(text)
+                self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
 
     def test_no_shipped_file_offers_a_salt_file(self):
         for path, text in shipped_text_files():

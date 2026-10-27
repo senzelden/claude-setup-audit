@@ -20,7 +20,7 @@ the cache. Information only: no status, ordering or refusal depends on it.
 
 ## Sources
 
-Keys, types and scopes: fetched 2026-09-29, raw pages; refetch with `scripts/fetch_doc.py en/<page>.md <out>`:
+Keys, types and scopes: fetched 2026-09-29, raw pages; refetch the raw pages (`docs-map.md`):
 
 - <https://code.claude.com/docs/en/settings-reference.md>
 - <https://code.claude.com/docs/en/sandboxing.md>
@@ -72,17 +72,9 @@ most 1 MiB.
 
 Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same, plus the warning
 `wildcard_ignored_on_linux` for an entry with `*`, `?` or `[` once a trailing `/**` is removed);
-`port` (integer 1-65535, not boolean); `str_to_str_list`; `credential_files`; `credential_env`.
+`port` (integer 1-65535, not boolean); `str_to_str_list`.
 
 - `str_to_str_list`: an object whose keys are non-empty strings and whose values are `str_list`.
-- `credential_files`: an array of objects with `path` (non-empty string) and `mode` (`deny` or
-  `mask`). A `mask` entry may add `extract` (non-empty string), `onExtractNoMatch` (`warn`, `deny`
-  or `error`), `decode` (`jwt`), `maskClaims` (non-empty `str_list`, needs `decode`),
-  `maskDuplicates` (bool) and `injectHosts` (`str_list`). A `deny` entry takes no other field; any
-  other field is `invalid_value`.
-- `credential_env`: the same with `name` instead of `path` and no `maskDuplicates`. `extract`
-  together with `decode` is `invalid_value`, as is `decode` with an `onExtractNoMatch` other than
-  `warn`.
 
 | Key | Kind | Files | Notes |
 |---|---|---|---|
@@ -110,8 +102,6 @@ Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same,
 | `sandbox.network.strictAllowlist` | bool | user |  |
 | `sandbox.network.httpProxyPort` | port | user, project, local |  |
 | `sandbox.network.socksProxyPort` | port | user, project, local |  |
-| `sandbox.credentials.files` | credential_files | user, project, local | `mask` entries are user-only |
-| `sandbox.credentials.envVars` | credential_env | user, project, local | `mask` entries are user-only |
 
 Excluded keys are refused with `excluded_key`:
 
@@ -123,9 +113,7 @@ Excluded keys are refused with `excluded_key`:
 | `sandbox.network.allowManagedDomainsOnly` | managed settings only |
 | `sandbox.ripgrep` | points the sandbox at an executable |
 | `sandbox.network.tlsTerminate` | names CA certificate and key files |
-| `sandbox.credentials.allowPlaintextInject` | credential proxy tuning, not in this version |
-| `sandbox.credentials.awsPairs` | credential proxy tuning, not in this version |
-| `sandbox.credentials.sigv4` | credential proxy tuning, not in this version |
+| `sandbox.credentials` and every key under it | credential proxy (it forwards credentials to chosen hosts); the user sets it up by hand (from 0.14.4) |
 
 ## Statuses and reasons
 
@@ -153,8 +141,8 @@ a target's `status` is `applied` and `verified` is `true`; never claim success f
 - `not_allowlisted`: the path is outside `sandbox.`.
 - `unknown_key`: a `sandbox.*` path that is not documented.
 - `excluded_key`: a documented key on the excluded list (table above).
-- `not_a_leaf`: a parent object (`sandbox`, `sandbox.filesystem`, `sandbox.network`, `sandbox.credentials`); address leaf keys.
-- `scope_not_honored`: a `set` of a user-only key, or of a `mask` credential entry, in a project or local target; the docs say it is ignored there (`remove` is not checked).
+- `not_a_leaf`: a parent object (`sandbox`, `sandbox.filesystem`, `sandbox.network`); address leaf keys.
+- `scope_not_honored`: a `set` of a user-only key in a project or local target; the docs say it is ignored there (`remove` is not checked).
 - `invalid_value`: the value does not have the documented type.
 - `precondition_mismatch`: the `expect` precondition does not hold; the row shows the redacted current value and `current_sha256` so the change can be re-planned.
 - `absent`: `remove` of a key that does not exist.

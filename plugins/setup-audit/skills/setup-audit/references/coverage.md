@@ -97,8 +97,8 @@ plugin names, relative script paths and pattern ids.
 omitted entries; `basis: static`). It reads settings text only.
 
 - `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
-  present in `env`. `settings[].sandbox` omits `credentials`; `sandbox_credentials_configured`
-  records only whether it is set. Not read either: `.envrc`, mise `[env]`, devcontainer env and
+  present in `env`. `settings[].sandbox` omits `credentials`, and
+  nothing records whether it is set. Not read either: `.envrc`, mise `[env]`, devcontainer env and
   compose `environment` (existence only: `env.envrc_not_read`, `env.env_files_not_read`).
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the

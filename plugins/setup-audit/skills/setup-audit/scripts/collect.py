@@ -513,10 +513,6 @@ def sandbox_summary(sb):
     return {k: v for k, v in sb.items() if k != "credentials"}
 
 
-def sandbox_credentials_configured(sb):
-    return isinstance(sb, dict) and bool(sb.get("credentials"))
-
-
 def summarize_settings(path, data=None, managed=False):
     raw = load_json(path) if data is None else data
     if raw is None:
@@ -548,7 +544,6 @@ def summarize_settings(path, data=None, managed=False):
         "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
         "sandbox": sandbox_summary(d.get("sandbox")),
-        "sandbox_credentials_configured": sandbox_credentials_configured(d.get("sandbox")),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),
         "mcp_policy": mcp_policy(d),
