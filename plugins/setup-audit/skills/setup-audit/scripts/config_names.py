@@ -11,6 +11,7 @@ returns or stores an env, headers or oauth value or the names inside those mappi
 - ``documented_env_set``: which names from a fixed, caller-supplied vocabulary are keys of a settings
   object's ``env`` mapping (no other name and no value leaves).
 """
+import glob
 import ipaddress
 import os
 import re
@@ -38,6 +39,22 @@ def envrc_present(root):
         return os.path.isfile(os.path.join(root, '.envrc'))
     except OSError:
         return False
+
+
+ENV_STORE_FILES = ('mise.toml', '.mise.toml', '.devcontainer/devcontainer.json', '.devcontainer.json')
+
+
+def env_store_files(root):
+    """Names of files that may hold environment values (mise [env], devcontainer containerEnv or
+    remoteEnv, compose environment). Existence only: a directory listing and stat, never opened."""
+    found = []
+    try:
+        found = [n for n in ENV_STORE_FILES if os.path.isfile(os.path.join(root, n))]
+        found += sorted(os.path.basename(p) for p in glob.glob(os.path.join(glob.escape(root), '*compose*.y*ml'))
+                        if os.path.isfile(p))
+    except OSError:
+        pass
+    return found
 
 
 def split_url(url):

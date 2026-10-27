@@ -264,9 +264,8 @@ def _looks_like_reference(v):
 def sanitize(obj):
     """Recursively redact every string in a JSON-shaped structure.
 
-    Backstop for fields copied through structurally (modelSettings, sandbox, subprocess output
-    like `claude doctor`, an MCP server's own config block, ...) that never pass through a
-    field-specific redactor. Run this on the whole snapshot immediately before json.dumps, not on
+    Backstop for fields copied through structurally (modelSettings, statusLine, ...) that never
+    pass through a field-specific redactor. Run this on the whole snapshot immediately before json.dumps, not on
     individual fields, so a new field can't silently skip it.
 
     Key-aware first: a value under a key that normalizes to one of SECRET_KEY_NAMES (regardless of
@@ -545,6 +544,17 @@ def plugin_ledger():
     return _LEDGER_CACHE[HOME]
 
 
+def sandbox_summary(sb):
+    """The sandbox object without its `credentials` subtree (env var names, file paths)."""
+    if not isinstance(sb, dict):
+        return sb
+    return {k: v for k, v in sb.items() if k != "credentials"}
+
+
+def sandbox_credentials_configured(sb):
+    return isinstance(sb, dict) and bool(sb.get("credentials"))
+
+
 def summarize_settings(path, data=None, managed=False):
     raw = load_json(path) if data is None else data
     if raw is None:
@@ -576,7 +586,8 @@ def summarize_settings(path, data=None, managed=False):
         "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
         "mods": mods_policy(d, managed),
-        "sandbox": d.get("sandbox"),
+        "sandbox": sandbox_summary(d.get("sandbox")),
+        "sandbox_credentials_configured": sandbox_credentials_configured(d.get("sandbox")),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),
         "mcp_policy": mcp_policy(d),
@@ -739,7 +750,7 @@ def snapshot_coverage(snap, roots):
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
                 "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
-                "User- and local-scope MCP servers live in ~/.claude.json, which the audit does not read; review them with `claude mcp list`.",
+                "User- and local-scope MCP servers live in ~/.claude.json, which the audit does not read; the user can review them with `claude mcp list`.",
                 *snap.get("instructions", {}).get("limitations", []),
                 *snap.get("extensions", {}).get("limitations", []),
                 *snap.get("instruction_clarity", {}).get("limitations", [])]}
@@ -1734,34 +1745,23 @@ def _read(root, rel, limit=200_000):
 
 
 def env_declarations(root):
-    """Variables a repo declares in files other than .envrc, which is never read (see env_contract)."""
+    """Variables a repo declares in template files (.env.example and similar).
+
+    .envrc, mise [env], devcontainer env and compose environment can hold literal values, so they
+    are never opened: env_store_files records only that they exist."""
     declared, sources = set(), []
     for name in (".env.example", ".env.template", ".env.sample", ".env.dist", "example.env"):
         text = _read(root, name)
         if text:
             declared |= set(re.findall(ENV_KEY_LINE, text, re.M))
             sources.append(name)
-    for name in ("mise.toml", ".mise.toml"):
-        m = re.search(r"^\[env\]\s*\n(.*?)(?=^\[|\Z)", _read(root, name), re.M | re.S)
-        if m:
-            declared |= set(re.findall(ENV_KEY_LINE, m.group(1), re.M))
-            sources.append(name)
-    for name in (".devcontainer/devcontainer.json", ".devcontainer.json"):
-        for block in re.findall(r"\"(?:containerEnv|remoteEnv)\"\s*:\s*\{([^}]*)\}", _read(root, name)):
-            declared |= set(re.findall(r"\"([A-Z][A-Z0-9_]*)\"\s*:", block))
-            sources.append(name)
-    for path in glob.glob(os.path.join(root, "*compose*.y*ml")):
-        text = _read(root, os.path.basename(path))
-        found = set(re.findall(r"^\s*-\s*([A-Z][A-Z0-9_]*)=", text, re.M)) | set(re.findall(r"^\s+([A-Z][A-Z0-9_]*):\s*\$\{", text, re.M))
-        if found:
-            declared |= found
-            sources.append(os.path.basename(path))
     return declared, sorted(set(sources))
 
 
 def env_contract(root, max_files=4000):
     """Declared vs read environment variables, plus fail-fast validation libraries in use."""
     declared, sources = env_declarations(root)
+    not_read = config_names.env_store_files(root)
     reads, required, validation = defaultdict(set), set(), set()
     optional, app_reads = set(), set()
     scanned, truncated = 0, False
@@ -1820,6 +1820,8 @@ def env_contract(root, max_files=4000):
             "validation": sorted(validation), "files_scanned": scanned, "truncated": truncated}
     if config_names.envrc_present(root):
         out["envrc_not_read"] = True  # a name read in code may be declared in .envrc, which the audit does not open
+    if not_read:
+        out["env_files_not_read"] = not_read  # may declare names; existence only, contents never opened
     return out
 
 

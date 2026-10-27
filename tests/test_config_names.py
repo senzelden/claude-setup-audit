@@ -3,6 +3,7 @@ import ast
 import io
 import json
 import os
+import re
 import unittest
 from unittest import mock
 from test_collect import FakeHome, SCRIPTS, collect
@@ -12,13 +13,14 @@ import config_names
 
 CANARY = 'CANARY-9f3e'
 CANARY_NAME = 'CANARY_NAME'
+HELPER_KEYS = ('apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper', 'gcpAuthRefresh')
 
 # Heuristic for test_no_script_opens_credential_files (AST, every shipped scripts/*.py, none excepted):
 # a string constant naming ~/.claude.json or .envrc is flagged when it is an argument of a call that
 # opens or loads a file (open, os.open, read_json_object, json_object, load_json, read_text,
 # read_bytes, _read, json.load), or when it is assigned to a variable in a scope that makes such a
 # call. Constants used for classification, os.stat / git_status calls, messages and docstrings pass.
-SENSITIVE_NAMES = ('.claude.json', '.envrc')
+SENSITIVE_NAMES = ('.claude.json', '.envrc', '.credentials.json')
 OPENERS = {'open', 'read_json_object', 'json_object', 'load_json', 'read_text', 'read_bytes', '_read', 'load'}
 
 
@@ -69,12 +71,30 @@ def credential_file_opens(tree):
     return hits
 
 
-CREDENTIAL_KEYS = ('env', 'headers', 'oauth')
+CREDENTIAL_KEYS = ('env', 'headers', 'oauth', 'credentials', *HELPER_KEYS)
+KEYCHAIN_SHAPES = ('security find-generic-password', 'find-generic-password', 'find-internet-password',
+                   'secret-tool', 'keyring', 'libsecret', 'gnome-keyring', 'kwallet')
+
+
+def keychain_uses(tree):
+    """Imports of a keyring library, or string constants naming a keychain command (not docstrings)."""
+    docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            hits += [n.lineno for a in n.names if a.name.split('.')[0] == 'keyring']
+        elif isinstance(n, ast.ImportFrom) and (n.module or '').split('.')[0] == 'keyring':
+            hits.append(n.lineno)
+        elif (isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+              and any(s in n.value for s in KEYCHAIN_SHAPES)):
+            hits.append(n.lineno)
+    return hits
 
 
 def credential_value_reads(tree):
     hits = []
-    allowed = {id(n) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and f.name == 'documented_env_set'
+    allowed = {id(n) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
+               and f.name in ('documented_env_set', 'sandbox_credentials_configured')
                for n in ast.walk(f)}
     for node in ast.walk(tree):
         if id(node) in allowed:
@@ -107,16 +127,61 @@ class StaticGuards(unittest.TestCase):
                      "NAMES = ('.mcp.json', '.claude.json')\ndef f(base):\n    return base in NAMES"):
             self.assertFalse(credential_file_opens(ast.parse(code)), code)
 
+    def test_open_guard_catches_credentials_file_and_keychain_shapes(self):
+        for code in ("def f(home):\n    return load_json(os.path.join(home, '.claude', '.credentials.json'))",
+                     "P = '.credentials.json'\ntext = Path(P).read_text()"):
+            self.assertTrue(credential_file_opens(ast.parse(code)), code)
+        for code in ("subprocess.run(['security', 'find-generic-password', '-s', 'x'])",
+                     "subprocess.run(['secret-tool', 'lookup', 'a', 'b'])",
+                     "import keyring", "from keyring import get_password"):
+            self.assertTrue(keychain_uses(ast.parse(code)), code)
+        self.assertFalse(keychain_uses(ast.parse('"""Never calls secret-tool."""\nx = 1')))
+
+    def test_no_script_uses_the_keychain(self):
+        for name, tree in shipped_trees():
+            self.assertEqual(keychain_uses(tree), [], name)
+
     def test_no_script_reads_credential_values(self):
         for name, tree in shipped_trees():
             self.assertEqual(credential_value_reads(tree), [], name)
 
     def test_value_guard_catches_known_shapes(self):
         for code in ("x = d.get('env')", 'x = d.get("headers")', "x = d['env']", 'x = d["headers"]',
-                     "x = d.get('oauth')", "x = d['oauth']", "mapping_names(d)", "config_names.mapping_names(d)"):
+                     "x = d.get('oauth')", "x = d['oauth']", "x = d.get('apiKeyHelper')",
+                     "x = sb['credentials']", "x = d.get('awsAuthRefresh')", "mapping_names(d)", "config_names.mapping_names(d)"):
             self.assertTrue(credential_value_reads(ast.parse(code)), code)
         for code in ("x = d.get('envrc')", "x = d['headersHelper']", "KEYS = ('env', 'headers')"):
             self.assertFalse(credential_value_reads(ast.parse(code)), code)
+
+
+class DocsBoundaryRule(unittest.TestCase):
+    """SKILL.md carries the never-open rule for Claude's own reads (the fallback path has no collector)."""
+    SKILL = os.path.join(os.path.dirname(SCRIPTS), 'SKILL.md')
+
+    def boundary_bullet(self):
+        with open(self.SKILL, encoding='utf-8') as f:
+            text = f.read()
+        section = text[text.index('\n## Boundaries'):]
+        bullets = [b for b in re.split(r'\n- ', section) if b.lstrip().startswith('Never open')]
+        self.assertEqual(len(bullets), 1, 'Boundaries must hold one "Never open" rule')
+        return ' '.join(bullets[0].split())
+
+    def test_never_open_rule_lists_the_files_and_keys(self):
+        bullet = self.boundary_bullet()
+        for item in ('~/.claude.json', '~/.claude/.credentials.json', '.envrc', '.env.*', 'devcontainer', 'compose',
+                     'mise', 'OS keychain', '`env`', '`headers`', '`oauth`', '`apiKeyHelper`', 'helper-command',
+                     '`claude mcp get`'):
+            self.assertIn(item, bullet)
+
+    def test_docs_never_tell_claude_to_run_mcp_get_or_probe_secrets(self):
+        refs = os.path.join(os.path.dirname(SCRIPTS), 'references')
+        for name in os.listdir(refs):
+            if name.endswith('.md'):
+                with open(os.path.join(refs, name), encoding='utf-8') as f:
+                    text = ' '.join(f.read().split())
+                self.assertNotIn('RDY-env-secret-backend', text, name)
+                for m in re.finditer(r'claude mcp get', text):
+                    self.assertRegex(text[m.start():m.start() + 160], r'themselves|Claude never runs', name)
 
 
 class FakeHomeCanary(FakeHome):
@@ -131,9 +196,19 @@ class FakeHomeCanary(FakeHome):
         hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {CANARY_NAME: CANARY},
                 'allowedEnvVars': [CANARY_NAME]}
         settings = {'env': {CANARY_NAME: CANARY, 'CLAUDE_CODE_SUBAGENT_MODEL': CANARY, 'HOME': CANARY},
-                    'hooks': {'Stop': [{'hooks': [hook]}]}}
+                    'hooks': {'Stop': [{'hooks': [hook]}]},
+                    'sandbox': {'enabled': True, 'credentials': {
+                        'envVars': [{'name': CANARY_NAME, 'mode': 'mask'}],
+                        'files': [{'path': f'~/{CANARY}/hosts.yml', 'mode': 'deny'}]}}}
+        for key in HELPER_KEYS:
+            settings[key] = f'cat /home/{CANARY}/{key}'
+        for helper in ('apiKeyHelper', 'otelHeadersHelper'):
+            self.assertIn(helper, settings)
         self.write('.claude/settings.json', settings)
         self.write('repo/.claude/settings.json', settings)
+        self.write('repo/mise.toml', f'[env]\n{CANARY_NAME} = "{CANARY}"\n')
+        self.write('repo/.devcontainer/devcontainer.json', json.dumps({'containerEnv': {CANARY_NAME: CANARY}}))
+        self.write('repo/docker-compose.yml', f'services:\n  a:\n    environment:\n      - {CANARY_NAME}={CANARY}\n')
         self.write('repo/.envrc', f'export {CANARY_NAME}={CANARY}-long-enough\nuse_pass CANARY_PASS x\n')
         return root, server, hook, settings
 
@@ -153,11 +228,29 @@ class FakeHomeCanary(FakeHome):
         with mock.patch('builtins.open', spy_open), mock.patch.object(io, 'open', spy_open), \
                 mock.patch('os.open', spy_os_open):
             snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
-        self.assertFalse([p for p in opened if p.endswith(('.claude.json', '.envrc'))])
+        self.assertFalse([p for p in opened if p.endswith(
+            ('.claude.json', '.envrc', 'mise.toml', 'devcontainer.json', 'docker-compose.yml'))])
         self.assertTrue(any(p.endswith('.mcp.json') for p in opened))  # not vacuous: other configs are read
         for text in (CANARY, CANARY_NAME, 'CANARY_PASS', 'usersrv', 'localsrv'):
             self.assertNotIn(text, snap)
         self.assertIn('projectsrv', snap)
+
+    def test_settings_sandbox_credentials_and_helpers_are_presence_only(self):
+        root, *_ = self.build()
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root))
+        text = json.dumps(snap)
+        self.assertNotIn(CANARY, text)
+        self.assertNotIn(CANARY_NAME, text)
+        found = [s for s in snap['global']['settings'] if 'sandbox' in s]
+        found += [s for p in snap['projects'].values() for s in p.get('settings', []) if 'sandbox' in s]
+        self.assertGreaterEqual(len(found), 2)
+        for s in found:
+            self.assertIs(s['sandbox_credentials_configured'], True)
+            self.assertEqual(s['sandbox'], {'enabled': True})
+            self.assertTrue(set(HELPER_KEYS) <= set(s['keys']))  # key presence is allowed, values are not
+        entry = next(iter(snap['readiness'].values()))
+        self.assertEqual(entry['env']['env_files_not_read'],
+                         ['mise.toml', '.devcontainer/devcontainer.json', 'docker-compose.yml'])
 
     def test_helpers_return_no_canary(self):
         _, server, hook, settings = self.build()

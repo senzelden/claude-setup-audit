@@ -105,7 +105,9 @@ omitted entries; `basis: static`). It reads settings text only.
   `CLAUDE_CODE_ENABLE_CFC` are conditional), and a managed file never being flagged even where the
   key would be ignored. Metadata-only keeps the key names, scope classes, env names and reasons
   (fixed vocabulary). `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
-  present in `env`.
+  present in `env`. `settings[].sandbox` omits `credentials`; `sandbox_credentials_configured`
+  records only whether it is set. Not read either: `.envrc`, mise `[env]`, devcontainer env and
+  compose `environment` (existence only: `env.envrc_not_read`, `env.env_files_not_read`).
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the
   highest-precedence file in the stack (managed > local > project > user).
@@ -184,7 +186,7 @@ shape, credential mechanisms and source scope. Argument values and URL paths are
 does not read MCP `env`, `headers` or `oauth` values or names, because they hold or point to
 credentials; only the presence of the `oauth` and `headersHelper` mechanisms is recorded. Neither
 MCP servers nor authentication helpers are run. It does not open `~/.claude.json`, where user and
-local MCP servers live, so only project (`.mcp.json`), plugin and managed servers appear; review the
+local MCP servers live, so only project (`.mcp.json`), plugin and managed servers appear; the user can review the
 rest with `claude mcp list` (`coverage.limitations` says so). Remote connectors and runtime
 overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds alone
 for removal.

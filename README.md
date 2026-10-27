@@ -172,15 +172,16 @@ Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on 
 | Check | What it looks at |
 |---|---|
 | First run | one setup command (`make setup`, `dev` script), toolchain pins (`.nvmrc`, `.tool-versions`, `.python-version`, mise, devcontainer, Nix), lockfiles |
-| Env contract | variables the code reads (`os.environ`, `process.env`, …) vs variables declared by a mechanism the audit can read: `.env.example`, mise `[env]`, devcontainer, compose, pydantic settings. Graded `required` / `read` / `optional` / `test-only`. |
+| Env contract | variables the code reads (`os.environ`, `process.env`, …) vs variables declared by a mechanism the audit can read: `.env.example` and its template variants, pydantic settings (`.envrc`, mise `[env]`, devcontainer and compose env files are never opened). Graded `required` / `read` / `optional` / `test-only`. |
 | Env reaches Claude | direnv only loads at an interactive prompt, which Claude's Bash tool never shows, so variables that work in your terminal can be missing for Claude. Cross-checked with env errors in transcripts. Fixes, with trade-offs: `direnv exec` wrappers for secrets (default), a filtered `CLAUDE_ENV_FILE` session hook for non-secrets |
 | Guardrails | formatter configured *and* enforced (pre-commit/lefthook/husky, plus a format-on-edit hook for Claude), type strictness |
 | Test loop | measured test-run time from transcripts, test data (seeds, Testcontainers), CI caching |
 | Context | ADRs (`docs/adr/`), module-boundary tooling |
 | Prompt caching in your app | Anthropic SDK call sites without `cache_control`, likely cache breakers (timestamps, random IDs, unsorted JSON in files that call the API), and the model IDs used, since each model has a minimum cacheable prompt length. Static signals; for a measured analysis it points to `/claude-api cost-optimize` |
 
-A `.envrc` is never read or executed: the audit only notes that it exists (`envrc_not_read`), so a
-variable reported as undeclared may be declared there and the report says so. Env reaches Claude is
+A `.envrc` is never read or executed, and neither are mise `[env]`, devcontainer env or compose
+`environment` files: the audit only notes that they exist (`envrc_not_read`, `env_files_not_read`),
+so a variable reported as undeclared may be declared there and the report says so. Env reaches Claude is
 judged from the file's presence. Structured logging and feature
 flags are out of scope, since they're product architecture with no agent-side signal.
 
@@ -194,10 +195,10 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
 ## What it reads, writes and sends
 
 - **Does not read** credential-bearing files or values: it never opens `~/.claude.json`, never reads
-  `.envrc` contents (it only records that the file exists), and never reads MCP `env`, `headers` or
+  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), and never reads MCP `env`, `headers` or
   `oauth` blocks or hook `headers`/`allowedEnvVars`, which hold or point to credentials. From
   settings `env` it only checks names against a fixed list of documented variables. User and local
-  MCP servers live in `~/.claude.json`, so review them with `claude mcp list`.
+  MCP servers live in `~/.claude.json`, so you can review them with `claude mcp list` yourself.
 - **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.

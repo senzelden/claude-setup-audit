@@ -159,7 +159,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   `settings[].mcp_policy`; static, never connected, no values stored). The audit does not read
   MCP `env`, `headers` or `oauth` values or names, so it makes no claim about literal credentials
   there; for a committed `.mcp.json` the user checks those blocks themselves. User and local
-  servers live in `~/.claude.json`, which the audit does not open (`claude mcp list` shows them).
+  servers live in `~/.claude.json`, which the audit does not open (the user can run `claude mcp list` to see them).
   Weigh, citing field and source:
   - `url_has_userinfo` or `url_has_query` on a remote server: a credential may sit in the URL.
     Suggest moving it to a header that references an environment variable (docs page `mcp`).
@@ -220,7 +220,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
 - **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these project,
   plugin and managed server names have no observed calls in the scanned records. User and local
   servers (stored in `~/.claude.json`, which the audit does not open) are not in this list, so it
-  can't call them unused; for those suggest `claude mcp list`. Check transcript coverage and
+  can't call them unused; for those suggest the user run `claude mcp list` themselves. Check transcript coverage and
   `extensions` provenance/activation before drawing conclusions. Empty global-scope transcript scans
   provide no usage evidence. Propose removal only with additional evidence that the server is
   unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools. Per-tool
@@ -309,7 +309,8 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   (permission prompts refused, rules denying, or the permission system answering: category `permission_gate`) from failures; `failure_rate` already excludes
   them and is `null` under `min_calls_for_rate` calls.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
-    fix authentication or configuration (`claude mcp get <name>` shows an `Issue:` line), or
+    fix authentication or configuration (the user can run `claude mcp get <name>` themselves; Claude never runs it, because its
+    output can include a server's environment and headers), or
     propose removal together with its `SEC-mcp-exposure` fields. The thresholds are a
     recommendation.
   - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.
@@ -489,7 +490,8 @@ metric that motivated it, so the next run can check whether it moved.
     `skipDangerousModePermissionPrompt`) is ignored in the shared project `.claude/settings.json`
     only, so the personal `settings.local.json` is the right place.
   - `ignored_env_keys` only names variables on a fixed vocabulary written into the audit from the
-    settings reference (`settings[].env_documented_set` lists the documented names present). The
+    settings reference (`ignored_env_keys` itself lists the vocabulary names present; `settings[].env_documented_set`
+    covers only the documented subagent model variables). The
     audit does not enumerate other `env` names, and credential-shaped names are never reported.
   - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
     "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
@@ -641,10 +643,12 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   no version pins, combined with `environment_issue` friction or repeated install failures. Fix: a
   `make setup` / `just setup` / `dev` script, plus pins in the repo's existing style.
 - **RDY-env-undeclared** (`env.undeclared`): the code reads variables that no mechanism declares.
-  Any mechanism the audit reads counts: `.env.example`, mise `[env]`, devcontainer, compose,
-  pydantic settings. The audit does not read `.envrc` (it holds credentials or pointers to them), so
-  when `env.envrc_not_read` is true, a variable listed as undeclared **may be declared in
-  `.envrc`**: say so and ask the user, never claim it is undeclared. Propose a declaration in the
+  Only mechanisms the audit reads count: `.env.example` and its template variants, pydantic
+  settings. It never opens `.envrc`, mise `[env]`, devcontainer `containerEnv`/`remoteEnv` or compose
+  `environment` (they may hold literal values), so when `env.envrc_not_read` is true or
+  `env.env_files_not_read` lists files, a variable listed as undeclared **may be declared in
+  `.envrc` or in one of those files (not read)**: name them, say so and ask the user, never claim
+  it is undeclared. Propose a declaration in the
   mechanism the repo already uses; suggest `.env.example` only when there is none. Lead with `kind:
   required` (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only`
   only as counts (`undeclared_counts`).
@@ -663,11 +667,10 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   3. Export everything through the hook: zero friction, but every key is visible to every command
      Claude runs and can end up in transcripts.
 
-  With the sandbox on, also check `sandbox.credentials` (`envVars` deny/mask; see "Protect
-  credentials" / "Mask credentials" in the sandboxing docs) before proposing option 3.
-- **RDY-env-secret-backend** (pointers resolve empty inside Claude's shell, e.g. the gpg or
-  1Password agent is unreachable from the sandbox): check only with the user's OK. Probe variable
-  names, never values, and tell the user rather than working around the sandbox.
+  With the sandbox on, also ask whether `sandbox.credentials` masking is set up
+  (`settings[].sandbox_credentials_configured` is presence only; the audit does not copy its
+  contents; see "Protect credentials" / "Mask credentials" in the sandboxing docs) before
+  proposing option 3.
 - **RDY-format-guardrails** (`precommit`, `formatter_config`): a formatter is configured but not
   enforced. Evidence: edit rounds that only change formatting. Propose both a git pre-commit
   hook (humans) and a Claude PostToolUse format-on-edit hook (agent), in the repo's existing tool.

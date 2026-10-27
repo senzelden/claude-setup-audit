@@ -553,12 +553,33 @@ class EnvContract(FakeHome):
 
     def test_other_mechanisms_and_validation(self):
         self.write("repo/.env.example", "API_URL=\n")
-        self.write("repo/mise.toml", "[tools]\nnode = '22'\n[env]\nFEATURE_X = '1'\n")
         self.write("repo/settings.py", "from pydantic_settings import BaseSettings\nclass S(BaseSettings):\n    redis_url: str\n")
         self.write("repo/web/env.ts", "import { z } from 'zod'\nconst s = z.object({})\nprocess.env.API_URL; process.env.FEATURE_X; process.env.REDIS_URL\n")
         c = collect.env_contract(os.path.join(self.home, "repo"))
-        self.assertEqual(c["undeclared"], [])
+        self.assertEqual([u["name"] for u in c["undeclared"]], ["FEATURE_X"])
         self.assertEqual(c["validation"], ["pydantic-settings", "zod"])
+        self.assertNotIn("env_files_not_read", c)
+
+    def test_env_store_files_are_presence_only(self):
+        self.write("repo/mise.toml", "[env]\nFEATURE_X = 'canary-mise-value'\n")
+        self.write("repo/.devcontainer/devcontainer.json", '{"containerEnv": {"FEATURE_Y": "canary-dev-value"}}')
+        self.write("repo/docker-compose.yml", "services:\n  a:\n    environment:\n      - FEATURE_Z=canary-compose\n")
+        self.write("repo/src/app.py", "import os\nx = os.environ['FEATURE_X']\ny = os.environ['FEATURE_Y']\nz = os.environ['FEATURE_Z']\n")
+        root = os.path.join(self.home, "repo")
+        opened = []
+        real_open = open
+
+        def spy(file, *a, **k):
+            opened.append(str(file))
+            return real_open(file, *a, **k)
+
+        with mock.patch("builtins.open", spy):
+            c = collect.env_contract(root)
+        self.assertFalse([p for p in opened if p.endswith(("mise.toml", "devcontainer.json", "compose.yml"))])
+        self.assertEqual(c["declared_via"], [])
+        self.assertEqual(c["env_files_not_read"], ["mise.toml", ".devcontainer/devcontainer.json", "docker-compose.yml"])
+        self.assertEqual(sorted(u["name"] for u in c["undeclared"]), ["FEATURE_X", "FEATURE_Y", "FEATURE_Z"])
+        self.assertNotIn("canary", json.dumps(c))
 
     def test_envrc_info_is_presence_only(self):
         root = os.path.join(self.home, "repo")

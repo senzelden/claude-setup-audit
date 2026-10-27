@@ -87,8 +87,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   (see CHANGELOG): MCP `env_*`, `headers_*`, `oauth_*` and `url_variable_references`,
   `project_trust_accepted`, user and local scope rows, `extensions.mcp_project_state`,
   `extensions.mcp_name_collisions`, `global.mcp_user`, hook `header_keys` and `allowed_env_vars`,
-  `settings[].env_keys` (now `env_documented_set`), and the `envrc` names. The audit does not read
-  credential-bearing files or values. Readers ignore the missing fields.
+  `settings[].env_keys` (now `env_documented_set`), the `envrc` names, and the contents of
+  `settings[].sandbox.credentials` (now the boolean `settings[].sandbox_credentials_configured`).
+  `readiness[].env.env_files_not_read` lists existing mise, devcontainer and compose env files
+  (existence only, like `envrc_not_read`). The audit does not read credential-bearing files or values. Readers ignore the missing fields.
 - `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
   transcript shapes (Claude Code 2.1.310, 2026-10-25). `subagent_models.rows[]`: `agent_type`,
   `requested_model` (the meta `model`: usually the model Claude passed for the call, `inherit` for
