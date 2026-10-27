@@ -3,7 +3,7 @@
 Run with `claude plugin eval` (Claude Code v2.1.269+) from the repository root. Every run spends
 real model usage, so start small.
 
-The next improvements are scoped in [the evaluation plan](../../../docs/evaluation-plan.md):
+The next improvements are scoped in [the evaluation plan](../docs/evaluation-plan.md):
 fixture and grader reliability first, repeated baseline runs second, then apply, suppression
 and cache-health cases. Ask for approval before paid runs; the plan itself authorizes none.
 
@@ -21,7 +21,7 @@ Before proposing shell-dependent paid runs, check the candidate environment with
 or account credentials:
 
 ```sh
-python3 plugins/setup-audit/evals/helpers/runner_preflight.py --execution-context host-shell
+python3 evals/helpers/runner_preflight.py --execution-context host-shell
 ```
 
 Use an accurate operator label (for example, `codex-sandbox` when run inside an agent sandbox).
@@ -50,7 +50,7 @@ it does not establish full macOS runner compatibility.
 ## Trigger accuracy
 
 ```bash
-claude plugin eval plugins/setup-audit --tag trigger --ablation none \
+claude plugin eval plugins/setup-audit --eval-dir evals --tag trigger --ablation none \
   --model claude-sonnet-5 --no-publish --max-cost-usd 3
 ```
 
@@ -66,9 +66,9 @@ Bash runs the bundled scripts and Write creates the reports.
 After obtaining approval, start with one case and one arm:
 
 ```bash
-mkdir -p plugins/setup-audit/evals/results
-quality_run_dir=$(mktemp -d "$PWD/plugins/setup-audit/evals/results/quality-XXXXXX")
-claude plugin eval plugins/setup-audit --case readiness-envrc-pointers \
+mkdir -p evals/results
+quality_run_dir=$(mktemp -d "$PWD/evals/results/quality-XXXXXX")
+claude plugin eval plugins/setup-audit --eval-dir evals --case readiness-envrc-pointers \
   --scaffold --keep-temp --trust-plugin --ablation none --runs 1 --concurrency 1 \
   --allow-tools "Bash(python3 *)" Write \
   --model claude-sonnet-5 --judge-model claude-haiku-4-5 \
@@ -85,8 +85,8 @@ Run the free post-run checker for **each** retained run, even if its model score
 ```bash
 # CLI 2.1.273 seals retained home/tmp trees. Allow read/traverse for inspection only.
 chmod 500 /tmp/claude-eval-<run-id>/sealed
-python3 plugins/setup-audit/evals/helpers/check_quality.py check --sealed \
-  --manifest "plugins/setup-audit/evals/results/manifests/<case>-<unique-id>.json" \
+python3 evals/helpers/check_quality.py check --sealed \
+  --manifest "evals/results/manifests/<case>-<unique-id>.json" \
   --trace /tmp/claude-eval-<run-id>/out/trace.jsonl
 ```
 
@@ -275,8 +275,8 @@ The optional clarity pilot has a separate author-reviewed corpus, not a paid mod
 
 ```bash
 python3 plugins/setup-audit/skills/setup-audit/scripts/evaluate_clarity.py \
-  plugins/setup-audit/evals/clarity-corpus.json
+  evals/clarity-corpus.json
 ```
 
-See `skills/setup-audit/references/instruction-clarity.md` for the labels, known false positives,
+See `plugins/setup-audit/skills/setup-audit/references/instruction-clarity.md` for the labels, known false positives,
 misses and limits. These development results are not an independent accuracy estimate.

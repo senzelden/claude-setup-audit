@@ -62,10 +62,10 @@ uvx --from coverage==7.16.2 coverage report --fail-under=88
 Coverage data files (`.coverage`, `.coverage.*`) are git-ignored.
 
 Paid trigger/quality evaluations are separate; see
-[evals/README.md](../plugins/setup-audit/evals/README.md).
+[evals/README.md](../evals/README.md).
 
 The manually triggered `runner-preflight.yml` workflow checks Linux namespace and macOS
 Seatbelt prerequisites without installing Claude or using model credentials. It is diagnostic,
 separate from the normal validation gate, and cannot certify eval-runner compatibility. See
-[unpaid runner preflight](../plugins/setup-audit/evals/README.md#unpaid-runner-preflight)
+[unpaid runner preflight](../evals/README.md#unpaid-runner-preflight)
 for local usage and coverage limits.

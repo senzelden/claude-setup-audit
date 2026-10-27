@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 HELPER = (Path(__file__).resolve().parents[1]
-          / 'plugins/setup-audit/evals/helpers/runner_preflight.py')
+          / 'evals/helpers/runner_preflight.py')
 spec = importlib.util.spec_from_file_location('runner_preflight', HELPER)
 preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)

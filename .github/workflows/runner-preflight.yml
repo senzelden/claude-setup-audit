@@ -22,4 +22,4 @@ jobs:
         with:
           python-version: '3.13'
       - name: Check OS prerequisites only (not eval-runner compatibility)
-        run: python3 plugins/setup-audit/evals/helpers/runner_preflight.py --execution-context github-hosted
+        run: python3 evals/helpers/runner_preflight.py --execution-context github-hosted

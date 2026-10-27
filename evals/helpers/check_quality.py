@@ -14,7 +14,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from apply_trace import ApplyTrace
 
-SCRIPTS = Path(__file__).resolve().parents[2] / 'skills/setup-audit/scripts'
+SCRIPTS = Path(__file__).resolve().parents[2] / 'plugins/setup-audit/skills/setup-audit/scripts'
 sys.path.insert(0, str(SCRIPTS))
 import report_state
 

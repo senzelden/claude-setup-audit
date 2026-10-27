@@ -7,7 +7,7 @@ Implemented: aligned readiness expectations, four independent judge obligations 
 examples, explicit quick/read-only fixture profiles, external scaffold manifests, and a free
 post-run checker for retained workspaces/traces and report artifacts. Nineteen new regression
 tests covered the checker, runner compatibility and both real scaffolds; that chunk passed 127 tests. See the
-[eval instructions](../plugins/setup-audit/evals/README.md) for commands and coverage limits.
+[eval instructions](../evals/README.md) for commands and coverage limits.
 Paid batches require explicit approval. Keep pilot summaries, observed-answer examples, raw
 traces and reports in ignored local results; do not commit or publish them.
 
@@ -16,7 +16,7 @@ original-byte backup oracle plus free tests using the real permission pruner. Mo
 is retained only in ignored local results. Negative controls cover unapproved mutations, bad backups, missing apply records
 and the helper's in-process stale-file guard. Separate CLI dry-run/apply invocations re-plan;
 they do not provide a persistent stale precondition. See the
-[case coverage and limitations](../plugins/setup-audit/evals/README.md#approved-apply-case).
+[case coverage and limitations](../evals/README.md#approved-apply-case).
 The decision-suppression case now has a relative-date scaffold, an independent external report
 oracle, and five free regression tests using the real processor and renderer. It isolates
 finalization of supplied findings, not their discovery. Cache health now also has a relative-time

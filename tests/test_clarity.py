@@ -48,7 +48,7 @@ class ClarityPilot(FakeHome):
         self.assertTrue(any(s['source'] == 'instruction_clarity' for s in enabled['coverage']['sources']))
 
     def test_reviewed_corpus_keeps_known_false_positive_and_miss_visible(self):
-        path = Path(SCRIPTS).resolve().parents[2] / 'evals/clarity-corpus.json'
+        path = Path(__file__).resolve().parents[1] / 'evals/clarity-corpus.json'
         result = evaluate_clarity.evaluate(json.loads(path.read_text()))
         by_id = {r['id']: r['classification'] for r in result['results']}
         self.assertEqual(by_id['real-collector-referent'], 'true_positive')

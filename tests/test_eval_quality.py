@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-EVALS = Path(__file__).resolve().parents[1] / 'plugins/setup-audit/evals'
+EVALS = Path(__file__).resolve().parents[1] / 'evals'
 spec = importlib.util.spec_from_file_location('check_quality', EVALS / 'helpers/check_quality.py')
 quality = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(quality)

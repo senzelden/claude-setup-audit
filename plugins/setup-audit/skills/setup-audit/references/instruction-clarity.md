@@ -46,7 +46,7 @@ independent or held-out evaluation. It contains no private user transcripts.
 Run the free deterministic measurement:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evaluate_clarity.py <plugin>/evals/clarity-corpus.json
+python3 ${CLAUDE_SKILL_DIR}/scripts/evaluate_clarity.py <repo>/evals/clarity-corpus.json
 ```
 
 Measured 2026-09-16: two useful candidates, one false positive, one missed ambiguity, six true
