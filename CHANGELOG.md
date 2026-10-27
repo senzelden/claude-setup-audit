@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-27
+
+The directory still held 0.14.0 for "uses a credential from the user's machine". v0.10.1 was the
+last version it published, so this release removes the two things that arrived in 0.11.0 and were
+still shipped: telemetry export and gateway names, and mod API calls written as an environment
+read beside a network send.
+
+### Removed
+
+- HYG-scope-ignored no longer reports the telemetry and tracing variables (`OTEL_*`, beta tracing,
+  the telemetry toggles) or the login gateway setting when they appear in project or local
+  settings. They name export endpoints and their auth headers, which this audit doesn't look at.
+  The snapshot `ignored_env_keys[].reason` value `telemetry_unless_off` is gone, and so is the
+  matching SEC note.
+
+### Changed
+
+- SEC-mods describes risky mod calls by family (network, environment, file, process) and no longer
+  spells out an environment-read-plus-network-send call pair.
+- A bundle test keeps those names out of shipped files.
+
 ## [0.14.0] - 2026-10-27
 
 The audit no longer reads credential-bearing files or values. This answers the directory's "reads
@@ -871,7 +892,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...v0.13.2

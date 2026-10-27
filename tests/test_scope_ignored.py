@@ -45,7 +45,7 @@ class SettingsScopes(FakeHome):
         self.assertEqual(keys('project', {'sandbox': {'enabled': True}, 'strictAllowlist': True}), set())
 
     def test_required_keys_are_in_the_table(self):
-        for key in ('axScreenReader', 'autoMode', 'modelPicker', 'skipAutoPermissionPrompt', 'forceLoginGatewayUrl',
+        for key in ('axScreenReader', 'autoMode', 'modelPicker', 'skipAutoPermissionPrompt',
                     'processWrapper', 'prependPlugins', 'appendPlugins', 'sshConfigs', 'claudeInChromeDefaultEnabled',
                     'sandbox.network.strictAllowlist', 'sandbox.filesystem.disabled',
                     'sandbox.allowAppleEvents', 'sandbox.allowNestedUserNamespaces'):
@@ -73,8 +73,7 @@ class SettingsScopes(FakeHome):
 class EnvNames(FakeHome):
     def test_project_and_local_ignore_the_documented_names(self):
         names = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'XDG_CONFIG_HOME',
-                 'XDG_DATA_HOME', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'OTEL_LOG_RAW_API_BODIES',
-                 'ENABLE_BETA_TRACING_DETAILED', 'BETA_TRACING_ENDPOINT', 'CLAUDE_CODE_PROCESS_WRAPPER',
+                 'XDG_DATA_HOME', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'CLAUDE_CODE_PROCESS_WRAPPER',
                  'CLAUDE_CODE_SYNC_SKILLS', 'CLAUDE_CODE_SYNC_PLUGINS', 'CLAUDE_CODE_PLUGIN_CACHE_DIR',
                  'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_AX_SCREEN_READER', 'CLAUDE_AX_STARTUP_QUIET_MS',
                  'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS', 'CLAUDE_CODE_DISABLE_ATTACHMENTS',
@@ -96,37 +95,21 @@ class EnvNames(FakeHome):
         # Credential-shaped names are never looked up, so this one is not reported in any layer.
         self.assertEqual(env('user', ['CLAUDE_CODE_MESSAGING_TOKEN']), {})
 
-    def test_telemetry_group_is_conditional_where_an_off_value_still_applies(self):
-        conditional = ['OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER', 'OTEL_LOG_USER_PROMPTS',
-                       'OTEL_LOG_TOOL_CONTENT', 'OTEL_LOG_TOOL_DETAILS']
-        definite = ['CLAUDE_CODE_ENABLE_TELEMETRY', 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA',
-                    'ENABLE_ENHANCED_TELEMETRY_BETA', 'OTEL_LOG_ASSISTANT_RESPONSES',
-                    'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_HEADERS',
-                    'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL', 'OTEL_EXPORTER_OTLP_CERTIFICATE',
-                    'OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_INSECURE',
-                    'OTEL_EXPORTER_PROMETHEUS_HOST', 'OTEL_EXPORTER_PROMETHEUS_PORT']
-        for layer in ('project', 'local'):
-            got = env(layer, conditional + definite)
-            self.assertEqual({n for n, r in got.items() if r == 'telemetry_unless_off'}, set(conditional))
-            self.assertEqual({n for n, r in got.items() if r == 'project_local'}, set(definite))
-        self.assertEqual(env('user', conditional + definite), {})
-
-    def test_otlp_pattern_needs_the_documented_suffix(self):
-        self.assertEqual(env('project', ['OTEL_EXPORTER_OTLP_TIMEOUT', 'OTEL_SERVICE_NAME', 'MY_OTEL_EXPORTER_OTLP_ENDPOINT',
-                                         'OTEL_EXPORTER_OTLP_ENDPOINT_X']), {})
-        for name in ('OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE'):
-            self.assertEqual(env('project', [name]), {name: 'project_local'})
-        for name in ('OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY', 'OTEL_EXPORTER_OTLP_CLIENT_KEY'):  # credential-shaped
-            self.assertEqual(env('project', [name]), {})
+    def test_telemetry_and_tracing_names_are_not_in_the_vocabulary(self):
+        # Left out in 0.14.1: they name export endpoints and their auth headers.
+        names = ['OTEL_LOGS_EXPORTER', 'OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_RAW_API_BODIES', 'OTEL_LOG_MANAGED_SETTINGS',
+                 'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_HEADERS',
+                 'OTEL_EXPORTER_PROMETHEUS_HOST', 'CLAUDE_CODE_ENABLE_TELEMETRY', 'BETA_TRACING_ENDPOINT',
+                 'ENABLE_BETA_TRACING_DETAILED']
+        for layer in ('user', 'project', 'local', 'managed'):
+            with self.subTest(layer=layer):
+                self.assertEqual(env(layer, names), {})
+        self.assertEqual(keys('project', {'forceLoginGatewayUrl': 'x'}), set())
 
     def test_only_fixed_vocabulary_names_are_looked_up(self):
-        # The families (XDG_*, CLAUDE_AX_*, OTLP) are written out; any other name is never enumerated.
-        self.assertEqual(env('project', ['XDG_ANYTHING', 'CLAUDE_AX_UNLISTED', 'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT']),
-                         {'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT': 'project_local'})
-
-    def test_managed_settings_log_toggle_is_ignored_if_1(self):
-        self.assertEqual(env('local', ['OTEL_LOG_MANAGED_SETTINGS']), {'OTEL_LOG_MANAGED_SETTINGS': 'ignored_if_1'})
-        self.assertEqual(env('user', ['OTEL_LOG_MANAGED_SETTINGS']), {})
+        # The families (XDG_*, CLAUDE_AX_*) are written out; any other name is never enumerated.
+        self.assertEqual(env('project', ['XDG_ANYTHING', 'CLAUDE_AX_UNLISTED', 'XDG_CONFIG_HOME']),
+                         {'XDG_CONFIG_HOME': 'project_local'})
 
     def test_cfc_is_ignored_only_as_one_so_it_is_its_own_reason(self):
         self.assertEqual(env('project', ['CLAUDE_CODE_ENABLE_CFC']), {'CLAUDE_CODE_ENABLE_CFC': 'ignored_if_1'})

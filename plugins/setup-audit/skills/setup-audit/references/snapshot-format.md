@@ -191,7 +191,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     the table are not reported;
   - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude
     Code ignores there, drawn from a fixed documented vocabulary (no other `env` names are read);
-    `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1` (env values
+    `reason` is `project_local`, `every_file` or `ignored_if_1` (env values
     are never collected, so the last two are conditional). Managed files get neither field;
   - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without
     its `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`

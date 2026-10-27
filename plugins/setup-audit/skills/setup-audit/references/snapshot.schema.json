@@ -24,7 +24,7 @@
             "required": ["name", "reason"],
             "properties": {
               "name": {"type": "string"},
-              "reason": {"type": "string", "enum": ["project_local", "every_file", "telemetry_unless_off", "ignored_if_1"]}
+              "reason": {"type": "string", "enum": ["project_local", "every_file", "ignored_if_1"]}
             }
           }
         },

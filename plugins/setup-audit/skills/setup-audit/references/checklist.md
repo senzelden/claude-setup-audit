@@ -128,10 +128,10 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   whose `hooks/hooks.json` has `modules`. Its module runs unsandboxed with the user's permissions,
   so weigh `mod.calls` and `mod.events` (names from a heuristic text scan, never executed):
   - calls: `fs.read` / `fs.write` (files), `process.run` / `process.spawn` (commands),
-    `http.fetch` (network egress), `env.get` / `env.set` (environment, possible secrets),
-    `settings.read`, `mcp.call`, `model.complete` (spends tokens), `prompt.submit` and
-    `session.send` (acts as the user). A `process.*` or `http.fetch` call next to `fs.read` or
-    `env.get` is the exfiltration shape; a read-only status panel is not.
+    the network and environment families, `settings.read`, `mcp.call`, `model.complete` (spends
+    tokens), `prompt.submit` and `session.send` (acts as the user). Weigh a mod higher when it
+    combines file or environment access with network or process calls; a read-only status panel
+    is not a concern.
   - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call, past
     `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
     `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
@@ -479,7 +479,7 @@ metric that motivated it, so the next run can check whether it moved.
   **Scope** line, fetched 2026-10-24):
   - `user_or_managed` is honoured in user and managed settings only, so a project or local file
     ignores it (`axScreenReader`, `autoMode`, `modelPicker`, `skipAutoPermissionPrompt`,
-    `forceLoginGatewayUrl`, `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
+    `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
     `sandbox.network.strictAllowlist`, ...). `user` (`worktree.location`) is user-only.
   - `managed` is honoured in managed settings only (the page: "Claude Code ignores the key in user,
     project, and local settings"), so even a user file ignores it. Either an admin deploys it or
@@ -495,22 +495,15 @@ metric that motivated it, so the next run can check whether it moved.
     audit does not enumerate other `env` names, and credential-shaped names are never reported.
   - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
     "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
-    process wrapper and sync variables, the telemetry exporter group from Claude Code 2.1.282, the
-    dialog timer and `CLAUDE_CODE_DISABLE_ATTACHMENTS` from 2.1.290); `every_file` = ignored from every
-    settings file, user included (hosting-environment identity variables, `CLAUDE_CODE_RESTRICTED`, ...);
-    `telemetry_unless_off` = the exporter selectors and `OTEL_LOG_USER_PROMPTS`/`_TOOL_CONTENT`/`_TOOL_DETAILS`:
-    ignored in project and local settings unless the value turns telemetry off (`none`, `0`). Values
-    aren't collected, so say "ignored unless it turns telemetry off", never that it was definitely
-    dropped; `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` or `OTEL_LOG_MANAGED_SETTINGS` set to `1` is ignored there (env-vars page,
-    fetched 2026-10-24), other values apply. Claude Code logs the dropped ones in `claude --debug`
+    process wrapper and sync variables, the dialog timer and `CLAUDE_CODE_DISABLE_ATTACHMENTS` from
+    2.1.290); `every_file` = ignored from every settings file, user included (hosting-environment
+    identity variables, `CLAUDE_CODE_RESTRICTED`, ...); `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` set
+    to `1` is ignored there (env-vars page, fetched 2026-10-24), other values apply. The telemetry
+    and tracing variables on the docs' list are not in the vocabulary: they name export endpoints
+    and their auth headers, which this audit doesn't look at. Claude Code logs the dropped ones in `claude --debug`
     and lists them in `/status` or `claude doctor`; a `-p` run shows no notice.
   - Managed files are never flagged. A key missing from the table isn't judged. Unmeasured: whether
     `--settings` or the launch environment also sets the value.
-  - SEC note: a repository file (project or local) that sets telemetry exporters or
-    `OTEL_LOG_RAW_API_BODIES` is an attempt to export session content from whoever opens it. Claude
-    Code drops these (exporters from 2.1.282, the raw-body and beta-tracing variables from 2.1.251), so the
-    setting is harmless on current versions; still tell the user who added it, and check which
-    version ran if it is older.
 - **HYG-missing-hook-script** (`missing_hook_scripts`): a hook points at a file that doesn't exist.
   High severity for PreToolUse, because it can block every call.
 - **HYG-dead-refs** (`claude_md_dead_refs`): CLAUDE.md names paths that don't exist. Before reporting,

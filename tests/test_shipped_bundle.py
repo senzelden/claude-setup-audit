@@ -19,6 +19,10 @@ CREDENTIAL_SOURCE = re.compile(
     r'\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b'
     r'|\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY)[A-Z0-9_]*\b|\b[A-Z0-9_]+_KEY\b')
 URL = re.compile(r'https?://')
+# Added in 0.11.0, the first version the directory held: telemetry export and gateway names (an
+# endpoint plus its auth headers) and mod API calls written as an environment read beside a network
+# send. Kept out of shipped files from 0.14.1.
+EXPORT_VOCABULARY = re.compile(r'OTEL_|BETA_TRACING|GatewayUrl|\benv\.get\b|\bhttp\.fetch\b')
 
 
 def shipped_text_files():
@@ -53,6 +57,11 @@ class ShippedBundleTests(unittest.TestCase):
             source, url = CREDENTIAL_SOURCE.search(text), URL.search(text)
             self.assertFalse(source and url, '%s: %s with %s' % (
                 path.relative_to(ROOT), source and source.group(), url and url.group()))
+
+    def test_no_shipped_file_names_telemetry_export_or_mod_credential_calls(self):
+        for path, text in shipped_text_files():
+            match = EXPORT_VOCABULARY.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
 
 
 class RiskyRulePatterns(unittest.TestCase):

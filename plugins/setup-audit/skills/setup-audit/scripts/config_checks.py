@@ -402,7 +402,6 @@ SETTINGS_SCOPES = {
     'processWrapper': 'user_or_managed',
     'sshConfigs': 'user_or_managed',
     'sshHostCommands': 'user_or_managed',
-    'forceLoginGatewayUrl': 'user_or_managed',
     'desktopSessionCleanupPeriodDays': 'user_or_managed',
     'feedbackDrafts': 'user_or_managed',
     # managed
@@ -482,36 +481,26 @@ SCOPE_IGNORED_IN = {
 }
 # settings-reference.md "Variables Claude Code ignores in `env`" and env-vars.md (fetched 2026-10-24).
 # Reasons: project_local = dropped from project and local settings; every_file = dropped from every
-# settings file; telemetry_unless_off = dropped from project and local settings unless the value turns
-# telemetry off (`none` for the exporter selectors, an off value for three content variables; values
-# aren't collected, so only the name is judged); ignored_if_1 = CLAUDE_CODE_ENABLE_CFC=1 and OTEL_LOG_MANAGED_SETTINGS=1
-# (2.1.274+) are ignored in project and local settings (env-vars.md), other values apply.
+# settings file; ignored_if_1 = CLAUDE_CODE_ENABLE_CFC=1 is ignored in project and local settings
+# (env-vars.md), other values apply. The telemetry and tracing variables on those lists are left out
+# (0.14.1): they name export endpoints and their auth headers, which this audit doesn't look at.
 ENV_PROJECT_LOCAL = frozenset({
     'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
     'SystemRoot', 'ComSpec', 'ProgramData', 'LOCALAPPDATA', 'PATHEXT', 'PSModulePath',
-    'OTEL_LOG_RAW_API_BODIES', 'ENABLE_BETA_TRACING_DETAILED', 'BETA_TRACING_ENDPOINT',
-    'CLAUDE_CODE_ENABLE_TELEMETRY', 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA', 'ENABLE_ENHANCED_TELEMETRY_BETA',
-    'OTEL_LOG_ASSISTANT_RESPONSES', 'OTEL_EXPORTER_PROMETHEUS_HOST', 'OTEL_EXPORTER_PROMETHEUS_PORT',
     'CLAUDE_CODE_PROCESS_WRAPPER', 'CLAUDE_CODE_SYNC_SKILLS', 'CLAUDE_CODE_SYNC_PLUGINS',
     'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS',
     'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS'})
-ENV_PROJECT_LOCAL_PREFIXES = ('XDG_', 'CLAUDE_AX_', 'ProgramFiles')  # the XDG_* family, CLAUDE_AX_*, the ProgramFiles family
-ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)*(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
-# The prefix and pattern families above, written out so the audit looks only for fixed names: the
-# settings `env` mapping is never enumerated. XDG: the basedir spec's variables; CLAUDE_AX_: the
+# The XDG_*, CLAUDE_AX_* and ProgramFiles families, written out so the audit looks only for fixed
+# names: the settings `env` mapping is never enumerated. XDG: the basedir spec's variables; CLAUDE_AX_: the
 # accessibility variables the docs name.
 ENV_FAMILY_NAMES = frozenset(
     {'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR',
      'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS', 'CLAUDE_AX_SCREEN_READER', 'CLAUDE_AX_STARTUP_QUIET_MS',
-     'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432'}
-    | {f'OTEL_EXPORTER_OTLP_{signal}{suffix}' for signal in ('', 'LOGS_', 'METRICS_', 'TRACES_')
-       for suffix in ('ENDPOINT', 'HEADERS', 'PROTOCOL', 'CERTIFICATE', 'CLIENT_CERTIFICATE', 'CLIENT_KEY', 'INSECURE')})
+     'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432'})
 # env-vars.md: a value in project or local settings doesn't turn these on (CFC: ignores `1`).
-ENV_IGNORED_IF_1 = frozenset({'CLAUDE_CODE_ENABLE_CFC', 'OTEL_LOG_MANAGED_SETTINGS'})
-ENV_TELEMETRY_UNLESS_OFF = frozenset({'OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER',
-                                      'OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_TOOL_CONTENT', 'OTEL_LOG_TOOL_DETAILS'})
+ENV_IGNORED_IF_1 = frozenset({'CLAUDE_CODE_ENABLE_CFC'})
 ENV_EVERY_FILE = frozenset({
-    'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ACCOUNT_UUID', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN',
+    'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ACCOUNT_UUID', 'CLAUDE_CODE_MESSAGING_SOCKET',
     'CLAUDE_CODE_PROJECT_DIR_NAME', 'CLAUDE_CODE_RESTRICTED', 'CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY',
     'CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT', 'CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT',
     'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT', 'CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT',
@@ -519,7 +508,7 @@ ENV_EVERY_FILE = frozenset({
 
 
 def _env_vocabulary():
-    names = (ENV_PROJECT_LOCAL | ENV_IGNORED_IF_1 | ENV_TELEMETRY_UNLESS_OFF | ENV_EVERY_FILE | ENV_FAMILY_NAMES)
+    names = (ENV_PROJECT_LOCAL | ENV_IGNORED_IF_1 | ENV_EVERY_FILE | ENV_FAMILY_NAMES)
     return sorted(n for n in names if not ENV_CREDENTIAL_SHAPED.search(n))
 
 
@@ -533,11 +522,9 @@ def _env_reason(name, layer):
         return 'every_file' if layer != 'managed' else None
     if layer not in ('project', 'local'):
         return None
-    if name in ENV_TELEMETRY_UNLESS_OFF:
-        return 'telemetry_unless_off'
     if name in ENV_IGNORED_IF_1:
         return 'ignored_if_1'
-    if name in ENV_PROJECT_LOCAL or name.startswith(ENV_PROJECT_LOCAL_PREFIXES) or ENV_OTLP.fullmatch(name):
+    if name in ENV_PROJECT_LOCAL or name in ENV_FAMILY_NAMES:
         return 'project_local'
     return None
 
