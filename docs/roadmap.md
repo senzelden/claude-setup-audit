@@ -130,7 +130,7 @@ Hosted validation passed all eight jobs at `2f0cdd0`:
 
 ## Shipped in 0.13.0: subscription usage
 
-- [ ] Opt-in rate-limit status-line logger (`rate_limit_log.py`) and its analysis: window headroom
+- [x] Opt-in rate-limit status-line logger (`rate_limit_log.py`) and its analysis: window headroom
   (upper bound), staleness, early resets (inferred), limit and spend messages, model mix and
   extra-usage settings, with checklist items `COST-subscription-headroom`,
   `COST-model-scoped-limits`, `COST-extra-usage` and `COST-limit-resets`.
@@ -138,6 +138,14 @@ Hosted validation passed all eight jobs at `2f0cdd0`:
 Hosted validation: not yet run.
 
 ## Next candidates, separately scoped
+
+- **Subscription usage follow-ups** (deferred from the 0.13.0 review): a `spend_limit` change of
+  `period` alone is not logged; two sessions rotating at once can drop `.1` history; schema enum
+  and date patterns for `early_resets[].window`/`at` and the `limit_events` dates; the rotated `.1`
+  file is read without a symlink check; no `used_percentage` range check (`spend_limit` may exceed
+  100); `limit_events.sessions` is keyed by file stem; ordering of same-second entries; and the
+  pre-existing over-redaction of `settings[].scope_ignored_keys[*].key` by
+  `privacy.contextual_secret`.
 
 - **Sandbox placeholders:** detect leftover sandbox placeholder files (empty read-only files at
   protected paths) left by interrupted sandboxed commands.

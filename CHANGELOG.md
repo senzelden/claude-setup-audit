@@ -18,6 +18,15 @@ All notable changes to this project are documented here. The format follows
     labelled undocumented and inferred.
   - Without the log: headroom and resets are stated as not observable locally, with at most one
     optional proposal to wire the logger.
+  - The logger re-logs unchanged values when its last entry is over 30 minutes old (about 48
+    lines a day at most outside value changes), so a light-usage week is not excluded as stale;
+    a wrapped command's output bytes pass through unchanged.
+  - Each window kind reports `counted` (closed windows that are not stale), the base of the
+    3-window headroom threshold; unused at close is 100 minus the window's peak.
+  - `model_mix` reports tokens per model family beside requests; `limit_events.warning_85`
+    records which window (`session`, `weekly`, other) each 85% warning named.
+  - Early resets count once per new reset time and need the entry more than 60 s before the
+    previous reset.
 
 ## [0.12.0] - 2026-10-25
 
