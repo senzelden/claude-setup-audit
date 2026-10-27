@@ -1,9 +1,11 @@
 """Bundled docs fetch script. The network opener is always patched; nothing here hits the net."""
 import ast
 import contextlib
+import glob
 import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -43,8 +45,13 @@ def run(*argv, response=None):
 
 
 class FetchDoc(unittest.TestCase):
+    def mkdtemp(self, prefix):
+        path = tempfile.mkdtemp(prefix=prefix)
+        self.addCleanup(shutil.rmtree, path, True)
+        return path
+
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix='fetchdoc.')
+        self.tmp = self.mkdtemp('fetchdoc.')
         self.out = os.path.join(self.tmp, 'page.md')
 
     def test_valid_page_written(self):
@@ -81,8 +88,8 @@ class FetchDoc(unittest.TestCase):
             yield
 
     def test_out_outside_allowed_dirs_exit_2(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
-        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
+        outside = self.mkdtemp('fetchdoc.outside.')
         dest = os.path.join(outside, 'page.md')
         with self.only_allowed(allowed):
             code, _, _, opener = run('llms.txt', dest, response=FakeResponse(b'x'))
@@ -91,8 +98,8 @@ class FetchDoc(unittest.TestCase):
         self.assertFalse(os.path.exists(dest))
 
     def test_symlinked_parent_escape_exit_2(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
-        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
+        outside = self.mkdtemp('fetchdoc.outside.')
         link = os.path.join(allowed, 'link')
         os.symlink(outside, link)
         for dest in (os.path.join(link, 'page.md'), os.path.join(link, 'new', 'page.md')):
@@ -103,7 +110,7 @@ class FetchDoc(unittest.TestCase):
         self.assertEqual(os.listdir(outside), [])
 
     def test_missing_parents_created_inside_allowed_dir(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         dest = os.path.join(allowed, 'setup-audit-docs', 'en', 'page.md')
         old_umask = os.umask(0o022)  # a mode-less mkdir would then yield 0755 and fail below
         try:
@@ -118,8 +125,8 @@ class FetchDoc(unittest.TestCase):
             self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
 
     def test_missing_parent_outside_allowed_dir_not_created(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
-        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
+        outside = self.mkdtemp('fetchdoc.outside.')
         dest = os.path.join(outside, 'new', 'page.md')
         with self.only_allowed(allowed):
             code, *_ = run('llms.txt', dest, response=FakeResponse(b'x'))
@@ -135,7 +142,7 @@ class FetchDoc(unittest.TestCase):
         return err
 
     def test_group_or_other_writable_parent_refused(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         shared = os.path.join(allowed, 'setup-audit-docs')
         os.mkdir(shared)
         os.chmod(shared, 0o777)
@@ -145,7 +152,7 @@ class FetchDoc(unittest.TestCase):
         self.assert_refused_nothing_written(allowed, os.path.join(shared, 'p.md'))
 
     def test_parent_owned_by_other_user_refused(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         sub = os.path.join(allowed, 'setup-audit-docs')
         os.mkdir(sub, 0o700)
         with mock.patch.object(fetch_doc.os, 'getuid', return_value=os.getuid() + 1):
@@ -153,7 +160,7 @@ class FetchDoc(unittest.TestCase):
         self.assertIn('owned by another user', err)
 
     def test_symlinked_component_inside_allowed_dir_refused(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         real = os.path.join(allowed, 'real')
         os.mkdir(real, 0o700)
         os.symlink(real, os.path.join(allowed, 'link'))
@@ -162,7 +169,7 @@ class FetchDoc(unittest.TestCase):
         self.assertEqual(os.listdir(real), [])
 
     def test_symlink_back_to_allowed_dir_used_as_prefix_refused(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         os.symlink(allowed, os.path.join(allowed, 'loop'))
         err = self.assert_refused_nothing_written(allowed, os.path.join(allowed, 'loop', 'p.md'))
         self.assertIn('through a symlink', err)
@@ -170,7 +177,7 @@ class FetchDoc(unittest.TestCase):
 
     def test_allowed_root_under_symlinked_ancestor_works(self):
         # macOS-style: $TMPDIR=/var/folders/... where /var -> /private/var.
-        base = tempfile.mkdtemp(prefix='fetchdoc.mac.')
+        base = self.mkdtemp('fetchdoc.mac.')
         real_tmp = os.path.join(base, 'private', 'var', 'folders', 'T')
         os.makedirs(real_tmp, 0o700)
         os.symlink(os.path.join(base, 'private', 'var'), os.path.join(base, 'var'))
@@ -185,7 +192,7 @@ class FetchDoc(unittest.TestCase):
             self.assertEqual(f.read(), b'mac')
 
     def test_out_directly_in_allowed_root_written(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         os.chmod(allowed, 0o777)  # the allowed directory itself (like /tmp) is not checked
         dest = os.path.join(allowed, 'p.md')
         with self.only_allowed(allowed):
@@ -193,7 +200,7 @@ class FetchDoc(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_parent_not_created_when_fetch_fails(self):
-        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        allowed = self.mkdtemp('fetchdoc.allowed.')
         dest = os.path.join(allowed, 'new', 'page.md')
         with self.only_allowed(allowed):
             code, *_ = run('llms.txt', dest, response=FakeResponse(b'x', url='https://evil.example/x'))
@@ -234,7 +241,7 @@ class FetchDoc(unittest.TestCase):
             self.assertEqual(f.read(), 'keep')
 
     def test_claude_audits_dir_allowed(self):
-        cfg = tempfile.mkdtemp(prefix='fetchdoc.cfg.')
+        cfg = self.mkdtemp('fetchdoc.cfg.')
         os.makedirs(os.path.join(cfg, 'audits'))
         dest = os.path.join(cfg, 'audits', 'p.md')
         with mock.patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': cfg}), \
@@ -242,6 +249,16 @@ class FetchDoc(unittest.TestCase):
                 mock.patch.dict(os.environ, {'TMPDIR': '/nonexistent-tmp'}):
             code, *_ = run('llms.txt', dest, response=FakeResponse(b'x'))
         self.assertEqual(code, 0)
+
+
+class NoLeftoverTempDirs(unittest.TestCase):
+    def test_fetch_doc_tests_remove_their_temp_dirs(self):
+        pattern = os.path.join(tempfile.gettempdir(), 'fetchdoc.*')
+        before = set(glob.glob(pattern))
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(FetchDoc).run(result)
+        self.assertTrue(result.wasSuccessful(), result.failures + result.errors)
+        self.assertEqual(sorted(set(glob.glob(pattern)) - before), [])
 
 
 class SameHostRedirects(unittest.TestCase):
