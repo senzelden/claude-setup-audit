@@ -10,5 +10,6 @@
   "homepage": "https://github.com/senzelden/claude-setup-audit",
   "repository": "https://github.com/senzelden/claude-setup-audit",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": ["audit", "security", "permissions", "cost", "context", "claude-md", "hooks", "insights", "agent-readiness", "direnv"]
 }
