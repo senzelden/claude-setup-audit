@@ -128,7 +128,19 @@ a survey of common plugins' runtime side effects
 Hosted validation passed all eight jobs at `2f0cdd0`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/40277575521).
 
+## Shipped in 0.13.0: subscription usage
+
+- [ ] Opt-in rate-limit status-line logger (`rate_limit_log.py`) and its analysis: window headroom
+  (upper bound), staleness, early resets (inferred), limit and spend messages, model mix and
+  extra-usage settings, with checklist items `COST-subscription-headroom`,
+  `COST-model-scoped-limits`, `COST-extra-usage` and `COST-limit-resets`.
+
+Hosted validation: not yet run.
+
 ## Next candidates, separately scoped
+
+- **Sandbox placeholders:** detect leftover sandbox placeholder files (empty read-only files at
+  protected paths) left by interrupted sandboxed commands.
 
 - **Evaluation evidence:** fixture/grader reliability and the approved-apply quality case are
   implemented; readiness expectations are aligned. Remaining work: pilot approved apply,

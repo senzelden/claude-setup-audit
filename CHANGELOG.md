@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Subscription usage (docs `statusline`, `errors`, `costs`, `settings-reference`, `model-config`
+  fetched 2026-10-26): checklist items `COST-subscription-headroom`, `COST-model-scoped-limits`,
+  `COST-extra-usage` and `COST-limit-resets`, reading the `subscription` snapshot section built
+  from the opt-in rate-limit log (`rate_limit_log.py`) and from limit messages in transcripts.
+  - Unused headroom is reported as an upper bound; thresholds (24 h / 1 h staleness, 50% median
+    unused over 3 weekly windows, 10-point early-reset drop, 10% family share) are
+    recommendations, not documented limits. Plan tier is never inferred and limit resets are
+    labelled undocumented and inferred.
+  - Without the log: headroom and resets are stated as not observable locally, with at most one
+    optional proposal to wire the logger.
+
 ## [0.12.0] - 2026-10-25
 
 Coexisting with runtime plugins such as TokenEconomizer: what plugins do outside their own files,

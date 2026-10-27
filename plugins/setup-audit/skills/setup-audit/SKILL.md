@@ -192,6 +192,12 @@ What is **measured** versus **estimated** matters for credibility; say which in 
   on a file or key from a dated table, the hook-script flags are a heuristic text scan; label which.
   Plugin-spawned sessions (`transcripts.plugin_spawned`) are in the cost totals and out of the
   learning evidence.
+- Subscription usage (`subscription`; checks `COST-subscription-headroom`, `COST-model-scoped-limits`,
+  `COST-extra-usage`, `COST-limit-resets`): headroom and early resets are measured/inferred only
+  from the opt-in rate-limit log, limit and spend messages are documented text matched in
+  transcripts, and model shares come from request counts. Unused headroom is "at most" (usage
+  elsewhere also counts). Without the log say headroom and resets are not observable locally and
+  make at most one optional proposal to wire `rate_limit_log.py`. Never infer plan tier.
 - Estimated: CLAUDE.md tokens (chars/4). `COST-startup-hooks` is measured from
   `harness_overhead.injected_context` and falls back to a labelled guess
   (`plugin_session_start_hooks`, `basis: using_skill_file_size_guess`, or `not_measured`) when no session has records; add

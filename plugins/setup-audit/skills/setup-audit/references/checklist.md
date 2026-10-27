@@ -364,6 +364,52 @@ readiness, cost metrics and harness overhead.
   cached context (`transcripts.cache.context_tokens`) at the write multiplier instead of the read
   multiplier, labelled an estimate.
 
+- **COST-subscription-headroom** (`subscription.windows`, `subscription.log`; measured from the
+  opt-in rate-limit log, `references/rate-limit-log.md`; docs `statusline` and `costs`, fetched
+  2026-10-26): how much of the plan's windows was used before they reset. Never infer plan tier or
+  subscriber status; `rate_limits` appears only when the status line receives it.
+  - Per kind (`five_hour`, `seven_day`, `spend_limit`) read `closed`, `stale_excluded`,
+    `peak_used_pct`, `unused_at_close_pct`, `median_lead_hours`, `reached_85`, `reached_100`.
+    Say that `reached_85`/`reached_100` count all closed windows, including `stale_excluded` ones,
+    while `peak_used_pct` and `unused_at_close_pct` count only non-stale windows (last observation
+    at most 24 h before reset for `seven_day`, 1 h for `five_hour`).
+  - Unused headroom is an upper bound: write "at most". Usage on claude.ai or other devices also
+    counts and the logger only sees Claude Code here.
+  - Median weekly `unused_at_close_pct` of 50% or more over at least 3 closed weekly windows: say a
+    substantial share of the plan went unused, with the staleness lead time. These thresholds are
+    recommendations, not documented limits.
+  - Frequent `reached_100` (or `reached_85`): recommend the `/usage` breakdown, then
+    `autoContinueAtUsageLimit` (`settings-reference`) and scheduling heavy fan-outs; remedies from
+    `costs` and `errors`.
+  - Without the log (`subscription.log.status` absent): headroom and resets are
+    not observable locally. Make at most one optional proposal to wire `rate_limit_log.py` (see
+    `references/rate-limit-log.md`); do not guess usage.
+- **COST-model-scoped-limits** (`subscription.limit_events`, `subscription.model_mix`; measured counts of documented
+  text matched in assistant or system records; `errors`, `model-config`, fetched 2026-10-26):
+  Opus or Sonnet limit hits (`You've hit your Opus limit`, `... Sonnet limit`) while another family
+  has a small share of requests (under 10%, a recommendation, not a documented limit). The
+  session and weekly limits are shared across models; Opus and Sonnet limits apply per family.
+  - Suggest using another family for overflow (`/model`) or the subagent model settings. Switching
+    the model re-reads the conversation with no cache hits (see `COST-cache-health`).
+  - Report `count`, `sessions`, dates and `subagent_count` per kind. Matching is anchored to
+    synthetic/API-error or system records, so it can under-count, never over-count.
+- **COST-extra-usage** (`subscription.extra_usage` settings and messages, `subscription.limit_events`;
+  documented text; `errors`, `costs`, `settings-reference`, fetched 2026-10-26): spend-limit hits
+  (monthly, individual, org, channel, team shared budget), unanswered Fable consent prompts, and
+  `Usage credits required for 1M context`.
+  - Remedies as documented: `/usage-credits` on Pro/Max, `/model` to a model that needs no extra
+    usage, `dialogExpiry` for unanswered consent prompts, `CLAUDE_CODE_DISABLE_1M_CONTEXT`. Quote
+    `settings[].setting` values for `autoContinueAtUsageLimit`, `fastMode` and
+    `fastModePerSessionOptIn` as found. Never infer plan tier.
+  - `not_observable` lists plan tier, usage-credit balance and limit, and available limit resets;
+    keep them under "Not checked".
+- **COST-limit-resets** (`subscription.early_resets`, `early_resets_basis`; inferred from the
+  rate-limit log): windows where `resets_at` moved later and `used_percentage` dropped by 10
+  points or more from at least 10% before the previous reset time. Limit resets (`clau.de/reset`)
+  are undocumented (`costs`, fetched 2026-10-26), so list the dates as inferred and name the
+  look-alikes in `early_resets_basis` (an account or plan switch, several accounts sharing one log).
+  Without the log: "not observable locally"; no extra proposal beyond the single wiring one above.
+
 ## Learning from repeated mistakes (`LRN-`)
 
 Only patterns count: the same signal across 3+ sessions or 2+ projects. Pick the lightest

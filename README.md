@@ -18,7 +18,10 @@ short, ranked list of fixes for:
 - **Cost & context**: your *measured* per-session context baseline, oversized CLAUDE.md files,
   unused MCP servers, skill-listing overflow, model and compaction settings, and prompt-cache
   health (hit ratio, 1-hour vs 5-minute cache writes, and mid-session cache rewrites classified
-  by cause: idle gap, model switch, compaction).
+  by cause: idle gap, model switch, compaction). With the opt-in rate-limit status-line log
+  ([rate-limit-log.md](plugins/setup-audit/skills/setup-audit/references/rate-limit-log.md)) it
+  also reports subscription window headroom (at most), early limit resets (inferred), model-scoped
+  and spend-limit hits, and extra-usage settings.
 - **Learning from repeated mistakes**: recurring friction and corrections across sessions and
   projects, turned into the lightest mechanism that stops them (memory → rule → hook → skill),
   and re-measured on the next run.
