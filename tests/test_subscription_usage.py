@@ -222,6 +222,26 @@ class Classifier(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(su.classify_limit_text(text))
 
+    def test_warning_window(self):
+        for text, window in (("You've used 85% of your session limit · resets 3:45pm", 'session'),
+                             ("  You’ve used 85.5% of your weekly limit", 'weekly'),
+                             ("API Error: You've used 85% of your weekly limit", 'weekly'),
+                             ("You've used 85% of your Opus limit", 'other'),
+                             ("You've used 85% of your sessions", 'other')):
+            with self.subTest(text=text):
+                self.assertEqual(su.warning_window(text), window)
+        record = {'type': 'system', 'content': "You've used 85% of your weekly limit"}
+        self.assertEqual(su.record_limit_hits(record), [('warning_85', 'weekly')])
+        record = {'type': 'system', 'content': "You've hit your weekly limit"}
+        self.assertEqual(su.record_limit_hits(record), [('weekly', None)])
+
+    def test_limit_events_counts_warning_windows(self):
+        hits = [('warning_85', 'k', '2026-10-01', False, 'session'), ('warning_85', 'k', '2026-10-02', True, 'weekly'),
+                ('weekly', 'k', '2026-10-02', False, None)]
+        ev = su.limit_events(hits)
+        self.assertEqual(ev['warning_85']['windows'], {'session': 1, 'weekly': 1, 'other': 0})
+        self.assertNotIn('windows', ev['weekly'])
+
     def test_is_limit_record(self):
         self.assertTrue(su.is_limit_record({'type': 'assistant', 'message': {'model': '<synthetic>'}}))
         self.assertTrue(su.is_limit_record({'type': 'assistant', 'isApiErrorMessage': True, 'message': {}}))

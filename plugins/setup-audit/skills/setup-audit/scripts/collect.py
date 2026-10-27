@@ -1395,7 +1395,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     spawned = defaultdict(lambda: {"sessions": 0, "subagent_files": 0, "keys": set()})
     loop_sessions = []  # (project key, finished turns) of the user's own main sessions
     usage_totals = tool_usage.Totals()
-    limit_hits, limit_seen = [], set()  # (kind, session key, UTC date, is subagent): never the text
+    limit_hits, limit_seen = [], set()  # (kind, session key, UTC date, is subagent, window): never the text
+    mix_tokens = {c: dict.fromkeys(subscription_usage.FAMILIES, 0) for c in ("main", "agent")}
     for path in top + sub:
         is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
@@ -1416,6 +1417,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
             session_dir = os.path.dirname(os.path.dirname(path))
             session_key = (os.path.basename(os.path.dirname(session_dir)), os.path.basename(session_dir))
         seen_ids, in_window, listed, entry_seen = set(), False, False, False
+        mix_ids = set()  # message ids already in mix_tokens (per file, like harness_record)
         last_t = last_model = last_msg_id = None
         compacted = False
         agent_models, agent_tokens, agent_reads, agent_ids, active = Counter(), 0, 0, set(), False
@@ -1460,13 +1462,26 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                             agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
                     # Documented limit messages: the user's own sessions only, like tool_usage.
-                    if spawn is None and (kinds := subscription_usage.record_limit_kinds(record)):
+                    if spawn is None and (hits := subscription_usage.record_limit_hits(record)):
                         uuid, session = record.get("uuid"), record.get("sessionId")
                         key = (session_key[0], session if isinstance(session, str) and session else path, uuid)
                         if not isinstance(uuid, str) or key not in limit_seen:
                             limit_seen.add(key)
                             day = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
-                            limit_hits.extend((k, session_key, day, not is_top) for k in kinds)
+                            limit_hits.extend((k, session_key, day, not is_top, w) for k, w in hits)
+                    # Tokens by model family for model_mix: the user's own sessions, same records and
+                    # message-id deduplication as harness_record's token totals.
+                    if spawn is None and record.get("type") == "assistant" and (
+                            not is_top or not record.get("isSidechain")):
+                        msg = record.get("message") if isinstance(record.get("message"), dict) else {}
+                        usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
+                        mid = msg.get("id") if isinstance(msg.get("id"), str) else None
+                        if usage is not None and (mid is None or mid not in mix_ids):
+                            mix_ids.add(mid)
+                            mix_tokens["main" if is_top else "agent"][subscription_usage.model_family(
+                                msg.get("model"))] += sum(
+                                v for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
+                                            "output_tokens") if type(v := usage.get(k)) is int)
                     if tool_session is not None:
                         tool_session.record(record)
                     if spawn is None:
@@ -1650,7 +1665,8 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "_subscription": {
             "limit_events": subscription_usage.limit_events(limit_hits),
             # Full model counters, not the capped request_params rows.
-            "model_mix": subscription_usage.model_mix({c: request_stats[c]["model"] for c in ("main", "agent")}),
+            "model_mix": subscription_usage.model_mix({c: request_stats[c]["model"] for c in ("main", "agent")},
+                                                      mix_tokens),
         },
     }
 

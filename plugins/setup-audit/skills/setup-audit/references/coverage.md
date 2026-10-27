@@ -247,7 +247,9 @@ leading whitespace and an optional `API Error: `; straight or curly apostrophes)
 text and tool results never count, because conversations about this feature quote the strings. Limit messages in
 another wrapper are missed: an under-count, never an over-count. Records are deduplicated by project, sessionId
 and record `uuid` (resumed copies), in window, in the user's own main and subagent files (plugin-spawned excluded).
-Only the kind, session and UTC date are kept. `model_mix` reuses the observed `api-request` counters above.
+Only the kind, session, UTC date and, for `warning_85`, the window it names (`session`, `weekly`, `other`) are
+kept. `model_mix` requests reuse the observed `api-request` counters above; its tokens come from assistant
+message `usage` and `message.model` (observed, undocumented), deduplicated by message id.
 `extra_usage.settings` reads the documented keys `autoContinueAtUsageLimit`, `fastMode` and
 `fastModePerSessionOptIn` (settings-reference, fetched 2026-10-26; all Boolean) from collected settings files;
 plan tier, usage-credit balance and limit, and available limit resets are not observable locally (limit resets

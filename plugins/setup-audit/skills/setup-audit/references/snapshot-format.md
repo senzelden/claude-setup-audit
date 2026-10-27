@@ -143,12 +143,16 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `warning_85`, `auto_continue_wait`, `spend_limit`, `credits_required_1m`,
     `fable_consent_unanswered`; kinds with no event are omitted) `count`, `sessions` (distinct
     sessions; a subagent file counts under its parent session), `first_date`/`last_date` (UTC
-    `YYYY-MM-DD`) and `subagent_count`; plus `basis`. In-window records of the user's own sessions,
+    `YYYY-MM-DD`) and `subagent_count`; `warning_85` also has `windows` (`session`, `weekly`,
+    `other`: the window each "You've used N% of your … limit" warning names); plus `basis`. In-window records of the user's own sessions,
     plugin-spawned sessions excluded; matched only at the start of the text of a synthetic or
     API-error assistant record or a system record (see `coverage.md`).
   - `model_mix.{main,agent}`: per family (`opus`, `sonnet`, `haiku`, `fable`, `other`, by
-    case-insensitive substring of the model id) `requests` and `share` (3 dp; null when the class has
-    no requests), from the full `request_params` model counters (not the capped `by_model` rows); `basis`.
+    case-insensitive substring of the model id) `requests`, `tokens` and `share` (of requests, 3 dp;
+    null when the class has no requests). Requests come from the full `request_params` model counters
+    (not the capped `by_model` rows); tokens are input + cache creation + cache read + output of
+    assistant message usage by `message.model`, main and subagent files of the user's own in-window
+    sessions (plugin-spawned excluded), deduplicated by message id; `basis`.
   - `extra_usage`: `settings[]` (`path` of the collected settings file, `setting`
     (`autoContinueAtUsageLimit`, `fastMode`, `fastModePerSessionOptIn`), `value` (the boolean, or
     `invalid` when the file holds a non-boolean)); `messages` (`spend_limit`, `credits_required_1m`,

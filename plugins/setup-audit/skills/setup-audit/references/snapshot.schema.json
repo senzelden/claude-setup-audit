@@ -273,11 +273,32 @@
         "subagent_count": {"type": "integer", "minimum": 0}
       }
     },
+    "limit_event_warning": {
+      "type": "object",
+      "required": ["count", "sessions", "first_date", "last_date", "subagent_count", "windows"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "sessions": {"type": "integer", "minimum": 1},
+        "first_date": {"type": "string"},
+        "last_date": {"type": "string"},
+        "subagent_count": {"type": "integer", "minimum": 0},
+        "windows": {
+          "type": "object",
+          "required": ["session", "weekly", "other"],
+          "properties": {
+            "session": {"type": "integer", "minimum": 0},
+            "weekly": {"type": "integer", "minimum": 0},
+            "other": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
     "model_family_share": {
       "type": "object",
-      "required": ["requests", "share"],
+      "required": ["requests", "tokens", "share"],
       "properties": {
         "requests": {"type": "integer", "minimum": 0},
+        "tokens": {"type": "integer", "minimum": 0},
         "share": {"type": ["number", "null"]}
       }
     },
@@ -1278,7 +1299,7 @@
             "weekly": {"$ref": "#/$defs/limit_event"},
             "opus": {"$ref": "#/$defs/limit_event"},
             "sonnet": {"$ref": "#/$defs/limit_event"},
-            "warning_85": {"$ref": "#/$defs/limit_event"},
+            "warning_85": {"$ref": "#/$defs/limit_event_warning"},
             "auto_continue_wait": {"$ref": "#/$defs/limit_event"},
             "spend_limit": {"$ref": "#/$defs/limit_event"},
             "credits_required_1m": {"$ref": "#/$defs/limit_event"},

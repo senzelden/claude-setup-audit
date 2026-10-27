@@ -392,8 +392,10 @@ readiness, cost metrics and harness overhead.
   session and weekly limits are shared across models; Opus and Sonnet limits apply per family.
   - Suggest using another family for overflow (`/model`) or the subagent model settings. Switching
     the model re-reads the conversation with no cache hits (see `COST-cache-health`).
-  - Report `count`, `sessions`, dates and `subagent_count` per kind. Matching is anchored to
-    synthetic/API-error or system records, so it can under-count, never over-count.
+  - Report `count`, `sessions`, dates and `subagent_count` per kind, and `warning_85.windows` (which
+    window each 85% warning named). Matching is anchored to synthetic/API-error or system records,
+    so it can under-count, never over-count. `model_mix` `tokens` (volume, not spend) can back the
+    share when request counts are small.
 - **COST-extra-usage** (`subscription.extra_usage` settings and messages, `subscription.limit_events`;
   documented text; `errors`, `costs`, `settings-reference`, fetched 2026-10-26): spend-limit hits
   (monthly, individual, org, channel, team shared budget), unanswered Fable consent prompts, and

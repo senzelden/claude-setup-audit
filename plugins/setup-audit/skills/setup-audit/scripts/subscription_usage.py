@@ -194,9 +194,14 @@ BASIS_LIMITS = ('documented limit-message text (errors, interactive-mode; fetche
                 'sessions excluded), deduplicated by project, sessionId and record uuid. Only the kind, '
                 'session and UTC date are read; the text is never stored.')
 BASIS_MODEL_MIX = ('requests per model family from the api-request counters of transcripts.request_params '
-                   '(observed, undocumented; full counters, not the capped rows); family by substring of the '
-                   'model id. Session and weekly limits are shared across models, Opus and Sonnet limits '
-                   'apply per family (errors, fetched 2026-10-26).')
+                   '(observed, undocumented; full counters, not the capped rows); tokens per family are input + '
+                   'cache creation + cache read + output from assistant message usage by message.model, main and '
+                   'subagent files of the user\'s own in-window sessions (plugin-spawned excluded), deduplicated '
+                   'by message id (volume, not spend); family by substring of the model id; share is of requests. '
+                   'Session and weekly limits are shared across models, Opus and Sonnet limits apply per family '
+                   '(errors, fetched 2026-10-26).')
+WARNING_WINDOWS = ('session', 'weekly', 'other')
+_WARNING_WINDOW = re.compile(f'You{_A}ve used \\d+(?:\\.\\d+)?% of your (session|weekly) limit\\b')
 
 
 def classify_limit_text(text):
@@ -237,12 +242,26 @@ def record_texts(record):
                     yield block['text']
 
 
-def record_limit_kinds(record):
-    """Sorted documented kinds found in one record (empty unless is_limit_record)."""
+def warning_window(text):
+    """Window named by an 85% warning ("You've used 85% of your session limit"): session, weekly or other."""
+    text = text.lstrip()
+    if text.startswith(API_ERROR_PREFIX):
+        text = text[len(API_ERROR_PREFIX):]
+    m = _WARNING_WINDOW.match(text)
+    return m.group(1) if m else 'other'
+
+
+def record_limit_hits(record):
+    """Sorted (kind, window) pairs found in one record (empty unless is_limit_record); window is the
+    window a warning_85 names (WARNING_WINDOWS), None for the other kinds."""
     if not is_limit_record(record):
         return []
-    return sorted({k for k in map(classify_limit_text, record_texts(record)) if k is not None},
-                  key=LIMIT_KINDS.index)
+    hits = set()
+    for text in record_texts(record):
+        kind = classify_limit_text(text)
+        if kind is not None:
+            hits.add((kind, warning_window(text) if kind == 'warning_85' else None))
+    return sorted(hits, key=lambda h: (LIMIT_KINDS.index(h[0]), h[1] or ''))
 
 
 def model_family(model):
@@ -253,7 +272,8 @@ def model_family(model):
 
 
 def limit_events(hits):
-    """hits: (kind, session key, UTC date, is_subagent) tuples -> snapshot `limit_events`."""
+    """hits: (kind, session key, UTC date, is_subagent, window) tuples -> snapshot `limit_events`;
+    warning_85 also counts the window each warning names."""
     out = {}
     for kind in LIMIT_KINDS:
         rows = [h for h in hits if h[0] == kind]
@@ -261,19 +281,24 @@ def limit_events(hits):
             dates = sorted(h[2] for h in rows)
             out[kind] = {'count': len(rows), 'sessions': len({h[1] for h in rows}), 'first_date': dates[0],
                          'last_date': dates[-1], 'subagent_count': sum(1 for h in rows if h[3])}
+            if kind == 'warning_85':
+                out[kind]['windows'] = {w: sum(1 for h in rows if h[4] == w) for w in WARNING_WINDOWS}
     out['basis'] = BASIS_LIMITS
     return out
 
 
-def model_mix(model_counters):
-    """{'main'|'agent': Counter(model -> requests)} -> requests and share per family (share null at 0)."""
+def model_mix(model_counters, token_counters=None):
+    """{'main'|'agent': Counter(model -> requests)} and {'main'|'agent': {family: tokens}} -> requests,
+    tokens and request share per family (share null at 0 requests)."""
     out = {}
     for cls in ('main', 'agent'):
         fam = dict.fromkeys(FAMILIES, 0)
         for model, n in model_counters.get(cls, {}).items():
             fam[model_family(model)] += n
+        tokens = (token_counters or {}).get(cls, {})
         total = sum(fam.values())
-        out[cls] = {f: {'requests': n, 'share': round(n / total, 3) if total else None} for f, n in fam.items()}
+        out[cls] = {f: {'requests': n, 'tokens': tokens.get(f, 0), 'share': round(n / total, 3) if total else None}
+                    for f, n in fam.items()}
     out['basis'] = BASIS_MODEL_MIX
     return out
 

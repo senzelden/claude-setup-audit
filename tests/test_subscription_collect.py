@@ -33,6 +33,11 @@ def tool_result(text):
         {"type": "tool_result", "tool_use_id": "toolu_1", "content": text}]}}
 
 
+def assistant_usage(model, mid, usage):
+    return {"type": "assistant", "uuid": "u-" + mid, "timestamp": stamp(), "sessionId": "s",
+            "message": {"id": mid, "model": model, "usage": usage, "content": []}}
+
+
 def api_request(model, rid, source="repl_main_thread"):
     return {"type": "api-request", "sessionId": "s", "id": rid, "timestamp": stamp(), "querySource": source,
             "params": {"model": model}}
@@ -78,6 +83,17 @@ class LimitEvents(Base):
         events = self.sub()["limit_events"]
         self.assertEqual((events["auto_continue_wait"]["count"], events["weekly"]["count"]), (1, 1))
 
+    def test_warning_85_records_the_window_named(self):
+        self.put("-a", "s1", [synthetic("You've used 85% of your session limit · resets 3:45pm", uuid="w1"),
+                              synthetic("You’ve used 85% of your weekly limit · resets Mon", uuid="w2"),
+                              synthetic("You've used 90% of your weekly limit", uuid="w3"),
+                              synthetic("You've used 85% of your Opus limit", uuid="w4")])
+        warning = self.sub()["limit_events"]["warning_85"]
+        self.assertEqual(warning["count"], 4)
+        self.assertEqual(warning["windows"], {"session": 1, "weekly": 2, "other": 1})
+        self.put("-b", "s2", [synthetic(WEEKLY)])
+        self.assertNotIn("windows", self.sub()["limit_events"]["weekly"])
+
     def test_records_outside_the_window_are_ignored(self):
         old = synthetic(WEEKLY)
         old["timestamp"] = stamp(-40 * 86400)
@@ -96,10 +112,10 @@ class ModelMix(Base):
         self.put("-a", "s1", [api_request("claude-opus-5-5", f"r{i}") for i in range(3)]
                  + [api_request("claude-sonnet-5-5", "r9"), api_request("claude-haiku-4-5", "x1", "agent:Explore")])
         mix = self.sub()["model_mix"]
-        self.assertEqual(mix["main"]["opus"], {"requests": 3, "share": 0.75})
-        self.assertEqual(mix["main"]["sonnet"], {"requests": 1, "share": 0.25})
-        self.assertEqual(mix["main"]["fable"], {"requests": 0, "share": 0.0})
-        self.assertEqual(mix["agent"]["haiku"], {"requests": 1, "share": 1.0})
+        self.assertEqual(mix["main"]["opus"], {"requests": 3, "tokens": 0, "share": 0.75})
+        self.assertEqual(mix["main"]["sonnet"], {"requests": 1, "tokens": 0, "share": 0.25})
+        self.assertEqual(mix["main"]["fable"], {"requests": 0, "tokens": 0, "share": 0.0})
+        self.assertEqual(mix["agent"]["haiku"], {"requests": 1, "tokens": 0, "share": 1.0})
         self.assertIn("api-request", mix["basis"])
 
     def test_model_mix_uses_full_counters_not_capped_rows(self):
@@ -110,7 +126,26 @@ class ModelMix(Base):
         self.assertEqual(snap["subscription"]["model_mix"]["main"]["sonnet"]["requests"], len(models))
 
     def test_no_requests_gives_null_shares(self):
-        self.assertEqual(self.sub()["model_mix"]["main"]["opus"], {"requests": 0, "share": None})
+        self.assertEqual(self.sub()["model_mix"]["main"]["opus"], {"requests": 0, "tokens": 0, "share": None})
+
+    def test_tokens_by_family(self):
+        usage = {"input_tokens": 1, "cache_creation_input_tokens": 10, "cache_read_input_tokens": 100,
+                 "output_tokens": 1000}
+        self.put("-a", "s1", [
+            assistant_usage("claude-opus-5-5", "m1", usage),
+            assistant_usage("claude-opus-5-5", "m1", usage),  # streamed chunk of the same message
+            assistant_usage("claude-sonnet-5-5", "m2", {"output_tokens": 7, "input_tokens": "x"}),
+            {**assistant_usage("claude-haiku-4-5", "m3", usage), "isSidechain": True},  # not a main-file record
+            {**assistant_usage("claude-opus-5-5", "m4", usage), "timestamp": stamp(-40 * 86400)},  # out of window
+        ])
+        self.put("-a/s1/subagents", "agent-1", [assistant_usage("claude-haiku-4-5", "m5", usage)])
+        self.put(observer_key(self), "o1", [assistant_usage("claude-opus-5-5", "m6", usage)])  # plugin-spawned
+        mix = self.sub()["model_mix"]
+        self.assertEqual({f: v["tokens"] for f, v in mix["main"].items()},
+                         {"opus": 1111, "sonnet": 7, "haiku": 0, "fable": 0, "other": 0})
+        self.assertEqual({f: v["tokens"] for f, v in mix["agent"].items()},
+                         {"opus": 0, "sonnet": 0, "haiku": 1111, "fable": 0, "other": 0})
+        self.assertIn("message id", mix["basis"])
 
 
 class ExtraUsage(Base):
@@ -143,7 +178,9 @@ class Privacy(Base):
     def setUp(self):
         super().setUp()
         self.write(".claude/settings.json", {"fastMode": True})
-        self.put("-a", "s1", [synthetic(WEEKLY), api_request("claude-opus-5-5", "r1")])
+        self.put("-a", "s1", [synthetic(WEEKLY), api_request("claude-opus-5-5", "r1"),
+                              synthetic("You've used 85% of your session limit", uuid="w1"),
+                              assistant_usage("claude-opus-5-5", "m1", {"output_tokens": 5})])
 
     def test_every_string_leaf_is_classified(self):
         sub = collect.build_snapshot(args())["subscription"]
@@ -169,7 +206,11 @@ class Privacy(Base):
         contract.validate_snapshot(snap)
         for mutate in (lambda s: s["extra_usage"]["settings"][0].update(value="on"),
                        lambda s: s["limit_events"]["weekly"].update(count="1"),
-                       lambda s: s["model_mix"]["main"]["opus"].update(requests=-1)):
+                       lambda s: s["model_mix"]["main"]["opus"].update(requests=-1),
+                       lambda s: s["model_mix"]["main"]["opus"].update(tokens=-1),
+                       lambda s: s["model_mix"]["agent"]["haiku"].pop("tokens"),
+                       lambda s: s["limit_events"]["warning_85"].pop("windows"),
+                       lambda s: s["limit_events"]["warning_85"]["windows"].update(weekly="1")):
             bad = json.loads(json.dumps(snap))
             mutate(bad["subscription"])
             with self.assertRaises(contract.SnapshotError):
