@@ -143,7 +143,8 @@ Hosted validation: not yet run.
   `period` alone is not logged; two sessions rotating at once can drop `.1` history; schema enum
   and date patterns for `early_resets[].window`/`at` and the `limit_events` dates; the rotated `.1`
   file is read without a symlink check; no `used_percentage` range check (`spend_limit` may exceed
-  100); `limit_events.sessions` is keyed by file stem; ordering of same-second entries; and the
+  100); `limit_events.sessions` is keyed by file stem; ordering of same-second entries;
+  `model_mix.tokens` counts a resumed session's copy again (per-file message-id dedupe); and the
   pre-existing over-redaction of `settings[].scope_ignored_keys[*].key` by
   `privacy.contextual_secret`.
 

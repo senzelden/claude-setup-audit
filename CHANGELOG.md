@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-27
+
 ### Added
 
 - Subscription usage (docs `statusline`, `errors`, `costs`, `settings-reference`, `model-config`
@@ -728,7 +730,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.0...v0.10.1
