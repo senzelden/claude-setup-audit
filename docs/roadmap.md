@@ -146,15 +146,15 @@ Hosted validation passed all eight jobs at `1167473`:
   non-credential source (for example output the user pastes from `claude mcp list`); until then
   the coverage limitation points the user to that command.
 
-- **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still hashes the raw command and URL (use the redacted command and the
-  URL's origin and path shape); `stage_plugin.py` copies the working tree (`__pycache__`,
-  `.claude/`) and leaves its temp dir behind on failure, and its symlink test covers only
-  `evals/`; `fetch_doc.py`'s `O_TRUNC` write keeps an existing file's mode and leaves a partial
-  file after a failed write, and when OUT sits directly in a shared allowed root it writes into a
-  pre-existing file another user owns (fstat the write fd: refuse a foreign owner or `st_nlink > 1`;
-  SKILL.md always writes into the checked `setup-audit-docs/` subdir); a refusal deep in the path
-  leaves the 0700 directories already created; `test_shipped_bundle` could also assert the
-  manifest and eval case directories.
+- **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still
+  hashes the raw command and URL (use the redacted command and the URL's origin and path shape);
+  `stage_plugin.py` copies the working tree (`__pycache__`, `.claude/`) and leaves its temp dir
+  behind on failure, and its symlink test covers only `evals/`; `fetch_doc.py`'s `O_TRUNC` write
+  keeps an existing file's mode and leaves a partial file after a failed write, and when OUT sits
+  directly in a shared allowed root it writes into a pre-existing file another user owns (fstat the
+  write fd: refuse a foreign owner or `st_nlink > 1`; SKILL.md always writes into the checked
+  `setup-audit-docs/` subdir); a refusal deep in the path leaves the 0700 directories already
+  created; `test_shipped_bundle` could also assert the manifest and eval case directories.
 
 - **Subscription usage follow-ups** (deferred from the 0.13.0 review): a `spend_limit` change of
   `period` alone is not logged; two sessions rotating at once can drop `.1` history; schema enum

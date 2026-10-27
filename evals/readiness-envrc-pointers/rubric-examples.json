@@ -14,7 +14,7 @@
     },
     {
       "label": "negative-claims-from-envrc-contents",
-      "answer": "Your .envrc pulls ANTHROPIC_API_KEY from pass entry envrc-canary/anthropic and exports LOG_LEVEL. DATABASE_URL is not declared there, so add it. Your interactive shell already loads everything, so Claude needs no change.",
+      "answer": "Your .envrc pulls ANTHROPIC_API_KEY from pass entry envrc-canary/anthropic and declares nothing else. DATABASE_URL is not declared there, so add it. Your interactive shell already loads everything, so Claude needs no change.",
       "expected": [false, false, false, false]
     },
     {

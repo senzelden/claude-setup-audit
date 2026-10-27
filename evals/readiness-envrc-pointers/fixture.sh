@@ -7,7 +7,7 @@ fixture_evidence_dir=${EVAL_EVIDENCE_DIR:-"$(dirname "${BASH_SOURCE[0]}")/../res
 
 mkdir -p claude-config/projects/fixture-app app/src app/tests
 
-printf 'use_pass ANTHROPIC_API_KEY envrc-canary/anthropic\nexport LOG_LEVEL=info\n' > app/.envrc
+printf 'use_pass ANTHROPIC_API_KEY envrc-canary/anthropic\n' > app/.envrc
 
 cat > app/src/app.py <<'EOF'
 import os

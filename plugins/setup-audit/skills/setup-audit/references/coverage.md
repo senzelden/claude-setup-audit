@@ -97,13 +97,15 @@ plugin names, relative script paths and pattern ids.
 omitted entries; `basis: static`). It reads settings text only.
 
 - Scope-ignored settings (`settings[].scope_ignored_keys`, `ignored_env_keys`, `basis: static`): the
-  table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`" list
-  (plus env-vars `CLAUDE_CODE_ENABLE_CFC`; the `env` names looked up are that fixed list, never the file's other names), fetched 2026-10-24; it must be refreshed when the docs
-  change and judges only the file's own location. Not seen: `--settings` files, the launch environment,
-  `~/.claude.json` (not opened), env values and other env names (so the telemetry group and `CLAUDE_CODE_ENABLE_CFC` are
-  conditional), and a managed file never being flagged even where the key would be ignored.
-  Metadata-only keeps the key names, scope classes, env names and reasons (fixed vocabulary).
-  `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names present in `env`.
+  table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`"
+  list (plus env-vars `CLAUDE_CODE_ENABLE_CFC`; the `env` names looked up are that fixed list, never
+  the file's other names), fetched 2026-10-24; it must be refreshed when the docs change and judges
+  only the file's own location. Not seen: `--settings` files, the launch environment,
+  `~/.claude.json` (not opened), env values and other env names (so the telemetry group and
+  `CLAUDE_CODE_ENABLE_CFC` are conditional), and a managed file never being flagged even where the
+  key would be ignored. Metadata-only keeps the key names, scope classes, env names and reasons
+  (fixed vocabulary). `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
+  present in `env`.
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the
   highest-precedence file in the stack (managed > local > project > user).
@@ -177,25 +179,25 @@ grants; never execute a skill or its dynamic context to inspect it.
 
 ## MCP and plugins
 
-`extensions` inventories selected MCP transport, executable, origin, argument count, package
-version shape, credential mechanisms and source scope. Argument values and URL paths are
-omitted. The audit does not read MCP `env`, `headers` or `oauth` values or names, because
-they hold or point to credentials; only the presence of the `oauth` and `headersHelper`
-mechanisms is recorded. Neither MCP servers nor authentication helpers are run. It does not open
-`~/.claude.json`, where user and local MCP servers live, so only project (`.mcp.json`), plugin and
-managed servers appear; review the rest with `claude mcp list`
-(`coverage.limitations` says so). Remote connectors and runtime overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds
-alone for removal.
+`extensions` inventories selected MCP transport, executable, origin, argument count, package version
+shape, credential mechanisms and source scope. Argument values and URL paths are omitted. The audit
+does not read MCP `env`, `headers` or `oauth` values or names, because they hold or point to
+credentials; only the presence of the `oauth` and `headersHelper` mechanisms is recorded. Neither
+MCP servers nor authentication helpers are run. It does not open `~/.claude.json`, where user and
+local MCP servers live, so only project (`.mcp.json`), plugin and managed servers appear; review the
+rest with `claude mcp list` (`coverage.limitations` says so). Remote connectors and runtime
+overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds alone
+for removal.
 
 MCP exposure fields (`transport_class`, `endpoint_locality`, `plaintext_transport`, URL flags,
-`tool_prefix`, `file_git_status`) come from configuration text
-only. Locality needs no DNS, and nothing is connected, authenticated or executed. URL path,
-query, userinfo, argument, env, header, `clientId` and `headersHelper` values are never copied.
-Allow and deny policy and permission rules from settings files are per-source observations
-(`policy_observations`), not effective state; `serverUrl`/`serverCommand` entries are counted,
-not evaluated. Approval lists, enable/disable toggles and trust-dialog state live in
-`~/.claude.json`, so they are not observed. `tool_prefix` uses the documented plugin normalization for every server. Documentation
-checked 2026-09-29: `mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
+`tool_prefix`, `file_git_status`) come from configuration text only. Locality needs no DNS, and
+nothing is connected, authenticated or executed. URL path, query, userinfo, argument, env, header,
+`clientId` and `headersHelper` values are never copied. Allow and deny policy and permission rules
+from settings files are per-source observations (`policy_observations`), not effective state;
+`serverUrl`/`serverCommand` entries are counted, not evaluated. Approval lists, enable/disable
+toggles and trust-dialog state live in `~/.claude.json`, so they are not observed. `tool_prefix`
+uses the documented plugin normalization for every server. Documentation checked 2026-09-29:
+`mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
 
 Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
 `is_error: true` counts. Categories are heuristic text patterns observed 2026-09-29; the error
@@ -219,22 +221,22 @@ Subagent models and request parameters (`transcripts.subagent_models`, `transcri
 observed, undocumented, Claude Code 2.1.310, 2026-10-25): Claude Code documents neither shape.
 `<agent>.meta.json` beside each subagent transcript supplies `agentType` and `model`; only those two
 keys are read (never `description` or `toolUseId`), at most 64 KiB, regular files only. Absent files
-are counted in `meta_absent`; malformed, oversized, non-object, symlinked or non-regular (FIFO, opened nonblocking) ones in
-`meta_unusable`.
-The meta `model` is usually the model Claude passed for that call, but is `inherit` for forks (which
-run on the main model, even under `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`; sub-agents, fetched 2026-10-25);
-its absence means the definition,
-`CLAUDE_CODE_SUBAGENT_MODEL` or the main model applied (order documented in sub-agents "Choose a model",
-fetched 2026-10-25), so the row cannot say which; `actual_model` is what the transcript shows. A subagent
-counts when it has an in-window record; its tokens are the in-window assistant usage, deduplicated by
-message id, and rows are capped at 30 by tokens (`omitted` counts the rest). `tokens` is volume
-including `cache_read_tokens` (billed at a fraction of base input), not spend. `api-request` records
-(`querySource`, `params.model`, `params.output_config.effort`, `params.thinking.type`,
-`cacheControl[].value.ttl`) are counted per source class, deduplicated by project (the transcript directory's project, also for subagent files), sessionId and
-request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25).
-`configured` is an exact name match to collected project, plugin and managed server names; user
-and local servers (in `~/.claude.json`) are not read, so they are never `configured`. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
-as an error.
+are counted in `meta_absent`; malformed, oversized, non-object, symlinked or non-regular (FIFO,
+opened nonblocking) ones in `meta_unusable`. The meta `model` is usually the model Claude passed for
+that call, but is `inherit` for forks (which run on the main model, even under
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`; sub-agents, fetched 2026-10-25); its absence means the
+definition, `CLAUDE_CODE_SUBAGENT_MODEL` or the main model applied (order documented in sub-agents
+"Choose a model", fetched 2026-10-25), so the row cannot say which; `actual_model` is what the
+transcript shows. A subagent counts when it has an in-window record; its tokens are the in-window
+assistant usage, deduplicated by message id, and rows are capped at 30 by tokens (`omitted` counts
+the rest). `tokens` is volume including `cache_read_tokens` (billed at a fraction of base input),
+not spend. `api-request` records (`querySource`, `params.model`, `params.output_config.effort`,
+`params.thinking.type`, `cacheControl[].value.ttl`) are counted per source class, deduplicated by
+project (the transcript directory's project, also for subagent files), sessionId and request id; a
+breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25). `configured`
+is an exact name match to collected project, plugin and managed server names; user and local servers
+(in `~/.claude.json`) are not read, so they are never `configured`. A shape change in a later Claude
+Code release shows up as zero rows or `meta_unusable`, not as an error.
 
 Limit messages (`subscription.limit_events`, 0.13.0): the message texts are documented (errors, "Usage
 limits", and interactive-mode, "Wait for a usage limit to reset"; fetched 2026-10-26); the record wrapper is

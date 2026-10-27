@@ -194,9 +194,10 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
 ## What it reads, writes and sends
 
 - **Does not read** credential-bearing files or values: it never opens `~/.claude.json`, never reads
-  `.envrc` contents (it only records that the file exists), and never reads environment, header or
-  OAuth values or names. User and local MCP servers live in `~/.claude.json`, so review them with
-  `claude mcp list`.
+  `.envrc` contents (it only records that the file exists), and never reads MCP `env`, `headers` or
+  `oauth` blocks or hook `headers`/`allowedEnvVars`, which hold or point to credentials. From
+  settings `env` it only checks names against a fixed list of documented variables. User and local
+  MCP servers live in `~/.claude.json`, so review them with `claude mcp list`.
 - **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.

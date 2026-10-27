@@ -134,10 +134,11 @@ collector integration evidence. Under two-arm evaluation the built-in `with-only
 informational, so also inspect collector status independently of the aggregate score. Fixture
 or safety check failures must not be hidden by a high model score.
 
-Readiness has four independent judge obligations (the `.envrc` is present but never read). The author calibration examples in
-`readiness-envrc-pointers/rubric-examples.json` cover positive, negative and borderline replies;
-they are not an independent accuracy estimate. Review judge disagreements against these examples
-and the answer before changing a rubric. The free checker tests run with the normal Python suite:
+Readiness has four independent judge obligations (the `.envrc` is present but never read). The
+author calibration examples in `readiness-envrc-pointers/rubric-examples.json` cover positive,
+negative and borderline replies; they are not an independent accuracy estimate. Review judge
+disagreements against these examples and the answer before changing a rubric. The free checker tests
+run with the normal Python suite:
 
 ```bash
 python3 -m unittest discover -s tests -p test_eval_quality.py -v

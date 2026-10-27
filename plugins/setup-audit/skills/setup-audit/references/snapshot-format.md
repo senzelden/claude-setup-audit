@@ -141,8 +141,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
-- `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC dates
-  and setting names only; never message text or plan tier; `~/.claude.json` is not opened:
+- `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC
+  dates and setting names only; never message text or plan tier; `~/.claude.json` is not opened:
   - `limit_events`: per documented limit-message kind (`session`, `weekly`, `opus`, `sonnet`,
     `warning_85`, `auto_continue_wait`, `spend_limit`, `credits_required_1m`,
     `fable_consent_unanswered`; kinds with no event are omitted) `count`, `sessions` (distinct
@@ -187,14 +187,14 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `scope` is `user_or_managed`, `managed`, `global_config`, `user_local_managed` or `user`. Table:
     settings reference, fetched 2026-10-24. Static, names only; `null` values and keys absent from
     the table are not reported;
-  - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude Code
-    ignores there, drawn from a fixed documented vocabulary (no other `env` names are read); `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
-    (env values are never collected, so the last two are conditional). Managed files get neither field;
-  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without its
-    `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`
+  - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude
+    Code ignores there, drawn from a fixed documented vocabulary (no other `env` names are read);
+    `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1` (env values
+    are never collected, so the last two are conditional). Managed files get neither field;
+  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without
+    its `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`
     (`command`/`http`, a documented value only), `background` (a command hook with `async` or
-    `asyncRewake`),
-    `issues`/`unknown_fields`/`plugin_relative` when present.
+    `asyncRewake`), `issues`/`unknown_fields`/`plugin_relative` when present.
 
   Additive within snapshot v1.
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.

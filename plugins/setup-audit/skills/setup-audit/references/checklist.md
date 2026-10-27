@@ -6,17 +6,16 @@ and don't report a check that passed unless it has been resolved since the last 
 the collector snapshot.
 
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
-caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed on
-`permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys and
-booleans only), SEC-hooks (type, matcher, origin, header keys, on_failure, background; no command or prompt),
+caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed
+on `permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys
+and booleans only), SEC-hooks (type, matcher, origin, on_failure, background; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
 HYG-shadowed-allow (rule text masked; flags, layers, paths and match kinds remain), and
-HYG-plugin-footprint (plugin-written rule names masked; plugin names, counts, flags and enums remain).
-**Not checked:**
-SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity pilot. **Unaffected:**
-readiness, cost metrics and harness overhead.
+HYG-plugin-footprint (plugin-written rule names masked; plugin names, counts, flags and enums
+remain). **Not checked:** SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity
+pilot. **Unaffected:** readiness, cost metrics and harness overhead.
 
 ## Security (`SEC-`)
 
@@ -168,10 +167,10 @@ readiness, cost metrics and harness overhead.
     Recommendation-level; the docs do not rate it.
   - A `project` server with a `policy_observations` kind `approval_enable_all` or
     `approval_enabled`: any server a teammate adds to `.mcp.json` loads. In `claude -p`, SDK and
-    cloud sessions, project servers load without asking (mcp.md). Propose
-    `disabledMcpjsonServers` for unwanted ones. Committed approvals are ignored in an untrusted
-    folder, so mention that the approval only applies once the user has accepted the trust dialog for that
-    folder (docs page `mcp`); the audit does not record whether they have.
+    cloud sessions, project servers load without asking (mcp.md). Propose `disabledMcpjsonServers`
+    for unwanted ones. Committed approvals are ignored in an untrusted folder, so mention that the
+    approval only applies once the user has accepted the trust dialog for that folder (docs page
+    `mcp`); the audit does not record whether they have.
   - `credential_mechanisms` containing `headersHelper_configured` on a `project` server: a
     repo-supplied shell command that runs once the folder is trusted ("arbitrary shell command",
     mcp.md).
@@ -218,21 +217,22 @@ readiness, cost metrics and harness overhead.
   context. Apply only with the split protocol in SKILL.md.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
-- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these
-  project, plugin and managed server names have no observed calls in the scanned records. User and local servers (stored in
-  `~/.claude.json`, which the audit does not open) are not in this list, so it can't call them
-  unused; for those suggest `claude mcp list`. Check transcript
-  coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
-  transcript scans provide no usage evidence. Propose removal only with additional evidence that
-  the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
-  Per-tool evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
+- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these project,
+  plugin and managed server names have no observed calls in the scanned records. User and local
+  servers (stored in `~/.claude.json`, which the audit does not open) are not in this list, so it
+  can't call them unused; for those suggest `claude mcp list`. Check transcript coverage and
+  `extensions` provenance/activation before drawing conclusions. Empty global-scope transcript scans
+  provide no usage evidence. Propose removal only with additional evidence that the server is
+  unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools. Per-tool
+  evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
   excluded): `used[]` counts sessions per tool name, `listed_never_called[]` names deferred tools
   listed in some session and never called in the window (with how many sessions listed each). State
-  the cost honestly: a deferred tool costs about one listing line until it is used (observed: `addedLines`, one per tool; not a documented figure), so pruning
-  never-called tools saves little; the evidence supports a note, rarely a removal. Always-loaded
-  built-in tools are not listed in transcripts, so their non-use is not observable, and this audit
-  proposes no deny rules for built-in tools from usage. Read `sessions_with_deferred_records`
-  before concluding anything: zero means no listing evidence, not zero use.
+  the cost honestly: a deferred tool costs about one listing line until it is used (observed:
+  `addedLines`, one per tool; not a documented figure), so pruning never-called tools saves little;
+  the evidence supports a note, rarely a removal. Always-loaded built-in tools are not listed in
+  transcripts, so their non-use is not observable, and this audit proposes no deny rules for
+  built-in tools from usage. Read `sessions_with_deferred_records` before concluding anything: zero
+  means no listing evidence, not zero use.
 - **COST-skill-listing** (`skill_listing`, excerpt-size observation): verify runtime activation,
   `skillListingBudgetFraction` and `skillListingMaxDescChars` against current settings and docs
   before claiming listing overflow. Collected excerpts do not establish the effective budget or
@@ -471,10 +471,11 @@ metric that motivated it, so the next run can check whether it moved.
   `permissions` or `hooks`, since the skipped part can be a deny rule or guard hook; managed files
   keep enforcing the rest (`coverage` reason `invalid_entries`).
 - **HYG-scope-ignored** (`settings[].scope_ignored_keys`, `settings[].ignored_env_keys`, static,
-  names only): a setting, or an `env` variable from a fixed documented list, in a file where Claude Code ignores it, so it does
-  nothing there. Say so as an ineffective setting, not a security finding, and propose moving it to
-  the file that works (or removing it). Which file works comes from the key's documented scope
-  (settings reference, key table "Scope" column and each key's **Scope** line, fetched 2026-10-24):
+  names only): a setting, or an `env` variable from a fixed documented list, in a file where Claude
+  Code ignores it, so it does nothing there. Say so as an ineffective setting, not a security
+  finding, and propose moving it to the file that works (or removing it). Which file works comes
+  from the key's documented scope (settings reference, key table "Scope" column and each key's
+  **Scope** line, fetched 2026-10-24):
   - `user_or_managed` is honoured in user and managed settings only, so a project or local file
     ignores it (`axScreenReader`, `autoMode`, `modelPicker`, `skipAutoPermissionPrompt`,
     `forceLoginGatewayUrl`, `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
@@ -519,8 +520,8 @@ metric that motivated it, so the next run can check whether it moved.
   another machine or user.
 - **HYG-worktrees** (`is_worktree_copy`): many stale worktree copies of CLAUDE.md.
 - **HYG-hook-duplicates** (`config_conflicts.hook_duplicates`, static): the same handler (event,
-  matcher, whole handler object with http `headers` reduced to names, so two hooks differing only
-  in a header value group together; `fingerprint` joins to `hook_handlers[].fingerprint` for the
+  matcher, whole handler object without its `headers` and `allowedEnvVars`, so two hooks differing
+  only there group together; `fingerprint` joins to `hook_handlers[].fingerprint` for the
   redacted command) in several places of one stack. Per the hooks docs (fetched 2026-09-30), the
   same handler in more than one settings file runs once (`effect: deduplicated`: clutter, low); a
   plugin's copy stays separate (`separate_copies`: it runs twice, double cost and side effects,
@@ -610,16 +611,16 @@ metric that motivated it, so the next run can check whether it moved.
     baseline, so do not treat their absence there as clean. Plugins that spawn sessions without a
     trace in the files the collector reads (remember's nested summarizer, autoharness forks) are
     not attributed.
-- **HYG-mcp-config** (`config_notes`): `url_without_type`
-  (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`
-  (skipped at load) and `sse_deprecated` (switch to `http`). Same-name servers across scopes are not
-  compared, since user and local scopes are not read. `empty_url_placeholder` is a documented placeholder, not a finding.
-  Connection failures (`transcripts.mcp_failures`, observed, undocumented): per server name,
-  `sessions_failed` and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts
-  (error text is never stored) and `configured` (exact name match to a collected config name;
-  plugin and connector servers use other names, so `false` is not proof of absence). A server failing
-  in many sessions (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones)
-  is a configuration or availability problem to fix or remove: an endpoint that does not exist
+- **HYG-mcp-config** (`config_notes`): `url_without_type` (Claude Code skips the server; add
+  `"type": "http"`), `sdk_type_skipped`, `reserved_name` (skipped at load) and `sse_deprecated`
+  (switch to `http`). Same-name servers across scopes are not compared, since user and local scopes
+  are not read. `empty_url_placeholder` is a documented placeholder, not a finding. Connection
+  failures (`transcripts.mcp_failures`, observed, undocumented): per server name, `sessions_failed`
+  and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts (error text is
+  never stored) and `configured` (exact name match to a collected config name; plugin and connector
+  servers use other names, so `false` is not proof of absence). A server failing in many sessions
+  (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones) is a
+  configuration or availability problem to fix or remove: an endpoint that does not exist
   (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after checking
   scope and activation in `extensions.mcp_servers`; a pending server may only be slow to start.
 
@@ -643,10 +644,10 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   Any mechanism the audit reads counts: `.env.example`, mise `[env]`, devcontainer, compose,
   pydantic settings. The audit does not read `.envrc` (it holds credentials or pointers to them), so
   when `env.envrc_not_read` is true, a variable listed as undeclared **may be declared in
-  `.envrc`**: say so and ask the user, never claim it is undeclared. Propose a declaration in the mechanism the
-  repo already uses; suggest `.env.example` only when there is none. Lead with `kind: required`
-  (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only` only as
-  counts (`undeclared_counts`).
+  `.envrc`**: say so and ask the user, never claim it is undeclared. Propose a declaration in the
+  mechanism the repo already uses; suggest `.env.example` only when there is none. Lead with `kind:
+  required` (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only`
+  only as counts (`undeclared_counts`).
 - **RDY-env-failfast** (`env.validation` empty, several required reads): suggest validation in the
   stack's idiom (pydantic-settings, zod/t3-env, envalid). Parked for small scripts.
 - **RDY-env-invisible-to-claude** (`envrc.present` and `claude_env_hook` false, especially with

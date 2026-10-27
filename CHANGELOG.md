@@ -7,8 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 The audit no longer reads credential-bearing files or values. This answers the directory's "reads
-a credential" hold: it does not open `~/.claude.json`, read `.envrc` contents, or read env, header
-or OAuth values or names. Enforced by tests that fail if a script opens such a file or reads such a
+a credential" hold: it does not open `~/.claude.json`, read `.envrc` contents, or read MCP `env`,
+`headers` or `oauth` blocks or hook `headers`/`allowedEnvVars`. From settings `env` it only checks
+names against a fixed documented list. Enforced by tests that fail if a script opens such a file or reads such a
 value. Snapshot version stays 1; readers ignore the missing fields.
 
 ### Removed
@@ -19,6 +20,8 @@ value. Snapshot version stays 1; readers ignore the missing fields.
 - MCP `env`, `headers` and `oauth` fields: `env_keys`, `headers_keys`, `env_variable_references`,
   `headers_variable_references`, `env_literal_keys`, `headers_literal_keys`, `oauth_keys`,
   `oauth_scopes`, and `url_variable_references`.
+- `policy_observations` kinds `toggle_disabled` and `toggle_enabled`, and the approval-list and
+  trust observations that came from `~/.claude.json`.
 - HTTP hook `header_keys` and `allowed_env_vars` in `hook_handlers`.
 - `settings[].env_keys` (replaced, see Changed).
 - `.envrc` contents: `envrc.pointer_lines` and `envrc.literal_secret_names`, and `.envrc` names
