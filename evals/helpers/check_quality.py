@@ -14,7 +14,11 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from apply_trace import ApplyTrace
 
-SCRIPTS = Path(__file__).resolve().parents[2] / 'plugins/setup-audit/skills/setup-audit/scripts'
+_ROOT = Path(__file__).resolve().parents[2]
+# In the repo the plugin is under plugins/setup-audit; stage_plugin.py puts it at the root.
+SCRIPTS = next(c for c in (_ROOT / 'skills/setup-audit/scripts',
+                           _ROOT / 'plugins/setup-audit/skills/setup-audit/scripts')
+               if c.is_dir())
 sys.path.insert(0, str(SCRIPTS))
 import report_state
 

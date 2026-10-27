@@ -1,7 +1,19 @@
 # Eval suite
 
-Run with `claude plugin eval` (Claude Code v2.1.269+) from the repository root. Every run spends
-real model usage, so start small.
+Run with `claude plugin eval` (Claude Code v2.1.269+). Every run spends real model usage, so
+start small.
+
+The suite lives here, outside the shipped plugin, but `claude plugin eval` only reads cases from
+inside the plugin directory (`--eval-dir` names a directory below the plugin). Stage a throwaway
+copy first and run the commands below against it:
+
+```bash
+python3 evals/helpers/stage_plugin.py   # prints the staged path, run command and results path
+staged=<printed staged path>
+```
+
+Results land in `$staged/evals/results/`; the helper prints a `cp -r` line to copy them back to
+`evals/results/` (git-ignored).
 
 The next improvements are scoped in [the evaluation plan](../docs/evaluation-plan.md):
 fixture and grader reliability first, repeated baseline runs second, then apply, suppression
@@ -50,7 +62,7 @@ it does not establish full macOS runner compatibility.
 ## Trigger accuracy
 
 ```bash
-claude plugin eval plugins/setup-audit --eval-dir evals --tag trigger --ablation none \
+claude plugin eval "$staged" --tag trigger --ablation none \
   --model claude-sonnet-5 --no-publish --max-cost-usd 3
 ```
 
@@ -66,9 +78,9 @@ Bash runs the bundled scripts and Write creates the reports.
 After obtaining approval, start with one case and one arm:
 
 ```bash
-mkdir -p evals/results
-quality_run_dir=$(mktemp -d "$PWD/evals/results/quality-XXXXXX")
-claude plugin eval plugins/setup-audit --eval-dir evals --case readiness-envrc-pointers \
+mkdir -p "$staged/evals/results"
+quality_run_dir=$(mktemp -d "$staged/evals/results/quality-XXXXXX")
+claude plugin eval "$staged" --case readiness-envrc-pointers \
   --scaffold --keep-temp --trust-plugin --ablation none --runs 1 --concurrency 1 \
   --allow-tools "Bash(python3 *)" Write \
   --model claude-sonnet-5 --judge-model claude-haiku-4-5 \
@@ -86,11 +98,11 @@ Run the free post-run checker for **each** retained run, even if its model score
 # CLI 2.1.273 seals retained home/tmp trees. Allow read/traverse for inspection only.
 chmod 500 /tmp/claude-eval-<run-id>/sealed
 python3 evals/helpers/check_quality.py check --sealed \
-  --manifest "evals/results/manifests/<case>-<unique-id>.json" \
+  --manifest "$staged/evals/results/manifests/<case>-<unique-id>.json" \
   --trace /tmp/claude-eval-<run-id>/out/trace.jsonl
 ```
 
-The scaffold stores manifests in `evals/results/manifests/`, outside the model workspace.
+The scaffold stores manifests in `$staged/evals/results/manifests/`, outside the model workspace.
 CLI 2.1.273 does not forward operator `EVAL_*` variables to scaffold scripts, although it
 forwards them to model children. Direct fixture tests can override `EVAL_EVIDENCE_DIR`.
 
