@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-27
+
+The directory still held 0.14.3 for reading a credential that could be sent to a server. This
+release removes the sandbox credential proxy support and the plugin's only network code.
+
+### Removed
+
+- `apply_ops.py` no longer writes `sandbox.credentials` settings. The credential proxy forwards a
+  credential to chosen hosts, so the whole subtree is now refused as `excluded_key` and the user
+  sets it up by hand. The `credential_files` and `credential_env` value kinds are gone.
+- `settings[].sandbox_credentials_configured`: the snapshot no longer records whether credential
+  masking is set. The readiness advice still points to the sandboxing docs.
+- `scripts/fetch_doc.py`. The plugin's scripts make no network requests; Claude fetches the docs
+  pages with its own web tools and greps raw pages for exact keys.
+- Bundle tests keep the credential proxy fields, `fetch_doc` and network imports out of shipped
+  files.
+
 ## [0.14.3] - 2026-10-27
 
 The directory still held 0.14.2 for "uses a credential from the user's machine". This release
