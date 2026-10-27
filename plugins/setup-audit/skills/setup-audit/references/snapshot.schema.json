@@ -175,8 +175,6 @@
                   "approval_enable_all",
                   "policy_allowed_by_name",
                   "policy_denied_by_name",
-                  "toggle_disabled",
-                  "toggle_enabled",
                   "permission_allow",
                   "permission_ask",
                   "permission_deny",

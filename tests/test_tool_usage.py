@@ -172,6 +172,26 @@ class Failures(Base):
         self.assertEqual((rows["github"]["configured"], rows["usersrv"]["configured"], rows["ghost"]["configured"]),
                          (True, False, False))
 
+    def test_unused_covers_project_managed_and_plugin_servers(self):
+        root = os.path.join(self.home, "repo")
+        self.write("repo/.mcp.json", {"mcpServers": {"projsrv": {"command": "x"}}})
+        self.write("managed/managed-mcp.json", {"mcpServers": {"orgsrv": {"command": "x"}}})
+        plugin_root = os.path.join(self.claude, "plugins/cache/m/demo/1")
+        self.write(".claude/plugins/installed_plugins.json", {"plugins": {
+            "demo@m": [{"scope": "user", "installPath": plugin_root}]}})
+        self.write(".claude/plugins/cache/m/demo/1/.claude-plugin/plugin.json",
+                   {"name": "demo", "mcpServers": {"inl": {"command": "x"}}})
+        self.put("-a", "s1", [calls("mcp__usedsrv__q", "mcp__projsrv__q")])
+        snap = collect.build_snapshot(args(roots=[root]))
+        unused = snap["transcripts"]["mcp_configured_but_unused"]
+        self.assertEqual(unused, ["orgsrv", "plugin_demo_inl"])
+        self.put("-a", "s1", [calls("mcp__orgsrv__q", "mcp__plugin_demo_inl__q", "mcp__projsrv__q")])
+        snap = collect.build_snapshot(args(roots=[root]))
+        self.assertEqual(snap["transcripts"]["mcp_configured_but_unused"], [])
+        note = snap["transcripts"]["mcp_configured_but_unused_note"]
+        self.assertIn("managed", note)
+        self.assertIn("plugins", note)
+
 
 class Privacy(Base):
     def setUp(self):

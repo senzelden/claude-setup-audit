@@ -562,6 +562,15 @@ class FailClosed(PatchedHome):
                 self.assertNotIn('zcalone', json.dumps(meta))
                 self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields'].get('unclassified', 0), 1)
 
+    def test_planted_hook_credential_fields_reach_neither_snapshot(self):
+        self.write('.claude/settings.json', {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'http', 'url': 'https://h.example.com/x', 'allowedEnvVars': 'zcplantedenv',
+             'headers': {'X-Planted': 'zcplantedheader'}}]}]}})
+        for metadata_only in (False, True):
+            text = json.dumps(collect.build_snapshot(args(metadata_only=metadata_only)))
+            for planted in ('zcplantedenv', 'zcplantedheader', 'X-Planted'):
+                self.assertNotIn(planted, text)
+
     def test_wrongly_typed_value_is_dropped_not_leaked(self):
         self.write('.claude/settings.json', {'permissions': {'additionalDirectories': 'zcalone'}})
         for metadata_only in (True, False):

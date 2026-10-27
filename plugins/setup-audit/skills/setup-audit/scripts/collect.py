@@ -442,7 +442,7 @@ def hook_handler_entry(event, matcher, x):
         entry["issues"] = issues
     if unknown:
         entry["unknown_fields"] = unknown
-    if "CLAUDE_PLUGIN_" in json.dumps(x, default=str):
+    if "CLAUDE_PLUGIN_" in json.dumps(config_names.hook_handler_view(x), default=str):  # not headers/allowedEnvVars
         entry["plugin_relative"] = True
     return entry
 
@@ -2458,12 +2458,16 @@ def build_snapshot(a):
     configured = set()  # user- and local-scope servers live in ~/.claude.json, which is not read
     for entry in snap["projects"].values():
         configured |= set(entry.get("mcp_servers") or [])
+    # Managed and plugin servers, under the label tool calls carry (mcp__<label>__tool).
+    configured |= {row["tool_prefix"] for row in snap["extensions"]["mcp_servers"]
+                   if row.get("status") == "collected" and row.get("scope") in ("managed", "plugin")
+                   and row.get("tool_prefix")}
     used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
     snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
     for row in snap["transcripts"]["mcp_failures"]["servers"]:
         row["configured"] = row["server"] in configured
     snap["transcripts"]["mcp_configured_but_unused_note"] = (
-        "Project, plugin and managed server names (project .mcp.json files) without observed calls; user- and local-scope servers in ~/.claude.json are not read, so they are never listed here. Check scope, scan coverage and extension activation. "
+        "Servers from project .mcp.json files, managed MCP files and installed plugins (plugin servers by tool-call label) without observed calls; user- and local-scope servers in ~/.claude.json are not read, so they are never listed here. Check scope, scan coverage and extension activation. "
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
     replaced = privacy.mask_snapshot(snap) if metadata_only else {}

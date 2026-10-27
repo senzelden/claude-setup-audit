@@ -59,6 +59,13 @@ def credential_file_opens(tree):
         if calls:  # the name is built into a variable that the same scope may then open
             hits += [c.lineno for n in nodes if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
                      for c in _sensitive_constants(n.value, docs)]
+    # a module-level constant holding the name, referenced inside any opener call's arguments
+    constants = {t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
+                 and _sensitive_constants(n.value) for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+                 if isinstance(t, ast.Name)}
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) in OPENERS):
+        hits += [x.lineno for arg in [*call.args, *(k.value for k in call.keywords)]
+                 for x in ast.walk(arg) if isinstance(x, ast.Name) and x.id in constants]
     return hits
 
 
@@ -92,7 +99,8 @@ class StaticGuards(unittest.TestCase):
         for code in ("def f(home):\n    return load_json(os.path.join(home, '.claude.json'))",
                      "def f(root):\n    p = root + '/.envrc'\n    with open(p) as h:\n        return h.read()",
                      "def f(home):\n    return read_json_object(f'{home}/.claude.json')",
-                     "P = '.envrc'\ntext = Path(P).read_text()"):
+                     "P = '.envrc'\ntext = Path(P).read_text()",
+                     "CJ = '.claude.json'\ndef f(home):\n    return load_json(os.path.join(home, CJ))"):
             self.assertTrue(credential_file_opens(ast.parse(code)), code)
         for code in ("def f(root):\n    return os.path.isfile(os.path.join(root, '.envrc'))",
                      "def f(root):\n    return git_status(root, '.envrc')",
@@ -122,7 +130,7 @@ class FakeHomeCanary(FakeHome):
         self.write('repo/.mcp.json', {'mcpServers': {'projectsrv': server}})
         hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {CANARY_NAME: CANARY},
                 'allowedEnvVars': [CANARY_NAME]}
-        settings = {'env': {CANARY_NAME: CANARY, 'CLAUDE_CODE_SUBAGENT_MODEL': 'haiku'},
+        settings = {'env': {CANARY_NAME: CANARY, 'CLAUDE_CODE_SUBAGENT_MODEL': CANARY, 'HOME': CANARY},
                     'hooks': {'Stop': [{'hooks': [hook]}]}}
         self.write('.claude/settings.json', settings)
         self.write('repo/.claude/settings.json', settings)
@@ -211,5 +219,26 @@ class HookFingerprintHasNoCredentialFields(unittest.TestCase):
         self.assertIn('headers', handler)
 
 
+class HookEntryIgnoresCredentialFields(unittest.TestCase):
+    """Rule: nothing in a hook entry derives from an http hook's headers or allowedEnvVars."""
+
+    def entry(self, **extra):
+        handler = {'type': 'http', 'url': 'https://hooks.example.com/h', **extra}
+        return collect.hook_handler_entry('Stop', None, handler)
+
+    def test_entry_is_identical_with_and_without_credential_fields(self):
+        base = self.entry()
+        for extra in ({'headers': {'Authorization': 'Bearer ${CLAUDE_PLUGIN_TOKEN}'}},
+                      {'allowedEnvVars': ['CLAUDE_PLUGIN_ROOT']},
+                      {'headers': {CANARY_NAME: CANARY}, 'allowedEnvVars': [CANARY_NAME]}):
+            self.assertEqual(self.entry(**extra), base, extra)
+        self.assertNotIn('plugin_relative', base)
+
+    def test_plugin_relative_still_comes_from_other_fields(self):
+        handler = {'type': 'http', 'url': 'https://h.example.com/${CLAUDE_PLUGIN_ROOT}/x'}
+        self.assertIs(collect.hook_handler_entry('Stop', None, handler)['plugin_relative'], True)
+
+
 if __name__ == '__main__':
     unittest.main()
+

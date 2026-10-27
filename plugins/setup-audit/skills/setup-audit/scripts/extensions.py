@@ -238,7 +238,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
     sources.extend(inventory.source(p.get('source', registry_path), 'plugin', p['status']) for p in plugins)
     return dict(mcp_servers=servers, plugins=plugins, sources=sources,
-                limitations=['Effective activation, runtime overrides and remote connectors remain unknown; approvals, toggles, server policy and permission rules are per-source observations, not effective state.',
+                limitations=['Effective activation, runtime overrides and remote connectors remain unknown; approvals, server policy and permission rules are per-source observations, not effective state.',
                              'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
                              'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.']
                 + ([MOD_SETTINGS_LIMITATION] if any(
