@@ -146,6 +146,12 @@ Hosted validation passed all eight jobs at `1167473`:
   non-credential source (for example output the user pastes from `claude mcp list`); until then
   the coverage limitation points the user to that command.
 
+- **No-credential-reads follow-ups** (deferred from the 0.14.0 review): in the collector-failure
+  fallback a whole-file Read of `settings.json` or `.mcp.json` still brings `env`/`headers`
+  values into context although SKILL.md forbids reading them (a names-only fallback script would
+  close it); about 12 prose lines added in 0.14.0 exceed 100 columns; the docs-side test checks
+  the never-open rule exists, not that no passage instructs opening such a file.
+
 - **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still
   hashes the raw command and URL (use the redacted command and the URL's origin and path shape);
   `stage_plugin.py` copies the working tree (`__pycache__`, `.claude/`) and leaves its temp dir

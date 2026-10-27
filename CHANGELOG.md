@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-27
+
 The audit no longer reads credential-bearing files or values. This answers the directory's "reads
 a credential" hold: it does not open `~/.claude.json`, read `.envrc` contents, or read MCP `env`,
 `headers` or `oauth` blocks or hook `headers`/`allowedEnvVars`. From settings `env` it only checks
@@ -52,6 +54,12 @@ or reads such a value. Snapshot version stays 1; readers ignore the missing fiel
 - The hook handler fingerprint no longer covers `headers` or `allowedEnvVars`.
 - Eval case `readiness-envrc-pointers` now expects the `.envrc` to be reported as present but not
   read, with undeclared variables left unverified and nothing from inside the file reported.
+
+### Validation and limits
+
+- 1000 local regression tests pass and strict plugin validation passes. No paid model
+  evaluations were run; the rewritten `readiness-envrc-pointers` grader wording is untested.
+  Whether the directory clears its hold is known only after its scan.
 
 ## [0.13.3] - 2026-10-27
 
@@ -863,7 +871,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...v0.13.1
