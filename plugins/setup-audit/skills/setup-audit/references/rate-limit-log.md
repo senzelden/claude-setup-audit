@@ -28,18 +28,22 @@ no rate-limit data is present. To keep an existing status line, wrap it:
 "statusLine": {"type": "command", "command": "python3 <plugin dir>/skills/setup-audit/scripts/rate_limit_log.py -- <your command>"}
 ```
 
-The wrapped command receives the same stdin bytes (no shell, 3 second timeout) and its stdout is
-printed instead. If it fails, times out or is not found, the logger's own line is printed.
+The wrapped command receives the same stdin bytes (no shell, 3 second timeout) and its stdout bytes
+are printed unchanged instead (colours and encoding pass through). If it fails, times out or is
+not found, the logger's own line is printed.
 
 ## Log
 
 Default `<CLAUDE config dir>/audits/rate-limits.jsonl` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`).
-One line per change:
+One line per change, plus a heartbeat:
 `{"version":1,"at":"<UTC ISO>","windows":{"five_hour":{"used_percentage":23.5,"resets_at":1738425600},...}}`.
-A line is appended only when a window appeared or disappeared (never when no window is present, which is normal at every session start), a `resets_at` changed, or the
-whole-number part of a `used_percentage` changed; "last logged" is read from the last 4 KB. Concurrent
-sessions may write a duplicate; readers tolerate it. `spend_limit` may also carry `period`
-(`daily`, `weekly` or `monthly`).
+A line is appended when a window appeared or disappeared, a `resets_at` changed, the whole-number
+part of a `used_percentage` changed, or the last logged entry is more than 30 minutes old (the
+heartbeat, so a light-usage window still has a recent last value before it resets). Nothing is
+appended when no window is present, which is normal at every session start. "Last logged" is read
+from the last 4 KB. Outside value changes the heartbeat bounds the log at about 48 lines a day
+while Claude Code runs. Concurrent sessions may write a duplicate; readers tolerate it.
+`spend_limit` may also carry `period` (`daily`, `weekly` or `monthly`).
 
 Path rule, the same guard as the drift log: the directory must be the audits directory or under a
 system temp directory (`--log` elsewhere is refused), a symlink is never written through, the file

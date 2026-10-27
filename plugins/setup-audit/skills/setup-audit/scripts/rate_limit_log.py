@@ -2,7 +2,7 @@
 """Opt-in status-line logger for subscription rate limits. Stdlib only.
 
 Reads the status-line JSON from stdin, appends the rate-limit windows to a guarded JSON Lines file
-when they changed, and prints one short line (or the output of a wrapped command). The log holds
+when they changed or the last entry is over 30 minutes old, and prints one short line (or the output of a wrapped command). The log holds
 numbers and timestamps only. It never breaks the status line: any problem is swallowed, exit 0.
 """
 import json
@@ -23,6 +23,7 @@ ROTATE_BYTES = 2_000_000
 STDIN_LIMIT = 1_000_000
 TAIL_BYTES = 4096
 COMMAND_TIMEOUT = 3
+HEARTBEAT_SECONDS = 1800  # re-log unchanged values so a light-usage window's last value stays fresh
 
 
 def _number(v):
@@ -59,6 +60,15 @@ def changed(last, windows):
         if math.floor(o['used_percentage']) != math.floor(w['used_percentage']):
             return True
     return False
+
+
+def heartbeat_due(last, now):
+    """True when the last logged entry is older than HEARTBEAT_SECONDS (or its time is unreadable)."""
+    try:
+        at = datetime.strptime(last['at'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return True
+    return now - at > HEARTBEAT_SECONDS
 
 
 def last_entry(path):
@@ -112,7 +122,8 @@ def _log(path, windows, now, audits):
     path = drift_log.check_path(path, allowed)
     if not windows:
         return  # absent until the first API response in every session: never log an empty entry
-    if not changed(last_entry(path), windows):
+    last = last_entry(path)
+    if not changed(last, windows) and not heartbeat_due(last, now):
         return
     try:
         if os.path.getsize(path) >= ROTATE_BYTES:
@@ -174,7 +185,14 @@ def main(argv=None, stdin=None, now=None):
             try:
                 done = subprocess.run(command, input=raw, capture_output=True, timeout=COMMAND_TIMEOUT)
                 if done.returncode == 0:
-                    sys.stdout.write(done.stdout.decode(errors='replace'))
+                    # Pass the command's bytes through unchanged (ANSI colours, any encoding).
+                    out = getattr(sys.stdout, 'buffer', None)
+                    if out is None:
+                        sys.stdout.write(done.stdout.decode(errors='replace'))
+                    else:
+                        sys.stdout.flush()
+                        out.write(done.stdout)
+                        out.flush()
                     return 0
             except Exception:
                 pass

@@ -12,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'plugins', 'setup-audit',
                                                 'skills', 'setup-audit', 'scripts')))
 import rate_limit_log  # noqa: E402
+import subscription_usage  # noqa: E402
 
 FIVE = {'used_percentage': 23.5, 'resets_at': 1738425600}
 SEVEN = {'used_percentage': 41.2, 'resets_at': 1738857600}
@@ -107,6 +108,8 @@ class Logging(Base):
         self.assertEqual(set(logged), {'used_percentage', 'resets_at', 'period'})
         self.assertNotIn('usd', self.lines()[0])
         self.run_main(status(spend_limit={**spend, 'period': 'hourly'}))
+        self.assertEqual(len(self.lines()), 1)  # an unknown period is dropped, so nothing changed
+        self.assertNotIn('hourly', Path(self.log).read_text())
         self.assertNotIn('period', rate_limit_log.extract({'rate_limits': {'spend_limit': {
             **spend, 'period': 'hourly'}}})['spend_limit'])
         self.assertNotIn('period', rate_limit_log.extract({'rate_limits': {'five_hour': {
@@ -122,6 +125,19 @@ class Logging(Base):
                 self.assertEqual((code, err), (0, ''))
                 self.assertIn('5h', out)
         self.assertFalse(os.path.exists(target))
+
+    def test_heartbeat_relogs_unchanged_values_after_30_minutes(self):
+        now = 1738400000.0
+        self.run_main(status(five_hour=FIVE), now=now)
+        self.run_main(status(five_hour=FIVE), now=now + 29 * 60)
+        self.assertEqual(len(self.lines()), 1)
+        self.run_main(status(five_hour=FIVE), now=now + 31 * 60)
+        self.assertEqual(len(self.lines()), 2)
+        self.assertEqual(json.loads(self.lines()[1])['windows'], {'five_hour': FIVE})
+        self.run_main(status(five_hour=FIVE), now=now + 31 * 60 + 29 * 60)  # measured from the newest entry
+        self.assertEqual(len(self.lines()), 2)
+        self.run_main(status(), now=now + 5 * 3600)  # still never an empty-windows entry
+        self.assertEqual(len(self.lines()), 2)
 
     def test_default_log_under_config_audits(self):
         self.run_main(status(five_hour=FIVE), argv=[])
@@ -148,6 +164,17 @@ class Wrapping(Base):
         self.assertEqual((code, out.strip()), (0, 'W%d' % len(data)))
         self.assertEqual(len(self.lines()), 1)
 
+    def test_wrapped_output_bytes_pass_through(self):
+        payload = b'\x1b[32m\xc3\xa9 7d\x1b[0m \xff\n'
+        cmd = ['--log', self.log, '--', sys.executable, '-c',
+               'import sys; sys.stdout.buffer.write(%r)' % payload]
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding='utf-8')
+        with contextlib.redirect_stdout(out):
+            code = rate_limit_log.main(cmd, stdin=io.BytesIO(status(five_hour=FIVE)), now=1738400000.0)
+        out.flush()
+        self.assertEqual((code, raw.getvalue()), (0, payload))
+
     def test_failing_command_prints_own_line(self):
         data = status(five_hour=FIVE)
         for cmd in ([sys.executable, '-c', 'import sys; sys.exit(1)'], ['/nonexistent/command']):
@@ -159,6 +186,24 @@ class Wrapping(Base):
     def test_bad_args_exit_2(self):
         code, out, _ = self.run_main(status(five_hour=FIVE), argv=['--bogus'])
         self.assertEqual((code, out), (2, ''))
+
+
+class RoundTrip(Base):
+    def test_light_usage_week_is_not_stale(self):
+        # One weekly window; the status line runs every 3 h, usage grows 0.4 points a day, so the
+        # whole-number value last changes ~2 days before the reset. The last run is 2 h before it.
+        hour, reset = 3600, 1_800_000_000
+        start = reset - 7 * 24 * hour
+        for t in sorted(reset - 2 * hour - 3 * hour * k for k in range(56)):
+            pct = 5 + 0.4 * (t - start) / (24 * hour)
+            self.run_main(status(seven_day={'used_percentage': pct, 'resets_at': reset}), now=t)
+        entries, malformed = subscription_usage.read_log(self.log)
+        self.assertEqual(malformed, 0)
+        self.assertEqual(entries[-1]['at'], '2027-01-15T06:00:00Z')  # reset - 2 h
+        week = subscription_usage.analyze_windows(entries, reset + hour)['seven_day']
+        self.assertEqual((week['closed'], week['stale_excluded']), (1, 0))
+        self.assertEqual(week['median_lead_hours'], 2)
+        self.assertEqual(week['unused_at_close_pct']['median'], 92.2)
 
 
 class Helpers(unittest.TestCase):
