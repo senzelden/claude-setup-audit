@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-These changes respond to the plugin directory's automated review of 0.13.0.
+## [0.13.1] - 2026-10-27
+
+These changes respond to the plugin directory's automated review of 0.13.0, which held the
+version for "Update adds credential forward" and reported RUNTIME_FETCH_EXEC and a missing
+listing icon. Nothing was obfuscated: each change restructures the plugin. The audit never read
+or sent credential values, and its snapshot output is unchanged apart from the fixes below.
 
 ### Added
 
@@ -28,6 +33,13 @@ These changes respond to the plugin directory's automated review of 0.13.0.
 - Hook fingerprints no longer hash header values, so http hooks that differ only by a header
   value now group as duplicates.
 - `mcp_user` no longer crashes when `~/.claude.json` is valid JSON but not an object.
+
+### Validation and limits
+
+- Local regression tests pass, including the fetch_doc tests under a symlinked temp dir (the
+  macOS layout), and strict plugin validation passes. No paid model evaluations were run, so
+  eval discovery from the staged layout is not yet verified. The directory's scanner cannot be
+  run locally, so clearance of the hold is not confirmed until Anthropic re-reviews.
 
 ## [0.13.0] - 2026-10-27
 
@@ -762,7 +774,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.10.1...v0.11.0
