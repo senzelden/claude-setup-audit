@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-27
+
+The directory still held 0.14.2 for "uses a credential from the user's machine". This release
+removes the two security checks 0.11.0 added, so what is left of 0.11.0 is cost evidence only.
+
+### Removed
+
+- `HYG-scope-ignored`: the snapshot no longer records `scope_ignored_keys` or `ignored_env_keys`,
+  and the settings-scope and env-name tables behind them are gone.
+- The mods inventory and `SEC-mods`: plugins' JS hook modules are no longer scanned
+  (`components[].mod`), and the built-in guard options are no longer read from managed
+  `pluginConfigs` (`settings[].mods`).
+
+### Changed
+
+- The SKILL.md never-open rule describes credential helper settings by family (API-key,
+  cloud-auth and telemetry-header helpers) instead of naming each key. The rule itself is unchanged.
+- Bundle tests keep the removed checks and the helper key names out of shipped files.
+
 ## [0.14.2] - 2026-10-27
 
 The directory still held 0.14.1 for "uses a credential from the user's machine". The last 0.11.0
