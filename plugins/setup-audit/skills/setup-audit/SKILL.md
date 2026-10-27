@@ -233,9 +233,9 @@ a security finding. If the user supplies `/status` evidence, cite it separately;
 Fetch the docs index (`llms.txt`), then only the pages relevant to what the snapshot shows
 (`references/docs-map.md`). The plugin's scripts make no network requests; use your own web tools.
 
-For exact setting keys, value types, rule syntax and defaults, work from the raw page: download it
-into `$TMPDIR` and grep it, or ask for the relevant rows quoted verbatim. Summaries from a
-web-fetch model have misnamed keys before. Check "What's new"
+For exact setting keys, value types, rule syntax and defaults, save the raw page into `$TMPDIR`
+and grep it (the user approves the request). Summaries from a web-fetch model have misnamed keys
+before, so when you cannot save raw pages, mark exact keys as unverified instead of relying on one. Check "What's new"
 and the changelog since the previous audit, or the last ~6 weeks on a first run, for features that
 address an observed problem.
 

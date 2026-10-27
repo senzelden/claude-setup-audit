@@ -113,7 +113,7 @@ Excluded keys are refused with `excluded_key`:
 | `sandbox.network.allowManagedDomainsOnly` | managed settings only |
 | `sandbox.ripgrep` | points the sandbox at an executable |
 | `sandbox.network.tlsTerminate` | names CA certificate and key files |
-| `sandbox.credentials` and every key under it | credential proxy (it forwards credentials to chosen hosts); the user sets it up by hand (from 0.14.4) |
+| `sandbox.credentials` and every key under it | credential proxy (it forwards credentials to chosen hosts); the user sets it up and removes it by hand: `set` and `remove` are both refused (from 0.14.4) |
 
 ## Statuses and reasons
 

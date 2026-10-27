@@ -15,13 +15,19 @@ release removes the sandbox credential proxy support and the plugin's only netwo
 
 - `apply_ops.py` no longer writes `sandbox.credentials` settings. The credential proxy forwards a
   credential to chosen hosts, so the whole subtree is now refused as `excluded_key` and the user
-  sets it up by hand. The `credential_files` and `credential_env` value kinds are gone.
+  sets it up by hand (`remove` is refused too). The `credential_files` and `credential_env` value
+  kinds are gone.
 - `settings[].sandbox_credentials_configured`: the snapshot no longer records whether credential
   masking is set. The readiness advice still points to the sandboxing docs.
 - `scripts/fetch_doc.py`. The plugin's scripts make no network requests; Claude fetches the docs
   pages with its own web tools and greps raw pages for exact keys.
 - Bundle tests keep the credential proxy fields, `fetch_doc` and network imports out of shipped
   files.
+
+### Changed
+
+- Step 2 saves raw docs pages with Claude's own tools, which may ask for permission; when raw
+  pages can't be saved, exact keys are reported as unverified instead of taken from a summary.
 
 ## [0.14.3] - 2026-10-27
 

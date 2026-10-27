@@ -4,8 +4,9 @@ Base: `https://code.claude.com/docs/en/<page>.md` (index: `https://code.claude.c
 Other references cite a page by name, such as docs page `hooks`; resolve it against this base.
 For **exact setting keys, rule syntax and defaults**, don't rely on WebFetch summaries. A small
 model writes those summaries, it has misnamed keys before (`effort` vs `effortLevel`), and large
-pages get truncated. Download the raw markdown into `$TMPDIR` and grep the saved file, e.g. for
-`autoCompact`, `effortLevel` or `sandbox` in `settings-reference.md`.
+pages get truncated. Save the raw markdown into `$TMPDIR` and grep the saved file, e.g. for
+`autoCompact`, `effortLevel` or `sandbox` in `settings-reference.md`. If raw pages can't be saved,
+mark exact keys as unverified.
 
 WebFetch is fine for overview pages (What's new, costs, best practices). If a URL 404s,
 re-read llms.txt, because pages get renamed. Any setting you propose must appear verbatim in

@@ -1,3 +1,4 @@
+import ast
 import re
 import struct
 import sys
@@ -27,7 +28,8 @@ EXPORT_VOCABULARY = re.compile(r'OTEL_|BETA_TRACING|GatewayUrl|\benv\.get\b|\bht
 # The sandbox credential proxy forwards a credential to chosen hosts. apply_ops wrote its entries and
 # collect recorded whether it was set; from 0.14.4 neither does (apply_ops refuses the whole subtree).
 CREDENTIAL_PROXY = re.compile(r'sandbox\.credentials\.(?:files|envVars)|sandbox_credentials|injectHosts'
-                              r'|maskClaims|maskDuplicates|onExtractNoMatch|credential_files|credential_env')
+                              r'|maskClaims|maskDuplicates|onExtractNoMatch|credential_files|credential_env'
+                              r'|allowPlaintextInject|awsPairs|sigv4')
 SALT_FILE = re.compile(r'salt[ _-]file|hash-salt|hash_salt', re.I)
 
 # Also added in 0.11.0: HYG-scope-ignored, whose tables named credential-adjacent settings and env
@@ -42,6 +44,30 @@ MODS_FEATURE = re.compile(r'SEC-mods|mods_policy|allowManagedModsOnly|allowModsT
 # Helper-command settings run a user-supplied command whose output is a credential; the never-open
 # rule describes them by family. Gone from shipped text in 0.14.3.
 HELPER_COMMAND_KEYS = re.compile(r'apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|gcpAuthRefresh')
+
+
+# Stdlib modules that can open a connection (or load one by name); urllib.parse only parses URLs.
+NETWORK_MODULES = ('socket', 'socketserver', 'ssl', 'http', 'urllib.request', 'urllib.error', 'ftplib',
+                   'smtplib', 'imaplib', 'poplib', 'nntplib', 'telnetlib', 'xmlrpc', 'asyncio',
+                   'webbrowser', 'importlib')
+
+
+def imported_modules(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from (a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == 'urllib':
+                yield from ('urllib.' + a.name for a in node.names)
+            else:
+                yield node.module
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == '__import__'
+              and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            yield node.args[0].value
+
+
+def network_module(name):
+    return any(name == m or name.startswith(m + '.') for m in NETWORK_MODULES)
 
 
 def shipped_text_files():
@@ -89,12 +115,18 @@ class ShippedBundleTests(unittest.TestCase):
 
     def test_no_shipped_script_makes_network_requests(self):
         # 0.14.4: fetch_doc.py was the only sender; docs now come through Claude's own web tools.
-        net = re.compile(r'^\s*(?:import|from)\s+(?:urllib(?!\.parse\b)|http|socket|ssl|ftplib|smtplib)\b', re.M)
         for path, text in shipped_text_files():
             self.assertNotIn('fetch_doc', text, path.relative_to(ROOT))
             if path.suffix == '.py':
-                match = net.search(text)
-                self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+                found = sorted(m for m in imported_modules(ast.parse(text)) if network_module(m))
+                self.assertEqual(found, [], path.relative_to(ROOT))
+
+    def test_network_module_check_catches_the_stdlib_senders(self):
+        tree = ast.parse('import os, socket\nimport urllib.parse, urllib.request\nfrom http import client\n'
+                         'from asyncio import open_connection\nimport importlib\n__import__("ssl")\n'
+                         'from urllib.parse import urlsplit\nimport xmlrpc.client\n')
+        self.assertEqual(sorted(m for m in imported_modules(tree) if network_module(m)),
+                         ['asyncio', 'http', 'importlib', 'socket', 'ssl', 'urllib.request', 'xmlrpc.client'])
 
     def test_no_shipped_file_offers_a_salt_file(self):
         for path, text in shipped_text_files():
