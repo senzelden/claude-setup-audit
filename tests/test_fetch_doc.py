@@ -3,9 +3,12 @@ import ast
 import contextlib
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'plugins', 'setup-audit',
@@ -70,12 +73,58 @@ class FetchDoc(unittest.TestCase):
     def test_wrong_arg_count_exit_2(self):
         self.assertEqual(run('llms.txt', response=None)[0], 2)
 
+    def only_allowed(self, allowed):
+        return mock.patch.object(fetch_doc, '_allowed_dirs', return_value={os.path.realpath(allowed)})
+
     def test_out_outside_allowed_dirs_exit_2(self):
-        home_out = os.path.join(os.path.expanduser('~'), 'fetch_doc_should_not_exist.md')
-        code, _, _, opener = run('llms.txt', home_out, response=FakeResponse(b'x'))
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        dest = os.path.join(outside, 'page.md')
+        with self.only_allowed(allowed):
+            code, _, _, opener = run('llms.txt', dest, response=FakeResponse(b'x'))
         self.assertEqual(code, 2)
         opener.assert_not_called()
-        self.assertFalse(os.path.exists(home_out))
+        self.assertFalse(os.path.exists(dest))
+
+    def test_symlinked_parent_escape_exit_2(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        link = os.path.join(allowed, 'link')
+        os.symlink(outside, link)
+        for dest in (os.path.join(link, 'page.md'), os.path.join(link, 'new', 'page.md')):
+            with self.only_allowed(allowed):
+                code, _, _, opener = run('llms.txt', dest, response=FakeResponse(b'x'))
+            self.assertEqual(code, 2, dest)
+            opener.assert_not_called()
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_missing_parents_created_inside_allowed_dir(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        dest = os.path.join(allowed, 'setup-audit-docs', 'en', 'page.md')
+        with self.only_allowed(allowed):
+            code, *_ = run('en/settings.md', dest, response=FakeResponse(b'# hi\n'))
+        self.assertEqual(code, 0)
+        with open(dest, 'rb') as f:
+            self.assertEqual(f.read(), b'# hi\n')
+        for d in (os.path.join(allowed, 'setup-audit-docs'), os.path.dirname(dest)):
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
+
+    def test_missing_parent_outside_allowed_dir_not_created(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        outside = tempfile.mkdtemp(prefix='fetchdoc.outside.')
+        dest = os.path.join(outside, 'new', 'page.md')
+        with self.only_allowed(allowed):
+            code, *_ = run('llms.txt', dest, response=FakeResponse(b'x'))
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(os.path.join(outside, 'new')))
+
+    def test_parent_not_created_when_fetch_fails(self):
+        allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
+        dest = os.path.join(allowed, 'new', 'page.md')
+        with self.only_allowed(allowed):
+            code, *_ = run('llms.txt', dest, response=FakeResponse(b'x', url='https://evil.example/x'))
+        self.assertEqual(code, 1)
+        self.assertFalse(os.path.exists(os.path.join(allowed, 'new')))
 
     def test_redirect_to_other_host_exit_1_nothing_written(self):
         code, *_ = run('llms.txt', self.out, response=FakeResponse(b'x', url='https://evil.example/llms.txt'))
@@ -119,6 +168,45 @@ class FetchDoc(unittest.TestCase):
                 mock.patch.dict(os.environ, {'TMPDIR': '/nonexistent-tmp'}):
             code, *_ = run('llms.txt', dest, response=FakeResponse(b'x'))
         self.assertEqual(code, 0)
+
+
+class SameHostRedirects(unittest.TestCase):
+    """The redirect handler itself, not just the final-URL check in main()."""
+
+    def redirect(self, newurl):
+        handler = fetch_doc._SameHostOnly()
+        req = urllib.request.Request('https://code.claude.com/docs/llms.txt')
+        return handler.redirect_request(req, None, 301, 'Moved', {}, newurl)
+
+    def test_off_host_https_refused(self):
+        with self.assertRaises(urllib.error.URLError):
+            self.redirect('https://evil.example/docs/llms.txt')
+
+    def test_same_host_http_refused(self):
+        with self.assertRaises(urllib.error.URLError):
+            self.redirect('http://code.claude.com/docs/llms.txt')
+
+    def test_same_host_https_allowed(self):
+        new = self.redirect('https://code.claude.com/docs/en/overview.md')
+        self.assertIsInstance(new, urllib.request.Request)
+        self.assertEqual(new.full_url, 'https://code.claude.com/docs/en/overview.md')
+
+
+class DocumentedInvocation(unittest.TestCase):
+    """SKILL.md and the docs map run the script like every other bundled script, into $TMPDIR."""
+
+    def test_every_fetch_doc_command_uses_skill_dir_and_tmpdir(self):
+        skill = os.path.dirname(SCRIPTS)
+        pattern = re.compile(r'python3 (\S+)/fetch_doc\.py (\S+) (\S+)')
+        for name in ('SKILL.md', os.path.join('references', 'docs-map.md')):
+            with open(os.path.join(skill, name)) as f:
+                text = f.read()
+            commands = pattern.findall(text)
+            self.assertTrue(commands, name)
+            self.assertEqual(len(commands), text.count('fetch_doc.py'), name)
+            for script_dir, _page, out in commands:
+                self.assertEqual(script_dir, '${CLAUDE_SKILL_DIR}/scripts', name)
+                self.assertTrue(out.startswith('"$TMPDIR/setup-audit-docs/'), (name, out))
 
 
 class Isolation(unittest.TestCase):

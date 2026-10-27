@@ -7,7 +7,8 @@ PAGE is `llms.txt` or a docs page path such as `en/settings-reference.md`. The s
 HTTPS GET to https://code.claude.com/docs/<PAGE> and writes the response bytes to OUT. It sends no
 user data (only a fixed User-Agent, no request body), reads no local file, imports no other plugin
 module and executes nothing it downloads. OUT must sit under a system temp directory, $TMPDIR or
-<Claude config dir>/audits. Exit 0 on success, 2 on bad arguments, 1 on fetch or write failure.
+<Claude config dir>/audits; missing parent directories of OUT inside those are created (mode 0700).
+Exit 0 on success, 2 on bad arguments, 1 on fetch or write failure.
 """
 import os
 import re
@@ -49,8 +50,21 @@ def _allowed_dirs():
 
 
 def _out_is_allowed(out):
+    # realpath resolves symlinks in the existing part of the path, so a missing parent is judged
+    # by where it would be created.
     parent = os.path.realpath(os.path.dirname(os.path.abspath(out)))
     return any(parent == d or parent.startswith(d + os.sep) for d in _allowed_dirs())
+
+
+def _make_parent(out):
+    # os.makedirs applies its mode only to the last directory, so create each missing one here.
+    missing = []
+    parent = os.path.dirname(os.path.abspath(out))
+    while not os.path.isdir(parent):
+        missing.append(parent)
+        parent = os.path.dirname(parent)
+    for directory in reversed(missing):
+        os.mkdir(directory, 0o700)
 
 
 def main(argv):
@@ -76,6 +90,11 @@ def main(argv):
         print(f"refused: response larger than {MAX_BYTES} bytes", file=sys.stderr)
         return 1
     try:
+        _make_parent(out)
+        if not _out_is_allowed(out):
+            print("refused: OUT's parent left the allowed directories while being created",
+                  file=sys.stderr)
+            return 1
         fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(body)

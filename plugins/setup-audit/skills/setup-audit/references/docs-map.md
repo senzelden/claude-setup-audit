@@ -1,14 +1,15 @@
 # Docs map — which page to fetch for which audit area
 
-Base: `https://code.claude.com/docs/en/<page>.md` (index: `llms.txt`, fetched with the same script: `fetch_doc.py llms.txt <scratchpad>/docs/llms.txt`).
+Base: `https://code.claude.com/docs/en/<page>.md` (index: `llms.txt`, fetched with the same script:
+`python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py llms.txt "$TMPDIR/setup-audit-docs/llms.txt"`).
 For **exact setting keys, rule syntax and defaults**, don't rely on WebFetch summaries. A small
 model writes those summaries, it has misnamed keys before (`effort` vs `effortLevel`), and large
 pages get truncated. Save the raw markdown with the bundled script (fixed host, no user data
 sent, reads no local file) and grep the saved file:
 
 ```bash
-python3 <plugin dir>/skills/setup-audit/scripts/fetch_doc.py en/settings-reference.md <scratchpad>/docs/settings-reference.md
-grep -n -i 'autoCompact\|effortLevel\|sandbox' <scratchpad>/docs/settings-reference.md
+python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py en/settings-reference.md "$TMPDIR/setup-audit-docs/settings-reference.md"
+grep -n -i 'autoCompact\|effortLevel\|sandbox' "$TMPDIR/setup-audit-docs/settings-reference.md"
 ```
 
 WebFetch is fine for overview pages (What's new, costs, best practices). If a URL 404s,
