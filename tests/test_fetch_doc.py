@@ -73,8 +73,12 @@ class FetchDoc(unittest.TestCase):
     def test_wrong_arg_count_exit_2(self):
         self.assertEqual(run('llms.txt', response=None)[0], 2)
 
+    @contextlib.contextmanager
     def only_allowed(self, allowed):
-        return mock.patch.object(fetch_doc, '_allowed_dirs', return_value={os.path.realpath(allowed)})
+        # Patch the configured spelling too: on macOS mkdtemp paths sit under /var -> /private/var.
+        with mock.patch.object(fetch_doc, '_allowed_spellings', return_value={os.path.abspath(allowed)}), \
+                mock.patch.object(fetch_doc, '_allowed_dirs', return_value={os.path.realpath(allowed)}):
+            yield
 
     def test_out_outside_allowed_dirs_exit_2(self):
         allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
@@ -101,8 +105,12 @@ class FetchDoc(unittest.TestCase):
     def test_missing_parents_created_inside_allowed_dir(self):
         allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
         dest = os.path.join(allowed, 'setup-audit-docs', 'en', 'page.md')
-        with self.only_allowed(allowed):
-            code, *_ = run('en/settings.md', dest, response=FakeResponse(b'# hi\n'))
+        old_umask = os.umask(0o022)  # a mode-less mkdir would then yield 0755 and fail below
+        try:
+            with self.only_allowed(allowed):
+                code, *_ = run('en/settings.md', dest, response=FakeResponse(b'# hi\n'))
+        finally:
+            os.umask(old_umask)
         self.assertEqual(code, 0)
         with open(dest, 'rb') as f:
             self.assertEqual(f.read(), b'# hi\n')
