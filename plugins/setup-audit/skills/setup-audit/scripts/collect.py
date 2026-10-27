@@ -93,16 +93,28 @@ class _AnyOf:
         return any(s(text) for s in self._searches)
 
 
+# Command heads behind two RISKY_RULES flags, as regex alternatives. The flags match allow rules
+# that let Claude run these commands with any arguments.
+NETWORK_TOOLS = ('curl', 'wget', 'nc', 'ssh', 'scp', 'rsync')
+HTTP_CLIENTS = ('curl', 'wget')
+INTERPRETERS = ('python3?', 'node', 'bash', 'sh', 'npx', 'uv run', r'\.venv/bin/python')
+
+
+def _heads(names):
+    return '(' + '|'.join(names) + ')'
+
+
 # (flag, regex over the rule text). Ordered roughly by severity.
 RISKY_RULES = [
     ("wildcard-all", re.compile(r"^Bash(\((\*|:\*)\))?$")),
     ("sudo", re.compile(r"\bsudo\b")),
     ("rm-recursive", re.compile(r"\brm\s+-[a-zA-Z]*r")),
-    ("network-wildcard", re.compile(r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")),
+    ("network-wildcard", re.compile(r"Bash\(" + _heads(NETWORK_TOOLS) + r"[ :]\*?\*?\)|Bash\("
+                                    + _heads(HTTP_CLIENTS) + r"[: ]\*")),
     ("git-destructive", re.compile(r"git (push|reset|clean|checkout --|rebase)")),
     ("gh-api", re.compile(r"\bgh (api|repo delete|release)")),
     # Matches `python3:*`, `python3 *`, and inline-code forms with or without a quote: `python3 -c *`, `python3 -c ' *`.
-    ("interpreter-wildcard", re.compile(r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-[ce]\s*['\"]?\s*)?\*")),
+    ("interpreter-wildcard", re.compile(r"Bash\(" + _heads(INTERPRETERS) + r"[ :]*(-[ce]\s*['\"]?\s*)?\*")),
     ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
     ("docker", re.compile(r"\bdocker\b")),
     ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),

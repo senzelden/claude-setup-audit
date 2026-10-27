@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-10-27
+
+The directory's scan of 0.13.2 passed its security scan and kept two holds: "Uses a credential
+from the user's machine" on `plugin.json`, and a download-and-run note on `collect.py`.
+
+### Changed
+
+- `plugin.json` drops the `direnv` keyword: next to the manifest's homepage and repository URLs
+  it matched the same per-file pairing as the files fixed in 0.13.2. The description and README
+  still name direnv.
+- `collect.py` builds its `network-wildcard` and `interpreter-wildcard` patterns from named
+  command lists (`NETWORK_TOOLS`, `HTTP_CLIENTS`, `INTERPRETERS`); the compiled patterns are
+  unchanged, which a test pins.
+
+### Fixed
+
+- `test_mods` no longer fails when a random temp-dir name contains "rm".
+
 ## [0.13.2] - 2026-10-27
 
 The directory's scan of 0.13.1 still held the version: "Uses a credential from the user's
@@ -798,7 +816,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...v0.13.0

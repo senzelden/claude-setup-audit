@@ -1,5 +1,6 @@
 import re
 import struct
+import sys
 import unittest
 from pathlib import Path
 
@@ -10,11 +11,12 @@ ICON = PLUGIN / '.claude-plugin/icon.png'
 # Plugin directory rules (claude.com/docs/plugins/pre-submission-checklist, fetched 2026-10-27):
 # a bundled image referenced from the plugin is held for a reviewer, and a credential source
 # named next to a network destination reads as "uses a credential from the user's machine". The
-# scanner matches per file: on 0.13.1 it flagged exactly the seven files CREDENTIAL_SOURCE and URL
-# both match. These guards keep each shipped file clear of both patterns.
+# scanner matches per file: on 0.13.1 and 0.13.2 it flagged exactly the files CREDENTIAL_SOURCE and
+# URL both match (plugin.json through its `direnv` keyword). These guards keep each shipped file
+# clear of both patterns.
 IMAGE_OR_FONT_PATH = re.compile(r'\.(png|jpe?g|gif|webp|woff2?|ttf|otf|ico)\b', re.I)
 CREDENTIAL_SOURCE = re.compile(
-    r'\.claude\.json|\.envrc|\.credentials\.json'
+    r'\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b'
     r'|\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY)[A-Z0-9_]*\b|\b[A-Z0-9_]+_KEY\b')
 URL = re.compile(r'https?://')
 
@@ -51,6 +53,19 @@ class ShippedBundleTests(unittest.TestCase):
             source, url = CREDENTIAL_SOURCE.search(text), URL.search(text)
             self.assertFalse(source and url, '%s: %s with %s' % (
                 path.relative_to(ROOT), source and source.group(), url and url.group()))
+
+
+class RiskyRulePatterns(unittest.TestCase):
+    # collect.py builds these two patterns from named command lists (a regex that inlines download
+    # and interpreter commands reads to the scan as download-and-run); the regexes are unchanged.
+    def test_patterns_unchanged(self):
+        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
+        import collect
+        patterns = dict((flag, rx.pattern) for flag, rx in collect.RISKY_RULES if hasattr(rx, 'pattern'))
+        self.assertEqual(patterns['network-wildcard'],
+                         r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")
+        self.assertEqual(patterns['interpreter-wildcard'],
+                         r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-[ce]\s*['\"]?\s*)?\*")
 
 
 if __name__ == '__main__':
