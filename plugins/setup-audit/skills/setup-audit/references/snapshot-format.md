@@ -226,12 +226,11 @@ Inventory `truncated` can be a boolean; coverage families can use a count. See
 their coverage sources are `not_checked` with reason `cli_diagnostics_not_run_read_only`.
 The collector no longer launches CLI diagnostic commands because startup was observed to
 write configuration, backups and telemetry in a fake home (CLI 2.1.273, 2026-09-16).
-The official [CLI reference](https://code.claude.com/docs/en/cli-reference), checked on
+The official CLI reference (docs page `cli-reference`), checked on
 2026-09-16, describes `claude doctor` as read-only diagnostics; that description does not
 negate the observed startup writes. Existing local update metadata is still read as evidence,
 but is not proof of the currently running version. No version is inferred from install paths.
 
 Schema dialect and object/required/additional-property semantics checked 2026-09-16 against
-the [JSON Schema 2020-12 specification](https://json-schema.org/draft/2020-12) and
-[object reference](https://json-schema.org/understanding-json-schema/reference/object).
+the JSON Schema 2020-12 specification and the object reference in Understanding JSON Schema.
 This is the plugin's own data contract, not a Claude Code configuration schema.

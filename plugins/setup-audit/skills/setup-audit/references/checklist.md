@@ -22,7 +22,8 @@ readiness, cost metrics and harness overhead.
 
 - **SEC-risky-allow** (`permissions.risky` per settings file). Weigh by blast radius:
   - `wildcard-all`, `sudo`, `rm-recursive`
-  - `network-wildcard` (`curl:*` enables exfiltration and download-and-run)
+  - `network-wildcard` (a wildcard on a network tool lets Claude send data to any host and pull in
+    files without a prompt)
   - `interpreter-wildcard` (`python -c *` means arbitrary code)
   - `git-destructive` / `gh-api` (irreversible or outward-facing)
   - `docker` (root-equivalent on most hosts)
@@ -101,7 +102,7 @@ readiness, cost metrics and harness overhead.
 - **SEC-hooks** (`hook_handlers`, `allow_managed_hooks_only`): hooks run with the user's
   permissions, but the boundary differs by handler `type` (verified against the hooks docs) —
   weigh each differently rather than reporting all hooks generically:
-  - `command`: local execution boundary. Flag ones that fetch remote code, write outside the
+  - `command`: local execution boundary. Flag ones that run code from outside the plugin, write outside the
     project, or match every tool with a slow command.
   - Guards fail open by default: when a `command` or `http` hook can't start, times out or exits
     with an unexpected code, the action goes ahead on most events. For a `PreToolUse` or
@@ -256,13 +257,13 @@ readiness, cost metrics and harness overhead.
   largest capped field of the object. Do not add `hook_stdout` counts to the source rows' counts;
   use `plain` rows for hooks that print without injecting. Evidence: plugin (or `ambiguous`/`unattributed`), event, sessions and median
   estimated tokens per session (chars/4). SessionStart re-fires on `startup`, `resume`, `clear`,
-  `compact` and `fork` (https://code.claude.com/docs/en/hooks.md, fetched 2026-09-29), and its
+  `compact` and `fork` (docs page `hooks`, fetched 2026-09-29), and its
   `additionalContext` is added to context before the first prompt.
 - **COST-harness-overhead** (`harness_overhead`, measured and static): judge together
   - skill listing growth (`skill_listing_series` first -> last, and `last.chars` against the
     documented listing budget: 1% of the model's context window, raised by
     `skillListingBudgetFraction` or `SLASH_COMMAND_TOOL_CHAR_BUDGET`, each entry capped at 1,536
-    characters by default, configurable with `skillListingMaxDescChars`; https://code.claude.com/docs/en/skills.md, fetched
+    characters by default, configurable with `skillListingMaxDescChars`; docs page `skills`, fetched
     2026-09-29), with `per_plugin_skills` naming the largest contributors;
   - `model_spawning_hooks`: an enabled plugin hook that runs `claude -p`, the Agent SDK or the
     Anthropic API spends tokens outside the session; cite file, line and pattern id;
@@ -595,7 +596,7 @@ metric that motivated it, so the next run can check whether it moved.
     behavior per event"), so a script that merely exits 2 on an internal error can be flagged.
     Scripts are found by absolute plugin-root path or, after `cd "$CLAUDE_PLUGIN_ROOT" &&`, by
     relative path. `scan_gap` (`script_unresolved`, `script_truncated`, `no_local_script` for a
-    command such as `npx -y pkg hook` that names no plugin-local script) means part of the logic
+    package-launcher command that names no plugin-local script) means part of the logic
     was not read. A missing flag is never evidence that a hook does not decide or rewrite. These decisions do not appear in any rule list. Per the
     hooks docs, a hook's `allow` does not override deny or ask rules, and `updatedInput` replaces
     the whole tool input and is what permission rules are then checked against (hooks docs

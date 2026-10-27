@@ -21,14 +21,14 @@ coverage rather than stopping collection. These checks are not a full settings v
 
 Verified 2026-09-15 against official documentation:
 
-- [Managed settings](https://code.claude.com/docs/en/managed-settings): system directories are
+- Managed settings (docs page `managed-settings`): system directories are
   `/etc/claude-code` on Linux/WSL and `/Library/Application Support/ClaudeCode` on macOS.
   Read `managed-settings.json`, then non-hidden `*.json` entries in `managed-settings.d/`
   alphabetically. Windows files/registry are not implemented here. Server, MDM/registry,
   helper and embedding-host policy remain unchecked. Helpers must never be executed by this
   audit. Managed-source selection and opt-in composition prevent treating local files as
   effective policy; this collector does not reproduce those rules.
-- [Settings precedence](https://code.claude.com/docs/en/settings): managed policy generally
+- Settings precedence (docs page `settings`): managed policy generally
   outranks other scopes, with security-sensitive exceptions. `/status` reports loaded sources;
   file presence alone cannot establish that a source applied to the audited session.
 
@@ -110,8 +110,8 @@ omitted entries; `basis: static`). It reads settings text only.
   project directories are separate stacks.
 - Overlaps cover only exact, tool and single-trailing-wildcard Bash cases, so a missing overlap is
   not proof of none. Extension handler caps (100 per component) can hide a duplicate.
-- Documentation baseline: the permissions, errors and hooks pages at
-  `https://code.claude.com/docs/en/`, fetched 2026-09-30. The collector never runs hooks or
+- Documentation baseline: the docs pages `permissions`, `errors` and `hooks` (base in
+  docs-map.md), fetched 2026-09-30. The collector never runs hooks or
   evaluates rules against real commands; effects come from the quoted docs.
 
 ## Learning ledger counts
@@ -163,14 +163,14 @@ Project discovery remains a bounded sample (three transcripts/directory, 401 rec
 session metadata); it does not enumerate every possible working directory.
 
 Verified 2026-09-15:
-[Memory](https://code.claude.com/docs/en/memory) documents ancestor/local instruction loading,
+Memory (docs page `memory`) documents ancestor/local instruction loading,
 nested and path-scoped rules, imports and worktree-local files. AGENTS.md behaviour (read when no
 CLAUDE.md family file is in the cwd or above, since v2.1.277, and the `instructionFiles` values) was
 checked 2026-09-28 against the same page.
-[Settings](https://code.claude.com/docs/en/settings) documents main-checkout local settings,
+Settings (docs page `settings`) documents main-checkout local settings,
 working-directory shared settings, and version/ownership exceptions. These are candidates,
 not a reimplementation of runtime selection.
-[Skills](https://code.claude.com/docs/en/skills) documents invocation controls and `allowed-tools`
+Skills (docs page `skills`) documents invocation controls and `allowed-tools`
 as permission grants, not a restriction on available tools. Inspect these excerpts for broad
 grants; never execute a skill or its dynamic context to inspect it.
 
@@ -339,9 +339,9 @@ of `prependPlugins`/`appendPlugins`.
 Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 
-Verified 2026-09-15 against [MCP](https://code.claude.com/docs/en/mcp) (user and per-project
+Verified 2026-09-15 against MCP (docs page `mcp`) (user and per-project
 local definitions in `.claude.json`, project `.mcp.json`) and
-[plugin reference](https://code.claude.com/docs/en/plugins-reference) (inline/custom component
+plugin reference (docs page `plugins-reference`) (inline/custom component
 locations). Installed-registry list records and field types were separately observed locally
 on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.
 Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime

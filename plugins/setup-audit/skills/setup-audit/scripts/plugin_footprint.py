@@ -7,7 +7,7 @@ here executes a plugin, a hook or a script; scripts are read as bounded text.
 
 Fingerprints below come from docs/research/2026-10-25-plugin-side-effects.md (survey of plugin
 sources, 2026-10-25). Anything weaker than a named file or key is deliberately not here.
-Hook semantics: https://code.claude.com/docs/en/hooks.md, fetched 2026-10-25 (PreToolUse
+Hook semantics: docs page `hooks`, fetched 2026-10-25 (PreToolUse
 `permissionDecision` and `updatedInput`, PermissionRequest decision control, 10,000-character
 output cap, `timeout` in seconds).
 """

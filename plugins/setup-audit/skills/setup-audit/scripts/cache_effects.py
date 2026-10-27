@@ -2,9 +2,9 @@
 """Cache effect of a configuration change, from the Claude Code docs. Inform only.
 
 Every row traces to a sentence in the raw docs fetched 2026-10-25:
-  prompt-caching  https://code.claude.com/docs/en/prompt-caching.md
-  settings        https://code.claude.com/docs/en/settings.md ("When edits take effect")
-  permissions     https://code.claude.com/docs/en/permissions.md
+  prompt-caching  docs page `prompt-caching`
+  settings        docs page `settings` ("When edits take effect")
+  permissions     docs page `permissions`
 Anything not covered is `unknown`; this module never guesses. Nothing here gates a change:
 callers print the effect next to each op and apply it regardless.
 

@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-27
+
+The directory's scan of 0.13.1 still held the version: "Uses a credential from the user's
+machine" on seven files, a download-and-run note on two, and a reviewer look at the listing icon
+because `plugin.json` referred to it. Rules from the directory's pre-submission checklist
+(fetched 2026-10-27). No code was disguised; audit behaviour and snapshot output are unchanged.
+
+### Added
+
+- A README in the plugin folder: the listing description, an install line, and what the plugin
+  reads, runs, writes and sends (the directory scans only the plugin folder).
+
+### Changed
+
+- Files that name a credential-bearing file or variable cite docs by page name (docs page
+  `hooks`) instead of by URL; `docs-map.md` holds the base URL. On 0.13.1 the scan flagged
+  exactly the files that paired such a name with a URL, and a regression test now keeps every
+  shipped file clear of that pairing and of image or font paths.
+- The listing icon stays at `.claude-plugin/icon.png`, which the directory picks up by default,
+  without an `icon` field in `plugin.json`.
+- Three checklist passages describe the network-wildcard risk, package-launcher hooks and remote
+  code in words instead of a command example.
+
 ## [0.13.1] - 2026-10-27
 
 These changes respond to the plugin directory's automated review of 0.13.0, which held the
@@ -775,7 +798,8 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.11.0...v0.12.0

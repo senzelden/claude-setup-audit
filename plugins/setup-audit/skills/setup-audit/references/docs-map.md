@@ -2,6 +2,7 @@
 
 Base: `https://code.claude.com/docs/en/<page>.md` (index: `llms.txt`, fetched with the same script:
 `python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py llms.txt "$TMPDIR/setup-audit-docs/llms.txt"`).
+Other references cite a page by name, such as docs page `hooks`; resolve it against this base.
 For **exact setting keys, rule syntax and defaults**, don't rely on WebFetch summaries. A small
 model writes those summaries, it has misnamed keys before (`effort` vs `effortLevel`), and large
 pages get truncated. Save the raw markdown with the bundled script (fixed host, no user data

@@ -1,8 +1,8 @@
 """Static configuration checks: hook handler validation and fingerprints, cross-layer conflicts.
 
 Pure functions over settings JSON and collector summaries. Stdlib only; never runs a hook.
-Documentation baseline: https://code.claude.com/docs/en/hooks.md and
-https://code.claude.com/docs/en/permissions.md, both fetched 2026-09-29, re-verified 2026-09-30.
+Documentation baseline: docs page `hooks` and
+docs page `permissions`, both fetched 2026-09-29, re-verified 2026-09-30.
 """
 import hashlib
 import json
@@ -369,7 +369,7 @@ def conflicts(stacks, redact):
             'permission_overlaps': perms, 'permission_overlaps_omitted': perms_omitted}
 
 
-# settings-reference.md (https://code.claude.com/docs/en/settings-reference.md, fetched 2026-10-24), the
+# settings-reference.md (docs page `settings-reference`, fetched 2026-10-24), the
 # key table's Scope column and each key's `* **Scope**:` line; every key whose scope is not `Any file`.
 # Scope vocabulary: user_or_managed = "User or managed", managed = "Managed", global_config = "Global
 # config" (lives in ~/.claude.json: "Claude Code ignores them anywhere else"), user_local_managed =

@@ -599,7 +599,7 @@ def summarize_settings(path, data=None, managed=False):
 
 
 # Locations and drop-in rules verified 2026-09-15:
-# https://code.claude.com/docs/en/managed-settings
+# docs page `managed-settings`
 MANAGED_MAX_BYTES = 1024 * 1024
 MANAGED_MAX_FILES = 100
 
