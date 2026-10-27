@@ -1,7 +1,6 @@
 """Privacy helpers: contextual secret detection (both modes) and metadata-only masking. Stdlib only."""
 import hmac
 import math
-import os
 import posixpath
 import re
 import secrets
@@ -382,31 +381,11 @@ KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + T
 # agent and MCP server names, and free text (hook commands, rule text), which --metadata-only masks and
 # which in full mode only has known home and project prefixes replaced (scrub_known_paths).
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
-SALT_MIN_BYTES = 16
-SALT_READ_LIMIT = 1 << 20
 
 
-class SaltError(ValueError):
-    """The salt file is missing, unreadable, empty or too short."""
-
-
-def resolve_salt(path):
-    """(salt bytes, 'per_run' | 'file'). A salt file must already exist; this never creates one."""
-    if path is None:
-        return secrets.token_bytes(32), 'per_run'
-    path = os.path.abspath(os.path.expanduser(path))
-    try:
-        with open(path, 'rb') as f:
-            raw = f.read(SALT_READ_LIMIT)
-    except OSError as exc:
-        raise SaltError(f'cannot read salt file {path}: {exc.strerror or type(exc).__name__}; '
-                        'create it yourself (collect.py never writes it)') from None
-    salt = raw.strip()
-    if not salt:
-        raise SaltError(f'salt file {path} is empty')
-    if len(salt) < SALT_MIN_BYTES:
-        raise SaltError(f'salt file {path} holds fewer than {SALT_MIN_BYTES} bytes of salt')
-    return salt, 'file'
+def new_salt():
+    """A fresh random salt for one run; it is never stored, so tags join within one snapshot only."""
+    return secrets.token_bytes(32)
 
 
 class PathHasher:

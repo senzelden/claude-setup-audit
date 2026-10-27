@@ -23,9 +23,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   Hook handler entries carry `server`, `tool` (mcp_tool) and `target_origin` (http) so masked
   targets stay identifiable. Contextual detection replaces a labelled literal secret with
   `[REDACTED:context]` in every mode. Additive within snapshot v1.
-- `coverage.privacy` also carries `hashed_paths: true`, `hashed_path_families` (family -> count of
-  hashed values and keys) and `hash_salt` (`per_run` or `file`) when collected with `--hash-paths`
-  (works with or without `--metadata-only`); the keys are absent otherwise. The salt is never stored.
+- `coverage.privacy` also carries `hashed_paths: true` and `hashed_path_families` (family -> count
+  of hashed values and keys) when collected with `--hash-paths` (works with or without
+  `--metadata-only`); the keys are absent otherwise. Each run uses a new random salt that is never
+  stored.
   Path-like kept strings become `h:<12 hex>`, the first 48 bits of HMAC-SHA256(salt, normalized value);
   `~/x` and `<home>/x` hash equal, so the same string gets the same tag everywhere in one snapshot (a
   relative value such as `src/app.py` hashes equal in every repo that has it) and
@@ -59,9 +60,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   whole file name, `a`/`b` one tag of the whole string, and `shared` (name-derived words) is emptied
   while `shared_count` keeps how many there were.
 
-  Consumers: tags join within one snapshot. Across audits they match only with the same
-  `--hash-salt-file` (the compare-between-audits check needs equal `projects_collected`, so a
-  per-run salt turns comparison off with "Collected projects differ"). `prune_permissions.py
+  Consumers: tags join within one snapshot and never across audits (the compare-between-audits
+  check needs equal `projects_collected`, so it turns off with "Collected projects differ"). `prune_permissions.py
   --snapshot` and project-scoped `ledger.py` refuse a hashed snapshot (they open or match real paths);
   `query_snapshot.py` prints a `hashed paths` line first. Additive within snapshot v1.
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry

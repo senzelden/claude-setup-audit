@@ -35,9 +35,6 @@ class CanaryHome(PatchedHome):
         collect.HOME, collect.CLAUDE = self.home, self.claude
         self.root = os.path.join(self.home, 'code', PROJ)
         self.key = re.sub(r'[^A-Za-z0-9]', '-', self.root)
-        self.salt_file = os.path.join(self.tmp.name, 'salt')
-        with open(self.salt_file, 'w') as f:
-            f.write('a-long-enough-test-salt-value-one\n')
         self.plant()
 
     def plant(self):
@@ -108,7 +105,6 @@ class CanaryHome(PatchedHome):
         return collect.build_snapshot(args(roots=[self.root], **kw))
 
     def hashed(self, **kw):
-        kw.setdefault('hash_salt_file', self.salt_file)
         return self.snap(hash_paths=True, **kw)
 
 
@@ -133,9 +129,6 @@ class Canaries(CanaryHome):
                 self.assertEqual([c for c in LOOP_CANARIES if c in json.dumps(snap)], [])
                 if mode.get('hash_paths'):
                     self.assertEqual([k for k in loops['by_project'] if not TAG_RE.match(k)], [])
-
-    def test_per_run_salt_snapshot_hides_canaries_too(self):
-        self.assertEqual([c for c in CANARIES if c in json.dumps(self.snap(hash_paths=True))], [])
 
     def test_dead_refs_are_hashed_but_the_excerpt_text_is_free_text(self):
         plain, hashed = self.snap(), self.hashed()
@@ -190,11 +183,6 @@ class Joins(CanaryHome):
         self.assertEqual(rh['env_error_hits'], 1)
         self.assertEqual(rp['test_run_seconds'], rh['test_run_seconds'])
 
-    def test_equal_inputs_hash_equal_across_runs_with_a_salt_file(self):
-        first, second = self.hashed(), self.hashed()
-        self.assertEqual(list(first['projects']), list(second['projects']))
-        self.assertEqual(first['global']['settings'][0]['path'], second['global']['settings'][0]['path'])
-
     def test_home_relative_and_absolute_forms_hash_equal(self):
         h = privacy.PathHasher(b'k' * 16, '/h/u')
         self.assertEqual(h('~/code/app'), h('/h/u/code/app'))
@@ -202,11 +190,8 @@ class Joins(CanaryHome):
         self.assertNotEqual(h('/h/u/code/app'), h('/h/u/code/other'))
 
     def test_different_salts_differ(self):
-        other = os.path.join(self.tmp.name, 'salt2')
-        with open(other, 'w') as f:
-            f.write('another-long-enough-salt-value-two')
-        a, b = self.hashed(), self.hashed(hash_salt_file=other)
-        self.assertNotEqual(list(a['projects']), list(b['projects']))
+        a, b = privacy.PathHasher(b'k' * 16, '/h'), privacy.PathHasher(b'j' * 16, '/h')
+        self.assertNotEqual(a('/h/code/app'), b('/h/code/app'))
 
     def test_per_run_salts_differ(self):
         a, b = self.snap(hash_paths=True), self.snap(hash_paths=True)
@@ -263,8 +248,7 @@ class Review(CanaryHome):
     def test_collection_scope_project_joins_with_projects(self):
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.home)  # a relative --project: its own hash would not equal the resolved root's
-        snap = collect.build_snapshot(args(scope='project', project=f'code/{PROJ}', hash_paths=True,
-                                           hash_salt_file=self.salt_file))
+        snap = collect.build_snapshot(args(scope='project', project=f'code/{PROJ}', hash_paths=True))
         self.assertEqual([snap['collection_scope']['project']], list(snap['projects']))
 
     def test_scrub_counts_are_recorded(self):
@@ -378,15 +362,16 @@ class FailClosed(PatchedHome):
 
 
 class Coverage(CanaryHome):
-    def test_records_families_and_salt_kind_but_never_the_salt(self):
-        for kw, kind in (({}, 'file'), ({'hash_salt_file': None}, 'per_run')):
-            snap = self.hashed(**kw)
-            p = snap['coverage']['privacy']
-            self.assertIs(p['hashed_paths'], True)
-            self.assertEqual(p['hash_salt'], kind)
-            self.assertEqual(set(p['hashed_path_families']), {*privacy.PATH_FAMILIES, *privacy.EXTRA_COUNTERS})
-            self.assertNotIn('a-long-enough-test-salt', json.dumps(snap))
-            snapshot_contract.validate_snapshot(snap)
+    def test_records_families_but_never_the_salt(self):
+        salt = b'zc-recognizable-test-salt-bytes!'
+        with mock.patch.object(privacy.secrets, 'token_bytes', return_value=salt):
+            snap = self.hashed()
+        p = snap['coverage']['privacy']
+        self.assertIs(p['hashed_paths'], True)
+        self.assertNotIn('hash_salt', p)
+        self.assertEqual(set(p['hashed_path_families']), {*privacy.PATH_FAMILIES, *privacy.EXTRA_COUNTERS})
+        self.assertNotIn('zc-recognizable', json.dumps(snap))
+        snapshot_contract.validate_snapshot(snap)
 
     def test_unhashed_snapshot_says_nothing_about_hashing(self):
         self.assertNotIn('hashed_paths', self.snap()['coverage']['privacy'])
@@ -432,7 +417,9 @@ class Vocabulary(CanaryHome):
         self.assertEqual(h(tag), tag)
 
 
-class SaltFile(CanaryHome):
+class HashCli(CanaryHome):
+    """0.14.2: hashing salts each run afresh; there is no option to read a salt (a key) from a file."""
+
     def run_main(self, *argv):
         err = io.StringIO()
         with mock.patch.object(sys, 'argv', ['collect.py', '--days', '30', '--scope', 'global', *argv]), \
@@ -441,45 +428,27 @@ class SaltFile(CanaryHome):
                 collect.main()
         return cm.exception.code, err.getvalue()
 
-    def test_missing_salt_file_fails_and_is_never_created(self):
-        path = os.path.join(self.tmp.name, 'nope')
+    def test_salt_file_option_is_gone(self):
+        path = os.path.join(self.tmp.name, 'salt')
+        with open(path, 'w') as f:
+            f.write('a-long-enough-test-salt-value-one\n')
         code, err = self.run_main('--hash-paths', '--hash-salt-file', path)
-        self.assertNotIn(code, (0, None))
-        self.assertIn('salt', err)
-        self.assertFalse(os.path.exists(path))
+        self.assertEqual(code, 2)
+        self.assertIn('unrecognized arguments', err)
+        self.assertFalse(hasattr(privacy, 'resolve_salt'))
 
-    def test_empty_whitespace_short_and_unreadable_salts_fail(self):
-        for name, content in (('empty', ''), ('blank', ' \n\n'), ('short', 'abc\n')):
-            path = os.path.join(self.tmp.name, name)
-            with open(path, 'w') as f:
-                f.write(content)
-            with self.subTest(name=name):
-                code, err = self.run_main('--hash-paths', '--hash-salt-file', path)
-                self.assertNotIn(code, (0, None))
-                self.assertIn('salt', err)
-        code, err = self.run_main('--hash-paths', '--hash-salt-file', self.tmp.name)  # a directory
-        self.assertNotIn(code, (0, None))
-        self.assertIn('salt', err)
-
-    def test_salt_file_without_hash_paths_is_a_usage_error(self):
-        code, err = self.run_main('--hash-salt-file', self.salt_file)
-        self.assertNotIn(code, (0, None))
-        self.assertIn('--hash-paths', err)
-
-    def test_build_snapshot_raises_for_a_bad_salt_file(self):
-        with self.assertRaises(privacy.SaltError):
-            self.snap(hash_paths=True, hash_salt_file=os.path.join(self.tmp.name, 'nope'))
-
-    def test_trailing_newline_does_not_change_the_salt(self):
-        other = os.path.join(self.tmp.name, 'nonl')
-        with open(other, 'w') as f:
-            f.write('a-long-enough-test-salt-value-one')
-        self.assertEqual(list(self.hashed()['projects']), list(self.hashed(hash_salt_file=other)['projects']))
+    def test_build_snapshot_ignores_a_salt_file_attribute(self):
+        path = os.path.join(self.tmp.name, 'salt')
+        with open(path, 'w') as f:
+            f.write('a-long-enough-test-salt-value-one\n')
+        with mock.patch('builtins.open', wraps=open) as opened:
+            self.snap(hash_paths=True, hash_salt_file=path)
+        self.assertNotIn(path, [c.args[0] for c in opened.call_args_list if c.args])
 
     def test_cli_writes_a_valid_hashed_snapshot(self):
         out = os.path.join(self.tmp.name, 'snap.json')
         with mock.patch.object(sys, 'argv', ['collect.py', '--scope', 'project', '--project', self.root, '--out', out,
-                                              '--hash-paths', '--hash-salt-file', self.salt_file]), \
+                                              '--hash-paths']), \
                 contextlib.redirect_stdout(io.StringIO()):
             collect.main()
         with open(out) as f:
@@ -540,15 +509,14 @@ class Docs(unittest.TestCase):
     def test_snapshot_format_lists_every_family(self):
         text = self.read('references', 'snapshot-format.md')
         self.assertEqual([f for f in (*privacy.PATH_FAMILIES, *privacy.EXTRA_COUNTERS) if f'`{f}`' not in text], [])
-        for word in ('hashed_paths', 'hash_salt', '--hash-salt-file', 'h:<12 hex>'):
+        for word in ('hashed_paths', 'h:<12 hex>'):
             self.assertIn(word, text)
 
-    def test_skill_offers_the_flags_and_never_creating_a_salt(self):
+    def test_skill_offers_the_flag(self):
         skill = self.read('SKILL.md')
         self.assertIn('| `hash_paths` |', skill)
         self.assertIn('--hash-paths', skill)
-        self.assertIn('--hash-salt-file', skill)
-        self.assertIn('Never create or print a salt', skill)
+
 
     def test_coverage_documents_what_degrades(self):
         self.assertIn('`--hash-paths`', self.read('references', 'coverage.md'))

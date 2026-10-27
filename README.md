@@ -212,9 +212,9 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
   markers, so those checks are partial or not checked. Paths, names and counts are still collected.
   Secret detection (patterns plus a contextual detector that yields `[REDACTED:context]`) runs in both
   modes and is best-effort. It cannot be combined with `clarity=pilot`.
-- **Hashed paths** (`hash_paths=on`, or `collect.py --hash-paths [--hash-salt-file FILE]`): project roots, config
-  file paths, transcript keys and file names become salted `h:<12 hex>` tags that still join within one snapshot;
-  a per-run salt by default, or your own existing salt file for tags that match across audits.
+- **Hashed paths** (`hash_paths=on`, or `collect.py --hash-paths`): project roots, config file paths,
+  transcript keys and file names become salted `h:<12 hex>` tags that still join within one snapshot. Each
+  run uses a new salt, so tags don't match across audits.
 
 ## Measured, not guessed
 

@@ -23,6 +23,8 @@ URL = re.compile(r'https?://')
 # endpoint plus its auth headers) and mod API calls written as an environment read beside a network
 # send. Kept out of shipped files from 0.14.1.
 EXPORT_VOCABULARY = re.compile(r'OTEL_|BETA_TRACING|GatewayUrl|\benv\.get\b|\bhttp\.fetch\b')
+# Also added in 0.11.0: --hash-salt-file read a key (the HMAC salt) from a user file. Gone from 0.14.2.
+SALT_FILE = re.compile(r'salt[ _-]file|hash-salt|hash_salt', re.I)
 
 
 def shipped_text_files():
@@ -61,6 +63,11 @@ class ShippedBundleTests(unittest.TestCase):
     def test_no_shipped_file_names_telemetry_export_or_mod_credential_calls(self):
         for path, text in shipped_text_files():
             match = EXPORT_VOCABULARY.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_file_offers_a_salt_file(self):
+        for path, text in shipped_text_files():
+            match = SALT_FILE.search(text)
             self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
 
 

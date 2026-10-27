@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-27
+
+The directory still held 0.14.1 for "uses a credential from the user's machine". The last 0.11.0
+addition that read a key from the user's files was the `--hash-paths` salt file, so it is gone.
+
+### Removed
+
+- `collect.py --hash-salt-file`. `--hash-paths` now always hashes with a new random salt per run,
+  so hashed tags join within one snapshot only and two hashed audits can't be compared. Unhashed
+  audits compare as before. `coverage.privacy.hash_salt` is no longer written.
+- A test keeps any salt-file option out of shipped files.
+
 ## [0.14.1] - 2026-10-27
 
 The directory still held 0.14.0 for "uses a credential from the user's machine". v0.10.1 was the

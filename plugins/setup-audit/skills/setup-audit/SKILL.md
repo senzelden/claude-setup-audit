@@ -80,8 +80,8 @@ local settings; it does not scan unrelated project trees:
 
 With `clarity=pilot`, add `--clarity-pilot` to this command; otherwise omit it.
 
-With `hash_paths=on`, add `--hash-paths`; add `--hash-salt-file <existing file>` only when the user supplies a salt
-file (stable tags across audits, needed to compare audits). Never create or print a salt. A hashed
+With `hash_paths=on`, add `--hash-paths`. Each run hashes with a new random salt, so tags match
+within one snapshot only and hashed audits can't be compared with each other. A hashed
 snapshot has no real paths: cite tags, say findings are tag-based, and do not offer apply steps
 that need a file path (`apply_ops.py`, `prune_permissions.py --snapshot`, project-scoped ledger entries) from it;
 recollect without `--hash-paths` for those, with the user's agreement.

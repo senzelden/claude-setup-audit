@@ -103,7 +103,7 @@ Hosted validation passed all eight jobs at `0022836`:
   `idleCompaction` and per-model auto-compact named as cost levers.
 - [x] Mods inventory (static scan of declared JS hook modules) and the built-in guard options
   from managed settings (`SEC-mods`).
-- [x] `--hash-paths` with an optional salt file; fails closed for path-like kept strings.
+- [x] `--hash-paths` (per-run salt; the optional salt file was removed in 0.14.2); fails closed for path-like kept strings.
 
 Hosted validation passed all eight jobs at `a794fa1`:
 [run](https://github.com/senzelden/claude-setup-audit/actions/runs/40169646133).

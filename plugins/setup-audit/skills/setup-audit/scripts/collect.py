@@ -699,7 +699,7 @@ def collect_managed_settings():
 
 HASH_PATHS_LIMITATION = (
     "Hashed paths: project roots, config file paths, transcript keys and file names are salted hash tags "
-    "(h:<12 hex>); tags join within this snapshot only, and across snapshots only with the same salt file. "
+    "(h:<12 hex>); tags join within this snapshot only (each run uses a new salt). "
     "Equal strings get equal tags, so a relative file name has the same tag in every repo. Full-mode free text "
     "(hook commands, excerpts) only has known home and project directories replaced; what follows a tag stays. "
     "Tools that open a path or compare projects between audits need a snapshot with real paths.")
@@ -2366,7 +2366,7 @@ def build_snapshot(a):
     if metadata_only and getattr(a, "clarity_pilot", False):
         raise ValueError("metadata-only excludes the clarity pilot")
     hash_paths = getattr(a, "hash_paths", False)
-    salt, salt_kind = privacy.resolve_salt(getattr(a, "hash_salt_file", None)) if hash_paths else (None, None)
+    salt = privacy.new_salt() if hash_paths else None
     _RAW_PERMISSIONS.clear()
     _LEDGER_CACHE.clear()
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
@@ -2479,7 +2479,7 @@ def build_snapshot(a):
         "marker": privacy.MARKER_FORMAT, "replaced_fields": replaced, "redactions": {}}
     if hash_paths:  # after every join and after masking; the salt itself is never stored
         families = privacy.hash_paths(snap, privacy.PathHasher(salt, HOME), roots, extra_dirs=[CLAUDE])
-        snap["coverage"]["privacy"].update(hashed_paths=True, hashed_path_families=families, hash_salt=salt_kind)
+        snap["coverage"]["privacy"].update(hashed_paths=True, hashed_path_families=families)
         snap["coverage"]["limitations"].append(HASH_PATHS_LIMITATION)
     if metadata_only:
         snap["coverage"]["sources"].append(
@@ -2505,7 +2505,6 @@ def main():
                     help="replace free text with length markers (prompts, rules, hook commands, descriptions, excerpts)")
     ap.add_argument("--hash-paths", action="store_true",
                     help="replace path-like kept strings (project roots, config file paths, transcript keys) with h:<12 hex> tags")
-    ap.add_argument("--hash-salt-file", help="read the --hash-paths salt from this existing file (stable tags across runs)")
     ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
     ap.add_argument("--drift-log", help="drift log to summarize (read-only)")
     ap.add_argument("--rate-limit-log", help="opt-in rate-limit log to analyze (read-only)")
@@ -2513,12 +2512,7 @@ def main():
     apply_collection_args(ap, a)
     if a.metadata_only and a.clarity_pilot:
         ap.error("--metadata-only cannot be combined with --clarity-pilot (the pilot reviews excerpt text)")
-    if a.hash_salt_file and not a.hash_paths:
-        ap.error("--hash-salt-file requires --hash-paths")
-    try:
-        text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
-    except privacy.SaltError as exc:
-        ap.error(f"--hash-salt-file: {exc}")
+    text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
     if a.out:
         _write_snapshot(a.out, text)
         print(f"wrote {a.out} ({len(text)//4} est. tokens)")
