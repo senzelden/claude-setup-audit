@@ -1,7 +1,8 @@
-"""config_names: the one names-only reader of credential-bearing configuration. Fake homes only."""
+"""config_names and the rule behind it: the audit reads no credential-bearing file or value. Fake homes only."""
+import ast
+import io
 import json
 import os
-import re
 import unittest
 from unittest import mock
 from test_collect import FakeHome, SCRIPTS, collect
@@ -10,156 +11,204 @@ import config_checks
 import config_names
 
 CANARY = 'CANARY-9f3e'
+CANARY_NAME = 'CANARY_NAME'
+
+# Heuristic for test_no_script_opens_credential_files (AST, every shipped scripts/*.py, none excepted):
+# a string constant naming ~/.claude.json or .envrc is flagged when it is an argument of a call that
+# opens or loads a file (open, os.open, read_json_object, json_object, load_json, read_text,
+# read_bytes, _read, json.load), or when it is assigned to a variable in a scope that makes such a
+# call. Constants used for classification, os.stat / git_status calls, messages and docstrings pass.
+SENSITIVE_NAMES = ('.claude.json', '.envrc')
+OPENERS = {'open', 'read_json_object', 'json_object', 'load_json', 'read_text', 'read_bytes', '_read', 'load'}
 
 
-class MappingNames(unittest.TestCase):
-    def test_mapping_names(self):
-        got = config_names.mapping_names({'A': 'sk-canary', 'B': '${TOKEN_VAR}', 'C': ''})
-        self.assertEqual(got, {'keys': ['A', 'B', 'C'], 'literal_keys': ['A'],
-                               'variable_references': ['TOKEN_VAR']})
-        self.assertNotIn('sk-canary', repr(got))
-
-    def test_non_mapping_has_no_names(self):
-        self.assertIsNone(config_names.mapping_names(['A=sk-canary']))
-        self.assertIsNone(config_names.mapping_names(None))
+def _call_name(node):
+    func = node.func
+    return func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ''
 
 
-class UserMcpServerNames(FakeHome):
-    def test_non_object_claude_json_has_no_names(self):
-        for data in ([1], 'text', 7, {'mcpServers': ['a']}):
-            self.write('.claude.json', data)
-            self.assertEqual(config_names.user_mcp_server_names(self.home), [], data)
-        self.write('.claude.json', {'mcpServers': {'b': {}, 'a': {}}})
-        self.assertEqual(config_names.user_mcp_server_names(self.home), ['a', 'b'])
+def _scopes(tree):
+    """Node lists to inspect: the module body without its functions, then each function whole."""
+    yield [n for top in tree.body if not isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef))
+           for n in ast.walk(top)]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield list(ast.walk(node))
 
 
-class CanaryNeverLeaves(FakeHome):
-    """A canary value in every credential-bearing source never leaves config_names or reaches the snapshot."""
+def shipped_trees():
+    for name in sorted(os.listdir(SCRIPTS)):
+        if name.endswith('.py'):
+            with open(os.path.join(SCRIPTS, name)) as f:
+                yield name, ast.parse(f.read())
 
-    def test_canary_never_leaves_module(self):
+
+def _sensitive_constants(root, docs=()):
+    return [n for n in ast.walk(root) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docs and any(s in n.value for s in SENSITIVE_NAMES)]
+
+
+def credential_file_opens(tree):
+    hits = []
+    for nodes in _scopes(tree):
+        docs = {id(n.value) for n in nodes if isinstance(n, ast.Expr)}  # docstrings and bare strings
+        calls = [n for n in nodes if isinstance(n, ast.Call) and _call_name(n) in OPENERS]
+        for call in calls:  # the name is passed straight to the call
+            hits += [c.lineno for arg in [*call.args, *(k.value for k in call.keywords)]
+                     for c in _sensitive_constants(arg, docs)]
+        if calls:  # the name is built into a variable that the same scope may then open
+            hits += [c.lineno for n in nodes if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
+                     for c in _sensitive_constants(n.value, docs)]
+    return hits
+
+
+CREDENTIAL_KEYS = ('env', 'headers', 'oauth')
+
+
+def credential_value_reads(tree):
+    hits = []
+    allowed = {id(n) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and f.name == 'documented_env_set'
+               for n in ast.walk(f)}
+    for node in ast.walk(tree):
+        if id(node) in allowed:
+            continue
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value in CREDENTIAL_KEYS:
+            hits.append(node.lineno)
+        elif (isinstance(node, ast.Call) and _call_name(node) == 'get' and node.args
+              and isinstance(node.args[0], ast.Constant) and node.args[0].value in CREDENTIAL_KEYS):
+            hits.append(node.lineno)
+        elif (isinstance(node, ast.Name) and node.id == 'mapping_names') or (
+                isinstance(node, ast.Attribute) and node.attr == 'mapping_names'):
+            hits.append(node.lineno)
+    return hits
+
+
+class StaticGuards(unittest.TestCase):
+    def test_no_script_opens_credential_files(self):
+        for name, tree in shipped_trees():
+            self.assertEqual(credential_file_opens(tree), [], name)
+
+    def test_open_guard_catches_known_shapes(self):
+        for code in ("def f(home):\n    return load_json(os.path.join(home, '.claude.json'))",
+                     "def f(root):\n    p = root + '/.envrc'\n    with open(p) as h:\n        return h.read()",
+                     "def f(home):\n    return read_json_object(f'{home}/.claude.json')",
+                     "P = '.envrc'\ntext = Path(P).read_text()"):
+            self.assertTrue(credential_file_opens(ast.parse(code)), code)
+        for code in ("def f(root):\n    return os.path.isfile(os.path.join(root, '.envrc'))",
+                     "def f(root):\n    return git_status(root, '.envrc')",
+                     "NAMES = ('.mcp.json', '.claude.json')\ndef f(base):\n    return base in NAMES"):
+            self.assertFalse(credential_file_opens(ast.parse(code)), code)
+
+    def test_no_script_reads_credential_values(self):
+        for name, tree in shipped_trees():
+            self.assertEqual(credential_value_reads(tree), [], name)
+
+    def test_value_guard_catches_known_shapes(self):
+        for code in ("x = d.get('env')", 'x = d.get("headers")', "x = d['env']", 'x = d["headers"]',
+                     "x = d.get('oauth')", "x = d['oauth']", "mapping_names(d)", "config_names.mapping_names(d)"):
+            self.assertTrue(credential_value_reads(ast.parse(code)), code)
+        for code in ("x = d.get('envrc')", "x = d['headersHelper']", "KEYS = ('env', 'headers')"):
+            self.assertFalse(credential_value_reads(ast.parse(code)), code)
+
+
+class FakeHomeCanary(FakeHome):
+    def build(self):
         root = os.path.join(self.home, 'repo')
-        server = {'type': 'http', 'url': f'https://mcp.example.com/p?k={CANARY}',
-                  'env': {'MCP_ENV_NAME': CANARY, 'MCP_REF_NAME': '${MCP_VAR}'},
-                  'headers': {'X-Mcp-Header': CANARY}, 'args': ['--key', CANARY],
-                  'oauth': {'clientId': CANARY, 'scopes': 'read'}}
+        server = {'type': 'http', 'url': 'https://mcp.example.com/p', 'oauth': {'clientId': CANARY},
+                  'env': {CANARY_NAME: CANARY}, 'headers': {CANARY_NAME: CANARY}}
         self.write('.claude.json', {'mcpServers': {'usersrv': server},
                                     'projects': {root: {'mcpServers': {'localsrv': server},
                                                         'hasTrustDialogAccepted': True}}})
         self.write('repo/.mcp.json', {'mcpServers': {'projectsrv': server}})
-        hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {'X-Hook-Header': CANARY}}
-        settings = {'env': {'SETTINGS_ENV_NAME': CANARY},
+        hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {CANARY_NAME: CANARY},
+                'allowedEnvVars': [CANARY_NAME]}
+        settings = {'env': {CANARY_NAME: CANARY, 'CLAUDE_CODE_SUBAGENT_MODEL': 'haiku'},
                     'hooks': {'Stop': [{'hooks': [hook]}]}}
         self.write('.claude/settings.json', settings)
         self.write('repo/.claude/settings.json', settings)
-        self.write('repo/.envrc', f'export ENVRC_API_KEY={CANARY}-long-enough\nexport PLAIN_NAME={CANARY}\n')
-        managed_dir = os.path.join(self.home, 'managed')
-        self.write('managed/managed-mcp.json', {'mcpServers': {'managedsrv': server}})
-        plugin_root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
-        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {
-            'demo@market': [{'scope': 'user', 'installPath': plugin_root, 'version': '1'}]}})
-        self.write('.claude/plugins/cache/market/demo/1/.claude-plugin/plugin.json',
-                   {'name': 'demo', 'mcpServers': {'inlinesrv': server}})
-        self.write('.claude/plugins/cache/market/demo/1/.mcp.json', {'pluginfilesrv': server})
+        self.write('repo/.envrc', f'export {CANARY_NAME}={CANARY}-long-enough\nuse_pass CANARY_PASS x\n')
+        return root, server, hook, settings
 
-        returns = [config_names.mapping_names(server['env']), config_names.mapping_names(server['headers']),
-                   config_names.server_facts(server), config_names.user_mcp_state(self.home),
-                   config_names.user_mcp_server_names(self.home), config_names.settings_env_names(settings),
-                   config_names.hook_header_names(hook), config_names.envrc_names(root)]
-        for value in returns:
-            self.assertNotIn(CANARY, repr(value))
-        # Not vacuous: the names did come through.
-        self.assertIn('MCP_ENV_NAME', repr(returns[3]))
-        self.assertIn('ENVRC_API_KEY', repr(returns[-1]))
+    def test_fake_home_canary(self):
+        root, *_ = self.build()
+        opened = []
+        real_open, real_os_open = open, os.open
 
-        returns.append(config_names.server_map({'mcpServers': {'managedsrv': server}}))
-        returns.append(config_names.hook_handler_view(hook))
-        for value in returns[-2:]:
-            self.assertNotIn(CANARY, repr(value))
+        def spy_open(file, *args, **kwargs):
+            opened.append(str(file))
+            return real_open(file, *args, **kwargs)
 
-        with mock.patch.object(collect, 'managed_directory', lambda: managed_dir):
+        def spy_os_open(path, *args, **kwargs):
+            opened.append(str(path))
+            return real_os_open(path, *args, **kwargs)
+
+        with mock.patch('builtins.open', spy_open), mock.patch.object(io, 'open', spy_open), \
+                mock.patch('os.open', spy_os_open):
             snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
-        self.assertNotIn(CANARY, snap)
-        for name in ('MCP_ENV_NAME', 'X-Mcp-Header', 'SETTINGS_ENV_NAME', 'X-Hook-Header', 'ENVRC_API_KEY',
-                     'usersrv', 'localsrv', 'projectsrv', 'managedsrv', 'inlinesrv', 'pluginfilesrv'):
-            self.assertIn(name, snap)
+        self.assertFalse([p for p in opened if p.endswith(('.claude.json', '.envrc'))])
+        self.assertTrue(any(p.endswith('.mcp.json') for p in opened))  # not vacuous: other configs are read
+        for text in (CANARY, CANARY_NAME, 'CANARY_PASS', 'usersrv', 'localsrv'):
+            self.assertNotIn(text, snap)
+        self.assertIn('projectsrv', snap)
+
+    def test_helpers_return_no_canary(self):
+        _, server, hook, settings = self.build()
+        for value in (config_names.server_facts(server), config_names.server_map({'mcpServers': {'a': server}}),
+                      config_names.hook_handler_view(hook), config_names.documented_env_set(settings, ['CLAUDE_CODE_SUBAGENT_MODEL'])):
+            self.assertNotIn(CANARY, repr(value))
+            self.assertNotIn(CANARY_NAME, repr(value))
+        self.assertEqual(config_names.server_facts(server)['configured_mechanisms'], ['oauth'])
+
+    def test_envrc_presence_only(self):
+        root, *_ = self.build()
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root))
+        entry = next(iter(snap['readiness'].values()))
+        self.assertEqual(set(entry['envrc']), {'present', 'git'})
+        self.assertIs(entry['envrc']['present'], True)
+        self.assertIs(entry['env']['envrc_not_read'], True)
+        self.assertNotIn('.envrc', entry['env']['declared_via'])
+        os.remove(os.path.join(root, '.envrc'))
+        snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root))
+        entry = next(iter(snap['readiness'].values()))
+        self.assertIsNone(entry['envrc'])
+        self.assertNotIn('envrc_not_read', entry['env'])
 
 
-# Static guard. Heuristic (line-based regexes over every scripts/*.py except config_names.py):
-#   1. a string literal ending in '.claude.json' or '.envrc' ("~/.claude.json", f"{home}/.envrc", ...) passed to a path/read call: os.path.join, open,
-#      Path, any *load*/*read* function (load_json, json_object, read_text, _read, ...), or a
-#      pathlib "/ '.claude.json'" join. Mentions elsewhere (classification tables such as
-#      cache_effects' file-name rows, git_status(root, '.envrc'), comments, source labels) pass.
-#   2. subscripting or .get() with the literal key 'env' or 'headers' (["env"], .get('headers'), ...).
-#   3. a loop over a literal tuple/list that starts with 'env' or 'headers' (for key in ('env', ...)),
-#      the shape the pre-0.13.1 extensions.py used to read both mappings.
-# Comment lines are skipped. The guard targets reads, so it cannot see a read written through a
-# variable key; it pins the known shapes and keeps reviewers pointed at config_names.py.
-SENSITIVE_FILE = r"""['"][^'"\n]*(?:\.claude\.json|\.envrc)['"]"""
-GUARD_PATTERNS = (
-    re.compile(r'(?:\bjoin|\bopen|\bPath|\w*(?:load|read)\w*|json_object)\([^#]*' + SENSITIVE_FILE),
-    re.compile(r'/\s*' + SENSITIVE_FILE),
-    re.compile(r"""(?:\.get\(\s*|\[\s*)['"](?:env|headers)['"]"""),
-    re.compile(r"""\bfor\s+\w+\s+in\s+[(\[]\s*['"](?:env|headers)['"]"""),
-)
+class DocumentedEnvSet(unittest.TestCase):
+    def test_documented_env_set(self):
+        settings = {'env': {'B': '1', 'A': '2', 'OTHER': CANARY}}
+        self.assertEqual(config_names.documented_env_set(settings, ['A', 'B', 'C']), ['A', 'B'])
+        self.assertEqual(config_names.documented_env_set(settings, iter(['OTHER'])), ['OTHER'])
+        for bad in ({}, {'env': ['A']}, {'env': None}, None, 'text'):
+            self.assertEqual(config_names.documented_env_set(bad, ['A']), [])
+
+    def test_credential_shaped_vocabulary_names_are_rejected(self):
+        for name in ('CLAUDE_CODE_MESSAGING_TOKEN', 'OTEL_EXPORTER_OTLP_CLIENT_KEY', 'OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY'):
+            self.assertNotIn(name, config_checks.ENV_VOCABULARY)
+        self.assertIn('HOME', config_checks.ENV_VOCABULARY)
+        self.assertIn('CLAUDE_CODE_ACCOUNT_UUID', config_checks.ENV_VOCABULARY)
+        got = config_checks.scope_ignored('project', {'env': {'CLAUDE_CODE_MESSAGING_TOKEN': CANARY, 'HOME': 'x'}})
+        self.assertEqual(got[1], [{'name': 'HOME', 'reason': 'project_local'}])
 
 
-def guard_violations(scripts_dir):
-    hits = []
-    for name in sorted(os.listdir(scripts_dir)):
-        if not name.endswith('.py') or name == 'config_names.py':
-            continue
-        with open(os.path.join(scripts_dir, name)) as f:
-            for number, line in enumerate(f, 1):
-                if line.lstrip().startswith('#'):
-                    continue
-                if any(p.search(line) for p in GUARD_PATTERNS):
-                    hits.append(f'{name}:{number}: {line.strip()}')
-    return hits
+class HookFingerprintHasNoCredentialFields(unittest.TestCase):
+    """Rule: an http hook fingerprint depends on neither headers nor allowedEnvVars."""
 
+    def handler(self, **extra):
+        return {'type': 'http', 'url': 'https://hooks.example.com/h', 'timeout': 5, **extra}
 
-class OnlyModuleReadsSensitiveSources(unittest.TestCase):
-    def test_only_module_reads_sensitive_sources(self):
-        self.assertEqual(guard_violations(os.path.abspath(SCRIPTS)), [])
-
-    def test_guard_catches_known_read_shapes(self):
-        shapes = ("user = load_json(os.path.join(HOME, '.claude.json'))",
-                  'text = _read(root, ".envrc")',
-                  "p = Path(home) / '.claude.json'",
-                  'headers = x.get("headers")',
-                  "env = data['env']",
-                  "for key in ('env', 'headers'):",
-                  'data = load_json(os.path.expanduser("~/.claude.json"))',
-                  'f = open(f"{home}/.claude.json")',
-                  "text = Path(root, 'sub/.envrc').read_text()")
-        allowed = ("if base in ('.mcp.json', '.claude.json'):",
-                   '"git": git_status(root, ".envrc")}',
-                   'sources.append(".envrc")',
-                   "'http': frozenset({'url', 'headers', 'allowedEnvVars'}),")
-        for line in shapes:
-            self.assertTrue(any(p.search(line) for p in GUARD_PATTERNS), line)
-        for line in allowed:
-            self.assertFalse(any(p.search(line) for p in GUARD_PATTERNS), line)
-
-
-class HookFingerprintHasNoHeaderValues(unittest.TestCase):
-    """Rule: an http hook fingerprint depends on header names, never on header values."""
-
-    def handler(self, headers):
-        return {'type': 'http', 'url': 'https://hooks.example.com/h', 'timeout': 5, 'headers': headers}
-
-    def test_header_value_never_changes_fingerprint(self):
+    def test_header_and_env_var_fields_never_change_fingerprint(self):
         fp = config_checks.handler_fingerprint
-        base = fp('Stop', None, self.handler({'Authorization': 'Bearer one', 'X-Id': 'a'}))
-        for value in ('Bearer two', CANARY, '', '${TOKEN}'):
-            self.assertEqual(fp('Stop', None, self.handler({'Authorization': value, 'X-Id': 'a'})), base, value)
-        self.assertNotEqual(fp('Stop', None, self.handler({'X-Other': 'Bearer one', 'X-Id': 'a'})), base)
-        self.assertNotEqual(fp('Stop', None, self.handler({'Authorization': 'Bearer one'})), base)
+        base = fp('Stop', None, self.handler())
+        for extra in ({'headers': {'A': CANARY}}, {'headers': {'B': ''}}, {'allowedEnvVars': [CANARY_NAME]},
+                      {'headers': ['x'], 'allowedEnvVars': 7}):
+            self.assertEqual(fp('Stop', None, self.handler(**extra)), base, extra)
+        self.assertNotEqual(fp('Stop', None, self.handler(timeout=6)), base)
 
-    def test_fingerprint_hashes_the_names_only_view(self):
-        handler = self.handler({'B': CANARY, 'A': CANARY})
-        self.assertEqual(config_names.hook_handler_view(handler)['headers'], ['A', 'B'])
-        config_checks.handler_fingerprint('Stop', None, handler)
-        self.assertEqual(handler['headers'], {'B': CANARY, 'A': CANARY})  # caller's handler untouched
+    def test_view_drops_the_fields_and_leaves_the_handler(self):
+        handler = self.handler(headers={'B': CANARY}, allowedEnvVars=[CANARY_NAME])
+        self.assertEqual(config_names.hook_handler_view(handler), self.handler())
+        self.assertIn('headers', handler)
 
 
 if __name__ == '__main__':

@@ -140,39 +140,6 @@
         "url_has_query": {
           "type": "boolean"
         },
-        "url_variable_references": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "env_literal_keys": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "headers_literal_keys": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "oauth_keys": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "oauth_scopes": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        },
         "tool_prefix": {
           "type": "string"
         },
@@ -186,12 +153,6 @@
             "ignored",
             "not-a-git-repo",
             "unknown"
-          ]
-        },
-        "project_trust_accepted": {
-          "type": [
-            "boolean",
-            "null"
           ]
         },
         "policy_observations": {
@@ -1001,91 +962,6 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/mcp_server"
-          }
-        },
-        "mcp_project_state": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "project",
-              "source",
-              "trust_accepted"
-            ],
-            "properties": {
-              "project": {
-                "type": "string"
-              },
-              "source": {
-                "type": "string"
-              },
-              "enabledMcpjsonServers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "disabledMcpjsonServers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "disabledMcpServers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "enabledMcpServers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "trust_accepted": {
-                "type": [
-                  "boolean",
-                  "null"
-                ]
-              }
-            }
-          }
-        },
-        "mcp_name_collisions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "project",
-              "scopes",
-              "endpoint_origins_differ"
-            ],
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "project": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "scopes": {
-                "type": "array",
-                "items": {
-                  "enum": [
-                    "user",
-                    "local",
-                    "project"
-                  ]
-                }
-              },
-              "endpoint_origins_differ": {
-                "type": "boolean"
-              }
-            }
           }
         },
         "plugins": {

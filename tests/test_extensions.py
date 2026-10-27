@@ -12,19 +12,25 @@ class ExtensionInventory(FakeHome):
     def test_scopes_and_credentials(self):
         root = os.path.join(self.home, 'repo')
         remote = {'type': 'http', 'url': 'https://user:opaque@example.com/opaque?token=opaque',
-                  'headers': {'Authorization': 'opaque'}, 'env': {'AUTH': '${AUTH_TOKEN:-opaque}'}}
-        self.write('.claude.json', {'mcpServers': {'user': remote}, 'projects': {
-            root: {'mcpServers': {'local': {'command': 'npx', 'args': ['server@1.2.3', 'opaque']}}},
-            '/other': {'mcpServers': {'OTHER_PRIVATE_SERVER': remote}}}})
+                  'headers': {'Authorization': 'opaque'}, 'env': {'AUTH': '${AUTH_TOKEN:-opaque}'},
+                  'oauth': {'clientId': 'opaque', 'scopes': 'opaque'}}
+        self.write('.claude.json', {'mcpServers': {'USER_PRIVATE_SERVER': remote}, 'projects': {
+            root: {'mcpServers': {'LOCAL_PRIVATE_SERVER': remote}}}})
         self.write('repo/.mcp.json', {'mcpServers': {'project': remote}})
         result = self.scan([root])
-        self.assertEqual({s['scope'] for s in result['mcp_servers']}, {'user', 'local', 'project'})
-        self.assertNotIn('opaque', str(result))
-        self.assertNotIn('OTHER_PRIVATE_SERVER', str(result))
-        local = next(s for s in result['mcp_servers'] if s['scope'] == 'local')
-        self.assertEqual(local['package_version_evidence'], 'exact_version_shape')
-        self.assertEqual(result['mcp_servers'][0]['endpoint_origin'], 'https://example.com')
-        self.assertEqual([s['scope'] for s in self.scan()['mcp_servers']], ['user'])
+        self.assertEqual({s['scope'] for s in result['mcp_servers']}, {'project'})  # ~/.claude.json is not read
+        self.assertFalse([s for s in result['sources'] if s['source'].endswith('.claude.json')])
+        for text in ('opaque', 'USER_PRIVATE_SERVER', 'LOCAL_PRIVATE_SERVER', 'AUTH', 'Authorization'):
+            self.assertNotIn(text, str(result))
+        server = result['mcp_servers'][0]
+        self.assertEqual(server['endpoint_origin'], 'https://example.com')
+        self.assertEqual(server['credential_mechanisms'], ['oauth_configured'])  # key presence only
+        for removed in ('env_keys', 'headers_keys', 'env_literal_keys', 'headers_literal_keys', 'oauth_keys',
+                        'oauth_scopes', 'url_variable_references', 'project_trust_accepted'):
+            self.assertNotIn(removed, server)
+        self.assertNotIn('mcp_project_state', result)
+        self.assertNotIn('mcp_name_collisions', result)
+        self.assertEqual(self.scan()['mcp_servers'], [])
 
     def test_plugin_registry_selects_version_and_never_executes(self):
         root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
@@ -68,10 +74,11 @@ class ExtensionInventory(FakeHome):
         self.assertTrue(any(src.get('scanned') == 0 for src in result['sources']))
 
     def test_malformed_servers_and_limit(self):
-        self.write('.claude.json', {'mcpServers': {'broken': [], 'valid': {'command': 'node'}}})
+        root = os.path.join(self.home, 'repo')
+        self.write('repo/.mcp.json', {'mcpServers': {'broken': [], 'valid': {'command': 'node'}}})
         from unittest import mock
         with mock.patch.object(extensions, 'MAX_ENTRIES', 1):
-            result = self.scan()
+            result = self.scan([root])
         self.assertEqual(result['mcp_servers'][0]['status'], 'unavailable')
         self.assertTrue(any(s.get('reason') == 'server_limit' for s in result['sources']))
 

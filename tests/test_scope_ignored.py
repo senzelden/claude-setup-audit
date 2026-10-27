@@ -73,7 +73,7 @@ class SettingsScopes(FakeHome):
 class EnvNames(FakeHome):
     def test_project_and_local_ignore_the_documented_names(self):
         names = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_TMPDIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'XDG_CONFIG_HOME',
-                 'XDG_ANYTHING', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'OTEL_LOG_RAW_API_BODIES',
+                 'XDG_DATA_HOME', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'OTEL_LOG_RAW_API_BODIES',
                  'ENABLE_BETA_TRACING_DETAILED', 'BETA_TRACING_ENDPOINT', 'CLAUDE_CODE_PROCESS_WRAPPER',
                  'CLAUDE_CODE_SYNC_SKILLS', 'CLAUDE_CODE_SYNC_PLUGINS', 'CLAUDE_CODE_PLUGIN_CACHE_DIR',
                  'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_AX_SCREEN_READER', 'CLAUDE_AX_STARTUP_QUIET_MS',
@@ -88,11 +88,13 @@ class EnvNames(FakeHome):
 
     def test_names_ignored_from_every_file_except_managed(self):
         names = ['CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ACCOUNT_UUID', 'CLAUDE_CODE_MESSAGING_SOCKET',
-                 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_PROJECT_DIR_NAME', 'CLAUDE_CODE_RESTRICTED']
+                 'CLAUDE_CODE_PROJECT_DIR_NAME', 'CLAUDE_CODE_RESTRICTED']
         for layer in ('user', 'project', 'local'):
             with self.subTest(layer=layer):
                 self.assertEqual(env(layer, names), dict.fromkeys(names, 'every_file'))
         self.assertEqual(env('managed', names), {})
+        # Credential-shaped names are never looked up, so this one is not reported in any layer.
+        self.assertEqual(env('user', ['CLAUDE_CODE_MESSAGING_TOKEN']), {})
 
     def test_telemetry_group_is_conditional_where_an_off_value_still_applies(self):
         conditional = ['OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER', 'OTEL_LOG_USER_PROMPTS',
@@ -101,7 +103,7 @@ class EnvNames(FakeHome):
                     'ENABLE_ENHANCED_TELEMETRY_BETA', 'OTEL_LOG_ASSISTANT_RESPONSES',
                     'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_HEADERS',
                     'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL', 'OTEL_EXPORTER_OTLP_CERTIFICATE',
-                    'OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY', 'OTEL_EXPORTER_OTLP_INSECURE',
+                    'OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_INSECURE',
                     'OTEL_EXPORTER_PROMETHEUS_HOST', 'OTEL_EXPORTER_PROMETHEUS_PORT']
         for layer in ('project', 'local'):
             got = env(layer, conditional + definite)
@@ -112,9 +114,15 @@ class EnvNames(FakeHome):
     def test_otlp_pattern_needs_the_documented_suffix(self):
         self.assertEqual(env('project', ['OTEL_EXPORTER_OTLP_TIMEOUT', 'OTEL_SERVICE_NAME', 'MY_OTEL_EXPORTER_OTLP_ENDPOINT',
                                          'OTEL_EXPORTER_OTLP_ENDPOINT_X']), {})
-        for name in ('OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY',
-                     'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE'):
+        for name in ('OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE', 'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE'):
             self.assertEqual(env('project', [name]), {name: 'project_local'})
+        for name in ('OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY', 'OTEL_EXPORTER_OTLP_CLIENT_KEY'):  # credential-shaped
+            self.assertEqual(env('project', [name]), {})
+
+    def test_only_fixed_vocabulary_names_are_looked_up(self):
+        # The families (XDG_*, CLAUDE_AX_*, OTLP) are written out; any other name is never enumerated.
+        self.assertEqual(env('project', ['XDG_ANYTHING', 'CLAUDE_AX_UNLISTED', 'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT']),
+                         {'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT': 'project_local'})
 
     def test_managed_settings_log_toggle_is_ignored_if_1(self):
         self.assertEqual(env('local', ['OTEL_LOG_MANAGED_SETTINGS']), {'OTEL_LOG_MANAGED_SETTINGS': 'ignored_if_1'})

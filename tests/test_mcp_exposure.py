@@ -14,9 +14,11 @@ class ExposureFields(FakeHome):
         return extensions.collect_extensions(self.home, self.claude, list(roots), [], None, [], [],
                                              collect.redact, collect.hook_handler_entry, git_status=git_status)
 
-    def servers(self, mapping, roots=()):
-        self.write('.claude.json', {'mcpServers': mapping})
-        return {s['name']: s for s in self.scan(roots)['mcp_servers']}
+    def servers(self, mapping):
+        """Server rows for a project .mcp.json; user and local scope (~/.claude.json) are not read."""
+        root = os.path.join(self.home, 'repo')
+        self.write('repo/.mcp.json', {'mcpServers': mapping})
+        return {s['name']: s for s in self.scan([root])['mcp_servers']}
 
     def test_remote_locality_and_url_flags(self):
         s = self.servers({
@@ -35,7 +37,7 @@ class ExposureFields(FakeHome):
             got = tuple(s[name][k] for k in ('endpoint_locality', 'plaintext_transport',
                                              'url_has_userinfo', 'url_has_query'))
             self.assertEqual(got, want, name)
-        self.assertEqual(s['dyn']['url_variable_references'], ['BASE'])
+        self.assertNotIn('url_variable_references', s['dyn'])
         self.assertEqual(s['priv']['transport_class'], 'remote')
         self.assertNotIn('opaque', json.dumps(s))
 
@@ -56,7 +58,7 @@ class ExposureFields(FakeHome):
         self.assertNotIn('endpoint_locality', s['placeholder'])
         self.assertNotIn('endpoint_locality', s['local'])
 
-    def test_literal_keys_and_oauth(self):
+    def test_env_headers_and_oauth_values_and_names_are_not_read(self):
         s = self.servers({
             'api': {'type': 'http', 'url': 'https://a.example/mcp',
                     'env': {'API_KEY': 'opaque', 'BASE': '${BASE}', 'EMPTY': ''},
@@ -64,17 +66,17 @@ class ExposureFields(FakeHome):
                     'oauth': {'clientId': 'opaque', 'callbackPort': 8080,
                               'scopes': 'chat:write channels:read chat:write'},
                     'headersHelper': 'echo opaque'},
-            'port': {'type': 'http', 'url': 'https://b.example/mcp', 'oauth': {'callbackPort': 1}}})
+            'plain': {'command': 'node'}})
         api = s['api']
-        self.assertEqual(api['env_literal_keys'], ['API_KEY'])
-        self.assertEqual(api['headers_literal_keys'], ['X-Key'])
-        self.assertEqual(api['oauth_keys'], ['callbackPort', 'clientId', 'scopes'])
-        self.assertEqual(api['oauth_scopes'], ['channels:read', 'chat:write'])
-        self.assertIn('headersHelper_configured', api['credential_mechanisms'])
-        self.assertIsNone(s['port']['oauth_scopes'])
-        self.assertNotIn('oauth_keys', self.servers({'x': {'command': 'node'}})['x'])
-        for sentinel in SENTINELS:
-            self.assertNotIn(sentinel, json.dumps(s))
+        for removed in ('env_keys', 'headers_keys', 'env_variable_references', 'headers_variable_references',
+                        'env_literal_keys', 'headers_literal_keys', 'oauth_keys', 'oauth_scopes',
+                        'url_variable_references'):
+            self.assertNotIn(removed, api)
+        self.assertEqual(api['credential_mechanisms'], ['oauth_configured', 'headersHelper_configured'])
+        self.assertEqual(s['plain']['credential_mechanisms'], ['not_observed_in_selected_fields'])
+        text = json.dumps(s)
+        for leaked in (*SENTINELS, 'API_KEY', 'Authorization', 'X-Key', 'callbackPort', 'chat:write', 'TOKEN'):
+            self.assertNotIn(leaked, text)
 
     def test_tool_prefix_and_plugin_identity(self):
         one = os.path.join(self.claude, 'plugins/cache/market/my.plugin/1')
@@ -86,37 +88,24 @@ class ExposureFields(FakeHome):
                    {'name': 'my.plugin', 'mcpServers': {'db tools': {'command': 'node'}}})
         self.write('.claude/plugins/cache/market/other/1/.claude-plugin/plugin.json', {})
         self.write('.claude/plugins/cache/market/other/1/.mcp.json', {'mcpServers': {'s': {'command': 'node'}}})
-        self.write('.claude.json', {'mcpServers': {'claude.ai x': {'command': 'node'}}})
-        by = {s['name']: s for s in self.scan()['mcp_servers']}
+        self.write('repo/.mcp.json', {'mcpServers': {'claude.ai x': {'command': 'node'}}})
+        by = {s['name']: s for s in self.scan([os.path.join(self.home, 'repo')])['mcp_servers']}
         self.assertEqual((by['db tools']['tool_prefix'], by['db tools']['plugin']),
                          ('plugin_my_plugin_db_tools', 'my.plugin'))
         self.assertEqual((by['s']['tool_prefix'], by['s']['plugin']), ('plugin_other_s', 'other'))
         self.assertEqual(by['claude.ai x']['tool_prefix'], 'claude_ai_x')
         self.assertNotIn('plugin', by['claude.ai x'])
 
-    def test_name_collisions(self):
-        p, q = os.path.join(self.home, 'p'), os.path.join(self.home, 'q')
-        self.write('.claude.json', {
-            'mcpServers': {'gh': {'type': 'http', 'url': 'https://a.example/mcp'}, 'same': {'command': 'node'}},
-            'projects': {p: {'mcpServers': {'gh': {'type': 'http', 'url': 'https://b.example/mcp'},
-                                            'same': {'command': 'node'}}},
-                         q: {'mcpServers': {'x': {'command': 'node'}}}}})
-        self.write('p/.mcp.json', {'mcpServers': {'gh': {'type': 'http', 'url': 'https://b.example/mcp'},
-                                                  'x': {'command': 'node'}}})
-        self.assertEqual(self.scan([p, q])['mcp_name_collisions'], [
-            {'name': 'gh', 'project': p, 'scopes': ['local', 'project', 'user'], 'endpoint_origins_differ': True},
-            {'name': 'same', 'project': p, 'scopes': ['local', 'user'], 'endpoint_origins_differ': False}])
-
     def test_project_mcp_json_git_status(self):
         root = os.path.join(self.home, 'repo')
         self.write('repo/.mcp.json', {'mcpServers': {'a': {'command': 'node'}, 'b': {'command': 'node'}}})
-        self.write('.claude.json', {'mcpServers': {'u': {'command': 'node'}}})
+        self.write('.claude.json', {'mcpServers': {'u': {'command': 'node'}}})  # user scope is never read
         calls = []
         result = self.scan([root], git_status=lambda r, rel: calls.append((r, rel)) or 'tracked')
         self.assertEqual(calls, [(root, '.mcp.json')])
         by = {s['name']: s for s in result['mcp_servers']}
         self.assertEqual((by['a']['file_git_status'], by['b']['file_git_status']), ('tracked', 'tracked'))
-        self.assertNotIn('file_git_status', by['u'])
+        self.assertNotIn('u', by)
 
     def test_malformed_values_are_skipped_not_fatal(self):
         long_name = 'n' * 300
@@ -131,19 +120,16 @@ class ExposureFields(FakeHome):
         self.assertEqual(s['listcfg']['status'], 'unavailable')
         self.assertEqual((s['badurl']['transport_class'], s['badurl']['argument_count']), ('remote', None))
         self.assertNotIn('endpoint_locality', s['badurl'])
-        self.assertIsNone(s['badoauth']['oauth_scopes'])
-        self.assertNotIn('env_literal_keys', s['badmaps'])
-        self.assertNotIn('headers_literal_keys', s['badmaps'])
+        self.assertEqual(s['badoauth']['credential_mechanisms'], ['oauth_configured'])
+        self.assertEqual(s['badmaps']['credential_mechanisms'], ['not_observed_in_selected_fields'])
         self.assertEqual(s['v6bad']['endpoint_locality'], 'invalid')
         self.assertEqual(len(s[long_name]['tool_prefix']), 120)
 
-    def test_prefix_and_scope_names_are_redacted_and_capped(self):
+    def test_prefix_names_are_redacted(self):
         secret = 'sk-sentinel0123456789'
-        s = self.servers({secret: {'type': 'http', 'url': 'https://a.example',
-                                   'oauth': {'scopes': secret + ' ' + 'z' * 100}}})
+        s = self.servers({secret: {'type': 'http', 'url': 'https://a.example'}})
         server = next(iter(s.values()))
-        self.assertNotIn(secret, json.dumps([server['tool_prefix'], server['oauth_scopes']]))
-        self.assertTrue(all(len(x) <= 64 for x in server['oauth_scopes']))
+        self.assertNotIn(secret, json.dumps([server['tool_prefix'], server['name']]))
 
 
     def test_tool_prefix_does_not_launder_secrets(self):
@@ -170,15 +156,11 @@ class ExposureFields(FakeHome):
                           'b': {'type': 'http', 'url': 'http://localhost/'}})
         self.assertEqual((s['a']['endpoint_locality'], s['b']['endpoint_locality']), ('named_host', 'loopback'))
 
-    def test_lists_are_capped_and_variable_names_redacted(self):
-        env = {f'K{i:03}': 'lit' for i in range(150)}
-        var = 'TOK_CANARY' + 'x' * 200
-        s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % var, 'env': env, 'headers': env}})['a']
-        self.assertEqual((len(s['env_literal_keys']), len(s['headers_literal_keys'])), (100, 100))
-        self.assertEqual([len(v) for v in s['url_variable_references']], [120])
+    def test_url_variable_names_are_not_reported(self):
         secret = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2'
         s = self.servers({'a': {'type': 'http', 'url': 'https://a.example/${%s}' % secret}})['a']
         self.assertNotIn(secret, json.dumps(s))
+        self.assertNotIn('url_variable_references', s)
 
 
 def parsed(*argv):
@@ -241,19 +223,15 @@ class PolicyObservations(FakeHome):
         self.assertEqual(collect.mcp_permission_rules({'allow': 'mcp__a', 'deny': {'x': 1}, 'ask': [None, 3]}), {})
         self.assertEqual(collect.mcp_permission_rules({'allow': ['mcp__a', None]}), {'allow': {'a': 1}})
 
-    def test_project_state_keeps_only_mcp_lists_and_trust(self):
+    def test_claude_json_project_state_is_not_read(self):
         root = os.path.join(self.home, 'repo')
         self.write('.claude.json', {'projects': {
-            root: {'enabledMcpjsonServers': ['db'], 'disabledMcpjsonServers': [],
-                   'disabledMcpServers': ['plugin:demo:x'], 'enabledMcpServers': ['computer-use'],
-                   'hasTrustDialogAccepted': False, 'lastCost': 12.5, 'lastSessionFirstPrompt': 'opaque'},
-            '/elsewhere': {'hasTrustDialogAccepted': True}}})
-        state = self.scan([root])['mcp_project_state']
-        self.assertEqual(state, [{'project': root, 'source': os.path.join(self.home, '.claude.json'),
-                                  'enabledMcpjsonServers': ['db'], 'disabledMcpjsonServers': [],
-                                  'disabledMcpServers': ['plugin:demo:x'], 'enabledMcpServers': ['computer-use'],
-                                  'trust_accepted': False}])
-        self.assertNotIn('opaque', json.dumps(state))
+            root: {'enabledMcpjsonServers': ['db'], 'disabledMcpServers': ['plugin:demo:x'],
+                   'hasTrustDialogAccepted': False, 'lastSessionFirstPrompt': 'opaque'}}})
+        result = self.scan([root])
+        self.assertNotIn('mcp_project_state', result)
+        self.assertNotIn('opaque', json.dumps(result))
+        self.assertFalse([x for x in result['sources'] if x['source'].endswith('.claude.json')])
 
     def test_non_string_plugin_project_path_is_treated_as_missing(self):
         self.write('.claude/plugins/installed_plugins.json', {'plugins': {
@@ -263,7 +241,7 @@ class PolicyObservations(FakeHome):
         self.assertEqual([(p['scope'], p['project']) for p in plugins], [('user', None)])
         servers = [{'status': 'collected', 'scope': 'plugin', 'name': 'x', 'project': plugins[0]['project'],
                     'tool_prefix': 'x'}]
-        extensions.mcp_observations(servers, [], [], lambda p: p)
+        extensions.mcp_observations(servers, [], lambda p: p)
         self.assertEqual(servers[0]['policy_observations'], [])
 
     def test_observations_join_layers_state_and_rules(self):
@@ -286,21 +264,17 @@ class PolicyObservations(FakeHome):
                                'mcp_policy': {'deniedMcpServers': {'entries': 1, 'by_key': {'serverName': 1},
                                                                    'server_names': ['gh']}},
                                'mcp_permission_rules': {}})]
-        state = [{'project': P, 'source': '/h/.claude.json', 'disabledMcpServers': ['plugin:demo:x'],
-                  'trust_accepted': False}]
-        extensions.mcp_observations(servers, layers, state, lambda p: p.replace('/h', '~'))
+        extensions.mcp_observations(servers, layers, lambda p: p.replace('/h', '~'))
         obs = lambda i: [(o['source'], o['kind'], o['value']) for o in servers[i]['policy_observations']]  # noqa: E731
         self.assertEqual(obs(0), [('~/.claude/settings.json', 'permission_allow_any_server', 1),
                                   ('~/p/.claude/settings.local.json', 'approval_enabled', True)])
-        self.assertIs(servers[0]['project_trust_accepted'], False)
         self.assertEqual(obs(1), [('~/.claude/settings.json', 'permission_allow', 1),
                                   ('~/.claude/settings.json', 'permission_allow_any_server', 1),
                                   ('/etc/claude-code/managed-settings.json', 'policy_denied_by_name', True)])
         self.assertEqual(obs(2), [('~/.claude/settings.json', 'permission_allow_any_server', 1),
-                                  ('~/q/.claude/settings.json', 'permission_deny', 2),
-                                  ('~/.claude.json#projects[~/p]', 'toggle_disabled', True)])
+                                  ('~/q/.claude/settings.json', 'permission_deny', 2)])
         self.assertNotIn('policy_observations', servers[3])
-        self.assertNotIn('project_trust_accepted', servers[1])
+        self.assertNotIn('project_trust_accepted', servers[0])
 
     def test_observation_cap_keeps_managed_policy(self):
         servers = [{'status': 'collected', 'scope': 'user', 'name': 'gh', 'project': None, 'tool_prefix': 'gh'}]
@@ -309,7 +283,7 @@ class PolicyObservations(FakeHome):
         layers.append(('managed', None, {'path': '/etc/claude-code/managed-settings.json',
                                          'mcp_policy': {'deniedMcpServers': {'server_names': ['gh']}},
                                          'mcp_permission_rules': {}}))
-        extensions.mcp_observations(servers, layers, [], lambda p: p)
+        extensions.mcp_observations(servers, layers, lambda p: p)
         kept = servers[0]['policy_observations']
         self.assertEqual((len(kept), servers[0]['policy_observations_omitted']), (20, 6))
         self.assertIn('policy_denied_by_name', [o['kind'] for o in kept])
@@ -320,13 +294,12 @@ class PolicyObservations(FakeHome):
         self.write('repo/.mcp.json', {'mcpServers': {'db': {'command': 'node', 'args': ['opaque']}}})
         self.write('repo/.claude/settings.local.json', {'enabledMcpjsonServers': ['db'],
                                                         'permissions': {'allow': ['mcp__db__query']}})
-        self.write('.claude.json', {'projects': {root: {'hasTrustDialogAccepted': True}}})
         with mock.patch.object(collect, 'git_status', return_value='tracked'):
             snap = collect.build_snapshot(parsed('--claude-dir', self.claude, '--scope', 'project', '--project', root))
         db = next(s for s in snap['extensions']['mcp_servers'] if s['name'] == 'db')
         seen = {(o['source'], o['kind'], o['value']) for o in db['policy_observations']}
         self.assertIn(('~/repo/.claude/settings.local.json', 'approval_enabled', True), seen)
         self.assertIn(('~/repo/.claude/settings.local.json', 'permission_allow', 1), seen)
-        self.assertIs(db['project_trust_accepted'], True)
+        self.assertNotIn('project_trust_accepted', db)
         self.assertEqual(db['file_git_status'], 'tracked')
         self.assertNotIn('opaque', json.dumps(snap))

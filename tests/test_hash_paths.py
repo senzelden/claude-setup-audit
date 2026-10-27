@@ -413,7 +413,7 @@ class Vocabulary(CanaryHome):
         self.assertEqual(snap['snapshot_version'], 1)
 
     def test_hashing_leaves_vocabulary_only_data_unchanged(self):
-        snap = {'global': {'settings': [{'scope': 'user', 'model': 'opus', 'keys': ['hooks'], 'env_keys': ['A_B'],
+        snap = {'global': {'settings': [{'scope': 'user', 'model': 'opus', 'keys': ['hooks'], 'env_documented_set': ['A_B'],
                                          'hook_handlers': [{'event': 'PreToolUse', 'matcher': 'Bash'}]}]},
                 'transcripts': {'request_params': {'basis': 'x'}}}
         before = json.dumps(snap)
@@ -421,7 +421,7 @@ class Vocabulary(CanaryHome):
         self.assertEqual(json.dumps(snap), before)
 
     def test_no_path_pattern_targets_api_vocabulary(self):
-        banned = {'event', 'model', 'keys', 'env_keys', 'matcher', 'type', 'scope', 'name', 'tool', 'fingerprint'}
+        banned = {'event', 'model', 'keys', 'env_documented_set', 'matcher', 'type', 'scope', 'name', 'tool', 'fingerprint'}
         for pats in list(privacy.PATH_FAMILIES.values()):
             for pat in pats['leaves'] + pats.get('maybe', ()) + pats.get('keys', ()):
                 self.assertNotIn(pat[-1], banned, pat)

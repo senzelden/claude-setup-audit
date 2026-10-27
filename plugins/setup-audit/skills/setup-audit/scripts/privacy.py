@@ -275,13 +275,13 @@ MCP_POLICY_KEEP = (  # collect.mcp_policy: names, or the string "invalid" in pla
     *(('mcp_policy', k, '*') for k in MCP_POLICY_LISTS),
     *(('mcp_policy', k, 'server_names', '*') for k in ('allowedMcpServers', 'deniedMcpServers')))
 HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
-                ('on_failure',), ('background',), ('decision_basis',), ('scan_gap',), ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
+                ('on_failure',), ('background',), ('decision_basis',), ('scan_gap',), ('issues', '*'), ('unknown_fields', '*'))
 SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'),
                  # plugin_markers: key paths from plugin_footprint.MARKERS; the rule names are masked (mask_settings)
-                 ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
+                 ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_documented_set', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
-                 ('other', 'autoUpdates'),  # scope_ignored_keys / ignored_env_keys: table vocabulary and env names (0.11.0)
+                 ('other', 'autoUpdates'),  # scope_ignored_keys / ignored_env_keys: table vocabulary and fixed env names (0.11.0)
                  ('scope_ignored_keys', '*', 'key'), ('scope_ignored_keys', '*', 'scope'),
                  ('ignored_env_keys', '*', 'name'), ('ignored_env_keys', '*', 'reason')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
 ENTRY_KEEP = tuple((k,) for k in ('source', 'scope', 'status', 'kind', 'relation', 'active_state',
@@ -301,18 +301,12 @@ CONFLICT_KEEP = (
                                                                       ('allow', 'layer'), ('allow', 'path'),
                                                                       ('by', 'layer'), ('by', 'path'))))
 MCP_ID_FIELDS = ('transport_class', 'endpoint_locality', 'file_git_status', 'tool_prefix', 'plugin')
-MCP_ID_LISTS = ('config_notes', 'url_variable_references', 'env_literal_keys', 'headers_literal_keys',
-                'oauth_keys', 'oauth_scopes')
+MCP_ID_LISTS = ('config_notes',)
 SWEEP_KEEP = (  # string fields added by plans 2A and 2B (classified 2026-09-30)
     *CONFLICT_KEEP,
     *(('extensions', 'mcp_servers', '*', k) for k in MCP_ID_FIELDS),
     *(('extensions', 'mcp_servers', '*', k, '*') for k in MCP_ID_LISTS),
     *(('extensions', 'mcp_servers', '*', 'policy_observations', '*', k) for k in ('source', 'kind')),
-    *(('extensions', 'mcp_project_state', '*', k) for k in ('project', 'source')),
-    *(('extensions', 'mcp_project_state', '*', k, '*') for k in (
-          'enabledMcpServers', 'disabledMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers')),
-    ('extensions', 'mcp_name_collisions', '*', 'name'), ('extensions', 'mcp_name_collisions', '*', 'project'),
-    ('extensions', 'mcp_name_collisions', '*', 'scopes', '*'),
     ('transcripts', 'tool_errors', 'by_tool', '*', 'tool'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'server'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'top_error_tools', '*', '*'))
@@ -344,7 +338,7 @@ SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, se
     *(('subscription', 'early_resets', '*', k) for k in ('window', 'at')))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
-          *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
+          *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'installed_plugins')),
           *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'mcp_servers', 'skills', 'agents',
                                                 'commands', 'hooks', 'git')),
           ('memory', 'by_project', '*', 'entries', '*', 'file'),
@@ -364,8 +358,7 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'mcp_servers', '*', k) for k in ('source', 'scope', 'status', 'name', 'project',
                 'active_state', 'representation', 'transport', 'executable', 'package_version_evidence',
                 'endpoint_origin', 'endpoint_detail', 'reason')),
-          *(('extensions', 'mcp_servers', '*', k, '*') for k in ('env_keys', 'headers_keys',
-                'env_variable_references', 'headers_variable_references', 'credential_mechanisms')),
+          *(('extensions', 'mcp_servers', '*', k, '*') for k in ('credential_mechanisms',)),
           *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
@@ -444,8 +437,7 @@ _PROJECT_STRINGS = (
     ('usage', 'heaviest_sessions', '*', 'project'), ('usage', 'most_friction_sessions', '*', 'project'),
     ('usage', 'sessions_per_project', '*', '*'), ('corrections', 'by_project', '*', '*'),
     ('corrections', 'samples', '*', 'project'),
-    ('extensions', 'mcp_servers', '*', 'project'), ('extensions', 'mcp_name_collisions', '*', 'project'),
-    ('extensions', 'mcp_project_state', '*', 'project'), ('extensions', 'plugins', '*', 'project'),
+    ('extensions', 'mcp_servers', '*', 'project'), ('extensions', 'plugins', '*', 'project'),
     *(('instructions', 'contexts', '*', k) for k in ('session_cwd', 'worktree_root', 'main_checkout')))
 _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed only when path-like
     *(p + ('path',) for p in _SETTINGS),
@@ -455,7 +447,7 @@ _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed onl
     ('instructions', 'entries', '*', 'source'), ('instructions', 'sources', '*', 'source'),
     ('managed_settings', 'sources', '*', 'source'), ('extensions', 'sources', '*', 'source'),
     ('coverage', 'sources', '*', 'source'),
-    ('extensions', 'mcp_servers', '*', 'source'), ('extensions', 'mcp_project_state', '*', 'source'),
+    ('extensions', 'mcp_servers', '*', 'source'),
     ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
     ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
     ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'),

@@ -163,11 +163,14 @@ class Failures(Base):
 
     def test_snapshot_joins_configured_names(self):
         self.write(".claude/settings.json", {})
-        self.write(".claude.json", {"mcpServers": {"github": {"command": "x"}}})
-        self.put("-a", "s1", [delta(failed=[failure("github"), failure("ghost")])])
-        snap = collect.build_snapshot(args())
+        root = os.path.join(self.home, "repo")
+        self.write("repo/.mcp.json", {"mcpServers": {"github": {"command": "x"}}})
+        self.write(".claude.json", {"mcpServers": {"usersrv": {"command": "x"}}})  # user scope is not read
+        self.put("-a", "s1", [delta(failed=[failure("github"), failure("usersrv"), failure("ghost")])])
+        snap = collect.build_snapshot(args(roots=[root]))
         rows = {r["server"]: r for r in snap["transcripts"]["mcp_failures"]["servers"]}
-        self.assertEqual((rows["github"]["configured"], rows["ghost"]["configured"]), (True, False))
+        self.assertEqual((rows["github"]["configured"], rows["usersrv"]["configured"], rows["ghost"]["configured"]),
+                         (True, False, False))
 
 
 class Privacy(Base):

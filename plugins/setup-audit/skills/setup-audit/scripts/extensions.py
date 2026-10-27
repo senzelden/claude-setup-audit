@@ -1,5 +1,4 @@
 """Bounded MCP/plugin provenance. Never connects, installs, or runs discovered components."""
-from collections import defaultdict
 import os
 from pathlib import Path
 import re
@@ -46,15 +45,8 @@ def mcp_summary(name, facts, path, scope, redact, project=None, plugin=None):
     if facts['endpoint_origin'] is not None:
         item['endpoint_origin'] = facts['endpoint_origin']
         item['endpoint_detail'] = 'path, query, fragment, port and userinfo omitted'
-    mechanisms = []
-    mappings = (('env', facts['env_names']), ('headers', facts['headers_names']))
-    for prefix, names in mappings:
-        item[prefix + '_keys'] = names['keys'] if names else []
-        if names and names['keys']:
-            refs = names['variable_references']
-            item[prefix + '_variable_references'] = refs
-            mechanisms.append(prefix + ('_references_or_literals' if refs else '_configured_values_omitted'))
-    mechanisms.extend(key + '_configured' for key in facts['configured_mechanisms'])
+    # Only the presence of an oauth or headersHelper key is reported, never its content.
+    mechanisms = [key + '_configured' for key in facts['configured_mechanisms']]
     item['credential_mechanisms'] = mechanisms or ['not_observed_in_selected_fields']
     declared, has_url = facts['declared_type'], facts['has_url']
     notes = []
@@ -77,39 +69,13 @@ def mcp_summary(name, facts, path, scope, redact, project=None, plugin=None):
         item['endpoint_locality'] = url['endpoint_locality']
         item['url_has_userinfo'], item['url_has_query'] = url['url_has_userinfo'], url['url_has_query']
         item['plaintext_transport'] = url['plaintext_transport']
-        item['url_variable_references'] = sorted({redact(n)[:NAME_CAP] for n in url['url_variable_names']})[:MAX_ENTRIES]
-    for prefix, names in mappings:
-        if names is not None:
-            item[prefix + '_literal_keys'] = names['literal_keys'][:MAX_ENTRIES]
-    oauth = facts['oauth']
-    if oauth is not None:
-        item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth['keys'])[:MAX_ENTRIES]
-        item['oauth_scopes'] = (sorted({redact(t) for t in oauth['scopes']})[:20]
-                                if oauth['scopes'] is not None else None)
     item['tool_prefix'] = tool_prefix(redact(name), redact(plugin) if plugin else None)[:NAME_CAP]
     if plugin:
         item['plugin'] = redact(plugin)[:NAME_CAP]
     return item
 
 
-def name_collisions(servers):
-    """Same name in local/project/user scope for one project (mcp.md: matched by name there)."""
-    rows = [s for s in servers if s.get('status') == 'collected' and s.get('scope') in ('user', 'local', 'project')]
-    shared = [s for s in rows if s['scope'] == 'user']
-    out = []
-    for project in sorted({s['project'] for s in rows if s.get('project')}):
-        group = defaultdict(list)
-        for s in shared + [s for s in rows if s['scope'] != 'user' and s.get('project') == project]:
-            group[s['name']].append(s)
-        for name in sorted(group):
-            scopes = sorted({s['scope'] for s in group[name]})
-            if len(scopes) > 1:
-                ends = {(s.get('transport'), s.get('endpoint_origin') or s.get('executable')) for s in group[name]}
-                out.append(dict(name=name, project=project, scopes=scopes, endpoint_origins_differ=len(ends) > 1))
-    return out[:MAX_ENTRIES]
-
-
-def mcp_observations(servers, layers, project_state, display):
+def mcp_observations(servers, layers, display):
     """Per-source observations for each collected server; never an effective state.
 
     layers: (user|project|managed, project display path or None, settings summary). A project layer
@@ -150,23 +116,6 @@ def mcp_observations(servers, layers, project_state, display):
                     add(f'permission_{kind}', counts[s['tool_prefix']])
                 if counts.get('*'):
                     add(f'permission_{kind}_any_server', counts['*'])
-        names = {s['name']} | ({f"plugin:{s['plugin']}:{s['name']}"} if s.get('plugin') else set())
-        for state in project_state:
-            where = display(state['project'])
-            if project is not None and where != project:
-                continue
-            src = f"{display(state['source'])}#projects[{where}]"
-            if s['scope'] == 'project':
-                for key, kind in (('enabledMcpjsonServers', 'approval_enabled'),
-                                  ('disabledMcpjsonServers', 'approval_rejected')):
-                    if s['name'] in state.get(key, []):
-                        obs.append((False, dict(source=src, kind=kind, value=True)))
-                s['project_trust_accepted'] = state.get('trust_accepted')
-            for key, kind in (('disabledMcpServers', 'toggle_disabled'), ('enabledMcpServers', 'toggle_enabled')):
-                if names & set(state.get(key, [])):
-                    obs.append((False, dict(source=src, kind=kind, value=True)))
-        if s['scope'] == 'project':
-            s.setdefault('project_trust_accepted', None)
         keep = sorted(sorted(range(len(obs)), key=lambda i: (not obs[i][0], i))[:OBS_LIMIT])
         s['policy_observations'] = [obs[i][1] for i in keep]
         if len(obs) > OBS_LIMIT:
@@ -191,22 +140,8 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
             sources.append(inventory.source(path, scope, 'partial', reason='server_limit', omitted=len(names)-remaining))
         servers.extend(mcp_summary(n, values[n], path, scope, redact, project, plugin) for n in names[:remaining])
 
-    user = config_names.user_mcp_state(home)
-    user_path = user['path']
-    sources.append(user['source'])
-    add_servers(user.get('mcpServers', {}), user_path, 'user')
     project_paths = sorted(set(roots) | {c['session_cwd'] for c in contexts})
-    project_state = []
     for root in project_paths:
-        entry = user['projects'].get(root)
-        if entry is not None:
-            add_servers(entry.get('mcpServers', {}), user_path, 'local', root)
-            state = {'project': root, 'source': user_path}
-            for key in config_names.PROJECT_STATE_LISTS:
-                if key in entry:
-                    state[key] = sorted({redact(x)[:NAME_CAP] for x in entry[key]})[:MAX_ENTRIES]
-            state['trust_accepted'] = entry['hasTrustDialogAccepted']
-            project_state.append(state)
         path = os.path.join(root, '.mcp.json')
         before = len(servers)
         servers_from(json_object(path, 'project', sources), path, 'project', root)
@@ -303,7 +238,6 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
     sources.extend(inventory.source(p.get('source', registry_path), 'plugin', p['status']) for p in plugins)
     return dict(mcp_servers=servers, plugins=plugins, sources=sources,
-                mcp_name_collisions=name_collisions(servers), mcp_project_state=project_state[:MAX_ENTRIES],
                 limitations=['Effective activation, runtime overrides and remote connectors remain unknown; approvals, toggles, server policy and permission rules are per-source observations, not effective state.',
                              'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
                              'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.']

@@ -498,6 +498,15 @@ ENV_PROJECT_LOCAL = frozenset({
     'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS'})
 ENV_PROJECT_LOCAL_PREFIXES = ('XDG_', 'CLAUDE_AX_', 'ProgramFiles')  # the XDG_* family, CLAUDE_AX_*, the ProgramFiles family
 ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)*(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
+# The prefix and pattern families above, written out so the audit looks only for fixed names: the
+# settings `env` mapping is never enumerated. XDG: the basedir spec's variables; CLAUDE_AX_: the
+# accessibility variables the docs name.
+ENV_FAMILY_NAMES = frozenset(
+    {'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR',
+     'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS', 'CLAUDE_AX_SCREEN_READER', 'CLAUDE_AX_STARTUP_QUIET_MS',
+     'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432'}
+    | {f'OTEL_EXPORTER_OTLP_{signal}{suffix}' for signal in ('', 'LOGS_', 'METRICS_', 'TRACES_')
+       for suffix in ('ENDPOINT', 'HEADERS', 'PROTOCOL', 'CERTIFICATE', 'CLIENT_CERTIFICATE', 'CLIENT_KEY', 'INSECURE')})
 # env-vars.md: a value in project or local settings doesn't turn these on (CFC: ignores `1`).
 ENV_IGNORED_IF_1 = frozenset({'CLAUDE_CODE_ENABLE_CFC', 'OTEL_LOG_MANAGED_SETTINGS'})
 ENV_TELEMETRY_UNLESS_OFF = frozenset({'OTEL_LOGS_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_TRACES_EXPORTER',
@@ -508,6 +517,15 @@ ENV_EVERY_FILE = frozenset({
     'CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT', 'CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT',
     'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT', 'CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT',
     'CLAUDE_CODE_WARN_DISK_FREE_GIB', 'CLAUDE_CODE_WARN_MEMORY_FREE_GIB'})
+
+
+def _env_vocabulary():
+    names = (ENV_PROJECT_LOCAL | ENV_IGNORED_IF_1 | ENV_TELEMETRY_UNLESS_OFF | ENV_EVERY_FILE | ENV_FAMILY_NAMES)
+    return sorted(n for n in names if not ENV_CREDENTIAL_SHAPED.search(n))
+
+
+# A vocabulary name that looks like a credential is never looked up, so no such name can reach the snapshot.
+ENV_CREDENTIAL_SHAPED = re.compile(r'TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH')
 
 
 def _env_reason(name, layer):
@@ -525,6 +543,9 @@ def _env_reason(name, layer):
     return None
 
 
+ENV_VOCABULARY = _env_vocabulary()
+
+
 def _present(data, path):
     """True when the dotted key path holds a value other than null (null removes a key)."""
     node = data
@@ -539,7 +560,7 @@ def scope_ignored(layer, data):
     """(scope_ignored_keys, ignored_env_keys) for one settings file; see references/checklist.md HYG-scope-ignored.
 
     `layer` is user, project, local or managed. Keys are matched at their documented (nested) path; a nested
-    key is left out when its parent is already reported. Names and table vocabulary only, never values.
+    key is left out when its parent is already reported. Only names from the fixed vocabulary above (credential-shaped ones left out), never values.
     """
     if not isinstance(data, dict):
         return [], []
@@ -551,5 +572,5 @@ def scope_ignored(layer, data):
                 parent in SETTINGS_SCOPES and layer in SCOPE_IGNORED_IN[SETTINGS_SCOPES[parent]]
                 and _present(data, parent)):
             keys.append({'key': key, 'scope': klass})
-    names = config_names.settings_env_names(data)
+    names = config_names.documented_env_set(data, ENV_VOCABULARY)
     return keys, [{'name': n, 'reason': r} for n in names for r in [_env_reason(n, layer)] if r]

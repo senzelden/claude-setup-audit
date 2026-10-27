@@ -219,8 +219,11 @@ class HookClassification(FakeHome):
         self.assertEqual(types, {"command", "http", "mcp_tool", "prompt", "agent"})
         http = next(h for h in s["hook_handlers"] if h["type"] == "http")
         self.assertEqual(http["target"], "http://localhost:8080/hooks/pre-tool-use")
-        self.assertEqual(http["header_keys"], ["Authorization"])  # names only, never header values
-        self.assertEqual(http["allowed_env_vars"], ["MY_TOKEN"])
+        self.assertEqual(http["target_origin"], "http://localhost")
+        self.assertNotIn("header_keys", http)  # headers and allowedEnvVars are not read at all
+        self.assertNotIn("allowed_env_vars", http)
+        self.assertNotIn("Authorization", json.dumps(http))
+        self.assertNotIn("MY_TOKEN", json.dumps(http))
         mcp = next(h for h in s["hook_handlers"] if h["type"] == "mcp_tool")
         self.assertEqual(mcp["target"], "my_server:security_scan")
         agent = next(h for h in s["hook_handlers"] if h["type"] == "agent")
@@ -535,17 +538,18 @@ class AtomicWrite(FakeHome):
 
 
 class EnvContract(FakeHome):
-    def test_envrc_pointers_count_as_declarations(self):
+    def test_envrc_is_not_read_so_it_declares_nothing(self):
         self.write("repo/.envrc", "use_pass ANTHROPIC_API_KEY api/anthropic; use_pass_optional HF_TOKEN api/hf\nexport LOG_LEVEL=info\n")
         self.write("repo/src/app.py", "import os\nkey = os.environ['ANTHROPIC_API_KEY']\nhf = os.getenv('HF_TOKEN')\n"
                                       "lvl = os.getenv('LOG_LEVEL')\nurl = os.environ['DATABASE_URL']\nh = os.getenv('HOME')\n"
                                       "cache = os.getenv('CACHE_DIR', '/tmp/c')\nregion = os.getenv('REGION')\n")
         self.write("repo/tests/browser/run.mjs", "const base = process.env.BASE\n")
         c = collect.env_contract(os.path.join(self.home, "repo"))
-        self.assertEqual(c["declared_via"], [".envrc"])
-        kinds = {u["name"]: u["kind"] for u in c["undeclared"]}  # HOME ignored; both use_pass calls on one line declared
-        self.assertEqual(kinds, {"DATABASE_URL": "required", "REGION": "read", "CACHE_DIR": "optional", "BASE": "test-only"})
-        self.assertEqual(c["undeclared"][0]["name"], "DATABASE_URL")
+        self.assertEqual(c["declared_via"], [])
+        self.assertIs(c["envrc_not_read"], True)
+        kinds = {u["name"]: u["kind"] for u in c["undeclared"]}  # HOME ignored; .envrc names are not known
+        self.assertEqual(kinds, {"ANTHROPIC_API_KEY": "required", "DATABASE_URL": "required", "HF_TOKEN": "read",
+                                 "LOG_LEVEL": "read", "REGION": "read", "CACHE_DIR": "optional", "BASE": "test-only"})
 
     def test_other_mechanisms_and_validation(self):
         self.write("repo/.env.example", "API_URL=\n")
@@ -556,11 +560,14 @@ class EnvContract(FakeHome):
         self.assertEqual(c["undeclared"], [])
         self.assertEqual(c["validation"], ["pydantic-settings", "zod"])
 
-    def test_envrc_literal_secret_reports_names_only(self):
-        self.write("repo/.envrc", "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstu\nexport HF_TOKEN=$(pass show api/hf)\n")
-        info = collect.envrc_info(os.path.join(self.home, "repo"))
-        self.assertEqual(info["literal_secret_names"], ["OPENAI_API_KEY"])
-        self.assertNotIn("sk-abc", json.dumps(info))
+    def test_envrc_info_is_presence_only(self):
+        root = os.path.join(self.home, "repo")
+        self.assertIsNone(collect.envrc_info(root))
+        self.write("repo/.envrc", "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstu\n")
+        info = collect.envrc_info(root)
+        self.assertEqual(set(info), {"present", "git"})
+        self.assertIs(info["present"], True)
+        self.assertNotIn("OPENAI", json.dumps(info))
 
 
 class ReadinessSignals(FakeHome):
@@ -738,9 +745,11 @@ class MalformedSettings(unittest.TestCase):
 
     def test_valid_entries_survive(self):
         s = collect.summarize_settings('/tmp/x/settings.json', data={
-            'permissions': {'deny': [None, 'Bash(rm *)'], 'allow': ['Read']}, 'env': {'A': '1'}})
+            'permissions': {'deny': [None, 'Bash(rm *)'], 'allow': ['Read']},
+            'env': {'A': '1', 'CLAUDE_CODE_SUBAGENT_MODEL': 'haiku'}})
         self.assertEqual(s['permissions']['deny_count'], 1)
-        self.assertEqual(s['env_keys'], ['A'])
+        self.assertEqual(s['env_documented_set'], ['CLAUDE_CODE_SUBAGENT_MODEL'])
+        self.assertNotIn('env_keys', s)
         clean = collect.summarize_settings('/tmp/x/settings.json', data={'permissions': {'allow': ['Read']}})
         self.assertNotIn('shape_issues', clean)
 

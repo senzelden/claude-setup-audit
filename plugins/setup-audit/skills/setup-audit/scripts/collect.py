@@ -415,17 +415,14 @@ def analyze_permissions(perms):
 def hook_handler_entry(event, matcher, x):
     """Summarize one hook handler dict. Types: command, http, mcp_tool, prompt, agent (hooks docs).
 
-    header_keys/allowed_env_vars (http only) are the fields that decide whether a secret can leak
-    into the request: names only, matching the env_keys/envrc_info convention elsewhere.
+    An http hook reports only its target origin: its headers and allowedEnvVars are not read.
     Every entry also carries a fingerprint; on_failure, background, issues, unknown_fields and
     plugin_relative appear only when set.
     """
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
         target = x.get("url", "")
-        extra = {"header_keys": config_names.hook_header_names(x),
-                 "allowed_env_vars": x.get("allowedEnvVars"),
-                 "target_origin": config_names.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
+        extra = {"target_origin": config_names.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
     elif kind == "mcp_tool":
         target = f"{x.get('server', '?')}:{x.get('tool', '?')}"
         extra = {k: _mcp_name(x[k]) if isinstance(x.get(k), str) else None for k in ("server", "tool")}
@@ -569,7 +566,7 @@ def summarize_settings(path, data=None, managed=False):
         "keys": sorted(raw.keys()),
         "model": d.get("model"),
         "model_settings": d.get("modelSettings"),
-        "env_keys": config_names.settings_env_names(d),
+        "env_documented_set": config_names.documented_env_set(d, SUBAGENT_ENV.values()),
         "enabled_plugins": d.get("enabledPlugins"),
         "hooks": {ev: [h.get("matcher") for h in lst] for ev, lst in hooks.items()},
         "hook_commands": [redact(c)[:200] for c in raw_commands],
@@ -742,6 +739,7 @@ def snapshot_coverage(snap, roots):
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
                 "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
+                "User- and local-scope MCP servers live in ~/.claude.json, which the audit does not read; review them with `claude mcp list`.",
                 *snap.get("instructions", {}).get("limitations", []),
                 *snap.get("extensions", {}).get("limitations", []),
                 *snap.get("instruction_clarity", {}).get("limitations", [])]}
@@ -763,7 +761,6 @@ def collect_global():
     state = plugin_footprint.state_files(CLAUDE, "global")
     if state:
         out["plugin_state"] = state
-    out["mcp_user"] = config_names.user_mcp_server_names(HOME)
     installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
     out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
     out["last_update"] = load_json(os.path.join(CLAUDE, ".last-update-result.json"))
@@ -1341,7 +1338,7 @@ def subagent_summary(rows, files, absent, unusable):
                   "description and toolUseId are never read into the snapshot. requested_model is the model "
                   "Claude passed for the call (null when none; inherit for forks, which run on the main model); actual_model is the majority model of the "
                   "file's assistant messages; tokens are input + cache creation + cache read + output "
-                  "(volume, not spend), cache_read_tokens the cache-read part, deduplicated by message id. configured reports env key names in collected settings only."),
+                  "(volume, not spend), cache_read_tokens the cache-read part, deduplicated by message id. configured reports whether the two subagent-model variable names appear in the env of collected settings (no other name or value is read)."),
     }
 
 
@@ -1737,17 +1734,13 @@ def _read(root, rel, limit=200_000):
 
 
 def env_declarations(root):
-    """Variables a repo declares, whatever mechanism it uses. A pointer-only .envrc counts as a template."""
+    """Variables a repo declares in files other than .envrc, which is never read (see env_contract)."""
     declared, sources = set(), []
     for name in (".env.example", ".env.template", ".env.sample", ".env.dist", "example.env"):
         text = _read(root, name)
         if text:
             declared |= set(re.findall(ENV_KEY_LINE, text, re.M))
             sources.append(name)
-    envrc = config_names.envrc_names(root)
-    if envrc:
-        declared |= set(envrc["declared_names"])
-        sources.append(".envrc")
     for name in ("mise.toml", ".mise.toml"):
         m = re.search(r"^\[env\]\s*\n(.*?)(?=^\[|\Z)", _read(root, name), re.M | re.S)
         if m:
@@ -1821,19 +1814,20 @@ def env_contract(root, max_files=4000):
 
     order = {"required": 0, "read": 1, "optional": 2, "test-only": 3}
     undeclared = sorted((n for n in reads if n not in declared), key=lambda n: (order[kind(n)], n))
-    return {"declared_via": sources, "declared_count": len(declared), "read_count": len(reads),
+    out = {"declared_via": sources, "declared_count": len(declared), "read_count": len(reads),
             "undeclared_counts": dict(Counter(kind(n) for n in undeclared)),
             "undeclared": [{"name": n, "kind": kind(n), "files": sorted(reads[n])[:3]} for n in undeclared][:25],
             "validation": sorted(validation), "files_scanned": scanned, "truncated": truncated}
+    if config_names.envrc_present(root):
+        out["envrc_not_read"] = True  # a name read in code may be declared in .envrc, which the audit does not open
+    return out
 
 
 def envrc_info(root):
-    names = config_names.envrc_names(root)  # names only, never values
-    if not names:
+    """Presence of .envrc by stat only; its contents are never read."""
+    if not config_names.envrc_present(root):
         return None
-    return {"pointer_lines": names["pointer_lines"],
-            "literal_secret_names": names["literal_secret_names"],
-            "git": git_status(root, ".envrc")}
+    return {"present": True, "git": git_status(root, ".envrc")}
 
 
 def git_age(root):
@@ -2431,8 +2425,7 @@ def build_snapshot(a):
     layers = ([("user", None, s) for s in snap["global"]["settings"]]
               + [("project", p, s) for p, e in snap["projects"].items() for s in e.get("settings", [])]
               + [("managed", None, s) for s in snap["managed_settings"]["settings"]])
-    extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers,
-                                snap["extensions"]["mcp_project_state"], lambda p: p.replace(HOME, "~"))
+    extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers, lambda p: p.replace(HOME, "~"))
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap["subscription"]["extra_usage"] = subscription_usage.extra_usage(
         [s for _, _, s in layers], snap["subscription"]["limit_events"])
@@ -2459,10 +2452,10 @@ def build_snapshot(a):
         r["context_baseline_median"] = samples[len(samples) // 2] if samples else None
         r["context_baseline_sessions"] = len(samples)
     snap["transcripts"].pop("_baseline_lists", None)
-    env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_keys") or []
+    env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_documented_set") or []
                  if isinstance(k, str)}
     snap["transcripts"]["subagent_models"]["configured"] = {k: v in env_names for k, v in SUBAGENT_ENV.items()}
-    configured = set(snap["global"].get("mcp_user") or [])
+    configured = set()  # user- and local-scope servers live in ~/.claude.json, which is not read
     for entry in snap["projects"].values():
         configured |= set(entry.get("mcp_servers") or [])
     used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
@@ -2470,7 +2463,7 @@ def build_snapshot(a):
     for row in snap["transcripts"]["mcp_failures"]["servers"]:
         row["configured"] = row["server"] in configured
     snap["transcripts"]["mcp_configured_but_unused_note"] = (
-        "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
+        "Project, plugin and managed server names (project .mcp.json files) without observed calls; user- and local-scope servers in ~/.claude.json are not read, so they are never listed here. Check scope, scan coverage and extension activation. "
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
     replaced = privacy.mask_snapshot(snap) if metadata_only else {}
