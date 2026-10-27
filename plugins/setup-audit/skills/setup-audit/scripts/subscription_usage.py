@@ -16,8 +16,10 @@ STALE_HOURS = {'five_hour': 1, 'seven_day': 24, 'spend_limit': 24}
 MAX_RESETS_AT = 10 ** 11  # larger values are millisecond-shaped
 EARLY_MIN_PREVIOUS_PCT = 10
 EARLY_MIN_DROP = 10
-BASIS_LOG = ('measured from the opt-in rate-limit log; it only records while Claude Code runs here, '
-             'so unused headroom is an upper bound (usage on claude.ai or other devices also counts)')
+EARLY_SKEW_SECONDS = 60  # an entry this close to the previous reset may be clock skew, not an early reset
+BASIS_LOG = ('measured from the opt-in rate-limit log; unused at close is 100 minus the window\'s peak '
+             'logged value; the log only records while Claude Code runs here, so unused headroom is an '
+             'upper bound (usage on claude.ai or other devices also counts)')
 BASIS_RESETS = ('inferred from the log; early resets are undocumented, and an account or plan switch '
                 'or a log shared by several accounts looks the same')
 
@@ -123,14 +125,14 @@ def analyze_windows(entries, now):
                 stale += 1
                 continue
             peaks.append(peak)
-            unused.append(max(0, 100 - group[-1][1]))
+            unused.append(max(0, 100 - peak))  # a later, lower value (a duplicate or stale writer) never adds
             leads.append(lead / 3600)
         current = None
         if open_last:
             last = max(open_last)
             current = {'used_percentage': last[1], 'resets_at': last[2]}
         result[kind] = {
-            'windows': len(groups), 'closed': closed, 'stale_excluded': stale,
+            'windows': len(groups), 'closed': closed, 'stale_excluded': stale, 'counted': closed - stale,
             'peak_used_pct': _dist(peaks), 'unused_at_close_pct': _dist(unused),
             'median_lead_hours': round(statistics.median(leads), 1) if leads else None,
             'reached_85': reached_85, 'reached_100': reached_100, 'current': current,
@@ -139,12 +141,18 @@ def analyze_windows(entries, now):
 
 
 def early_resets(entries):
-    """Events where a later resets_at appears before the previous window's reset and usage dropped."""
-    events = []
+    """Events where a later resets_at appears before the previous window's reset and usage dropped.
+
+    One event per (window, new resets_at), the first: sessions writing old and new values in turn
+    repeat the transition. The entry must precede the previous reset by more than EARLY_SKEW_SECONDS.
+    """
+    events, seen = [], set()
     for kind, obs in _observations(entries).items():
         for prev, new in zip(obs, obs[1:]):
-            if (new[2] > prev[2] and new[0] < prev[2] and prev[1] >= EARLY_MIN_PREVIOUS_PCT
-                    and prev[1] - new[1] >= EARLY_MIN_DROP):
+            if (new[2] > prev[2] and new[0] < prev[2] - EARLY_SKEW_SECONDS
+                    and prev[1] >= EARLY_MIN_PREVIOUS_PCT and prev[1] - new[1] >= EARLY_MIN_DROP
+                    and (kind, new[2]) not in seen):
+                seen.add((kind, new[2]))
                 events.append({
                     'window': kind,
                     'at': datetime.fromtimestamp(new[0], timezone.utc).strftime('%Y-%m-%d'),

@@ -209,6 +209,7 @@ class RateLimitLog(Base):
         self.assertEqual((sub["log"]["first_at"], sub["log"]["last_at"]),
                          ("2026-01-01T00:00:00Z", "2026-01-08T23:00:00Z"))
         self.assertEqual(sub["windows"]["seven_day"]["closed"], 2)
+        self.assertEqual(sub["windows"]["seven_day"]["counted"], 2)
         self.assertEqual(sub["early_resets"], [])
         self.assertIn("rate-limit log", sub["log_basis"])
         self.assertTrue(sub["log"]["path"].startswith("~/") or sub["log"]["path"].startswith("/"))
@@ -257,6 +258,11 @@ class RateLimitLog(Base):
         bad["subscription"]["windows"]["seven_day"]["closed"] = "2"
         with self.assertRaises(contract.SnapshotError):
             contract.validate_snapshot(bad)
+        for mutate in (lambda w: w.update(counted="2"), lambda w: w.pop("counted")):
+            bad = json.loads(json.dumps(snap))
+            mutate(bad["subscription"]["windows"]["seven_day"])
+            with self.assertRaises(contract.SnapshotError):
+                contract.validate_snapshot(bad)
         bad = json.loads(json.dumps(snap))
         bad["subscription"]["log"]["status"] = "weird"
         with self.assertRaises(contract.SnapshotError):

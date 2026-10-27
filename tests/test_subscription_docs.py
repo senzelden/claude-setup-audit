@@ -31,7 +31,8 @@ class SubscriptionChecklist(unittest.TestCase):
     def test_headroom_wording(self):
         body = self.entry('COST-subscription-headroom')
         for needle in ('at most', 'reached_85', 'stale_excluded', 'recommendation',
-                       'rate-limit-log.md', 'not observable locally'):
+                       'rate-limit-log.md', 'not observable locally',
+                       'at least 3 counted (non-stale) closed weekly windows (`counted`)'):
             self.assertIn(needle, body)
 
     def test_resets_are_inferred_and_undocumented(self):

@@ -67,7 +67,27 @@ class Headroom(unittest.TestCase):
         entries = [entry(T0 - 3 * H, pct=70, resets=T0), entry(T0 - H, pct=60, resets=T0)]
         r = su.analyze_windows(entries, T0 + H)['seven_day']
         self.assertEqual(r['peak_used_pct']['max'], 70)
-        self.assertEqual(r['unused_at_close_pct']['median'], 40)
+        self.assertEqual(r['unused_at_close_pct']['median'], 30)
+
+    def test_unused_is_100_minus_peak_not_last_value(self):
+        # A lower value logged after the peak (another session's stale reading) never raises unused.
+        entries = [entry(T0 - 5 * H, pct=80, resets=T0), entry(T0 - H, pct=20, resets=T0)]
+        r = su.analyze_windows(entries, T0 + H)['seven_day']
+        self.assertEqual(r['unused_at_close_pct'], {'min': 20, 'median': 20, 'max': 20})
+
+    def test_counted_is_closed_minus_stale(self):
+        entries = [weekly(2 * H, 30, T0), weekly(30 * H, 40, T0 + 7 * D), weekly(H, 50, T0 + 14 * D),
+                   weekly(H, 10, T0 + 30 * D)]  # the last window is still open
+        r = su.analyze_windows(entries, T0 + 20 * D)['seven_day']
+        self.assertEqual((r['windows'], r['closed'], r['stale_excluded'], r['counted']), (4, 3, 1, 2))
+
+    def test_lead_exactly_at_the_staleness_bound_counts(self):
+        for kind, hours in (('seven_day', 24), ('five_hour', 1)):
+            with self.subTest(kind=kind):
+                r = su.analyze_windows([entry(T0 - hours * H, kind, 40, T0)], T0 + H)[kind]
+                self.assertEqual((r['counted'], r['stale_excluded']), (1, 0))
+                r = su.analyze_windows([entry(T0 - hours * H - 1, kind, 40, T0)], T0 + H)[kind]
+                self.assertEqual((r['counted'], r['stale_excluded']), (0, 1))
 
 
 class Early(unittest.TestCase):
@@ -86,6 +106,28 @@ class Early(unittest.TestCase):
         for a, b in ((12, 5), (8, 0)):
             entries = [entry(T0, pct=a, resets=T0 + 3 * D), entry(T0 + H, pct=b, resets=T0 + 7 * D)]
             self.assertEqual(su.early_resets(entries), [], (a, b))
+
+    def test_threshold_boundaries(self):
+        for a, b, expected in ((10, 0, 1), (20, 10, 1), (9.9, 0, 0), (20, 10.1, 0)):
+            with self.subTest(previous=a, new=b):
+                entries = [entry(T0, pct=a, resets=T0 + 3 * D), entry(T0 + H, pct=b, resets=T0 + 7 * D)]
+                self.assertEqual(len(su.early_resets(entries)), expected)
+
+    def test_clock_skew_margin(self):
+        for before, expected in ((60, 0), (61, 1)):
+            with self.subTest(seconds_before_reset=before):
+                prev_reset = T0 + 3 * D
+                entries = [entry(T0, pct=60, resets=prev_reset),
+                           entry(prev_reset - before, pct=2, resets=T0 + 7 * D)]
+                self.assertEqual(len(su.early_resets(entries)), expected)
+
+    def test_flip_flop_is_one_event(self):
+        old, new = T0 + 3 * D, T0 + 7 * D
+        entries = [entry(T0, pct=60, resets=old), entry(T0 + H, pct=2, resets=new),
+                   entry(T0 + 2 * H, pct=60, resets=old), entry(T0 + 3 * H, pct=3, resets=new)]
+        ev = su.early_resets(entries)
+        self.assertEqual(len(ev), 1)
+        self.assertEqual((ev[0]['new_pct'], ev[0]['at']), (2, iso(T0 + H)[:10]))
 
     def test_interleaved_duplicates_no_early_reset(self):
         base = [entry(T0 + i * H, pct=10 + i * 5, resets=T0 + 3 * D) for i in range(6)]

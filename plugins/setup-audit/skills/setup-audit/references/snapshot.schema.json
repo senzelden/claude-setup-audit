@@ -241,12 +241,13 @@
     },
     "rate_limit_window": {
       "type": "object",
-      "required": ["windows", "closed", "stale_excluded", "peak_used_pct", "unused_at_close_pct",
+      "required": ["windows", "closed", "stale_excluded", "counted", "peak_used_pct", "unused_at_close_pct",
                    "median_lead_hours", "reached_85", "reached_100", "current"],
       "properties": {
         "windows": {"type": "integer", "minimum": 0},
         "closed": {"type": "integer", "minimum": 0},
         "stale_excluded": {"type": "integer", "minimum": 0},
+        "counted": {"type": "integer", "minimum": 0},
         "peak_used_pct": {"$ref": "#/$defs/pct_distribution"},
         "unused_at_close_pct": {"$ref": "#/$defs/pct_distribution"},
         "median_lead_hours": {"type": ["number", "null"]},

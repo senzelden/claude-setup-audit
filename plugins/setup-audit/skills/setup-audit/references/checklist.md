@@ -368,16 +368,17 @@ readiness, cost metrics and harness overhead.
   opt-in rate-limit log, `references/rate-limit-log.md`; docs `statusline` and `costs`, fetched
   2026-10-26): how much of the plan's windows was used before they reset. Never infer plan tier or
   subscriber status; `rate_limits` appears only when the status line receives it.
-  - Per kind (`five_hour`, `seven_day`, `spend_limit`) read `closed`, `stale_excluded`,
-    `peak_used_pct`, `unused_at_close_pct`, `median_lead_hours`, `reached_85`, `reached_100`.
+  - Per kind (`five_hour`, `seven_day`, `spend_limit`) read `closed`, `stale_excluded`, `counted`,
+    `peak_used_pct`, `unused_at_close_pct` (100 minus the window's peak), `median_lead_hours`,
+    `reached_85`, `reached_100`.
     Say that `reached_85`/`reached_100` count all closed windows, including `stale_excluded` ones,
     while `peak_used_pct` and `unused_at_close_pct` count only non-stale windows (last observation
     at most 24 h before reset for `seven_day`, 1 h for `five_hour`).
   - Unused headroom is an upper bound: write "at most". Usage on claude.ai or other devices also
     counts and the logger only sees Claude Code here.
-  - Median weekly `unused_at_close_pct` of 50% or more over at least 3 closed weekly windows: say a
-    substantial share of the plan went unused, with the staleness lead time. These thresholds are
-    recommendations, not documented limits.
+  - Median weekly `unused_at_close_pct` of 50% or more over at least 3 counted (non-stale) closed
+    weekly windows (`counted`): say a substantial share of the plan went unused, with the staleness
+    lead time. These thresholds are recommendations, not documented limits.
   - Frequent `reached_100` (or `reached_85`): recommend the `/usage` breakdown, then
     `autoContinueAtUsageLimit` (`settings-reference`) and scheduling heavy fan-outs; remedies from
     `costs` and `errors`.

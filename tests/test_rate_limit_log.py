@@ -201,7 +201,7 @@ class RoundTrip(Base):
         self.assertEqual(malformed, 0)
         self.assertEqual(entries[-1]['at'], '2027-01-15T06:00:00Z')  # reset - 2 h
         week = subscription_usage.analyze_windows(entries, reset + hour)['seven_day']
-        self.assertEqual((week['closed'], week['stale_excluded']), (1, 0))
+        self.assertEqual((week['closed'], week['stale_excluded'], week['counted']), (1, 0, 1))
         self.assertEqual(week['median_lead_hours'], 2)
         self.assertEqual(week['unused_at_close_pct']['median'], 92.2)
 
