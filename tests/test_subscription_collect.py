@@ -279,6 +279,19 @@ class RateLimitLog(Base):
         self.assertEqual(counts["config_files"], base["config_files"] + 1)
         self.assertEqual(counts["other_paths"], base["other_paths"])
 
+    def test_invalid_log_path_hashed(self):
+        self.write("elsewhere.jsonl", log_line("2026-01-01T00:00:00Z", 40, 1767312000) + "\n")
+        with mock.patch.object(collect, "_out_allowed_dirs", lambda: {os.path.realpath(f"{self.home}/.claude/audits")}):
+            plain = collect.build_snapshot(args(rate_limit_log=f"{self.home}/elsewhere.jsonl"))
+            snap = collect.build_snapshot(args(hash_paths=True, rate_limit_log=f"{self.home}/elsewhere.jsonl"))
+        self.assertEqual(plain["subscription"]["log"], {"status": "invalid", "path": "~/elsewhere.jsonl"})
+        self.assertEqual(snap["subscription"]["log"]["status"], "invalid")
+        self.assertRegex(snap["subscription"]["log"]["path"], r"^h:[0-9a-f]{12}$")
+        self.assertNotIn("elsewhere.jsonl", json.dumps(snap))
+        base = collect.build_snapshot(args(hash_paths=True))["coverage"]["privacy"]["hashed_path_families"]
+        counts = snap["coverage"]["privacy"]["hashed_path_families"]
+        self.assertEqual(counts["config_files"], base["config_files"] + 1)  # the config-file family, not a fallback
+
     def test_metadata_only_keeps_numbers(self):
         path = self.make_log()
         full = self.sub(rate_limit_log=path)

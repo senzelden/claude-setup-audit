@@ -334,10 +334,12 @@ TOOL_USAGE_KEEP = (  # tool, MCP server names and errorCode vocabulary (strict p
 SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, setting names, fixed notes (0.13.0)
     ('subscription', 'limit_events', 'basis'), ('subscription', 'model_mix', 'basis'),
     *(('subscription', 'limit_events', '*', k) for k in ('first_date', 'last_date')),
+    # The two path leaves below are kept (never redacted) and are also in _FILE_SOURCES, so --hash-paths
+    # replaces them with a config_files tag: KEEP decides redaction, _FILE_SOURCES decides hashing.
     *(('subscription', 'extra_usage', 'settings', '*', k) for k in ('path', 'setting', 'value')),
     ('subscription', 'log', 'path'),
     ('subscription', 'extra_usage', 'not_observable', '*'),
-    *(('subscription', 'log', k) for k in ('status', 'first_at', 'last_at')),  # path is hashed as a config file
+    *(('subscription', 'log', k) for k in ('status', 'first_at', 'last_at')),
     ('subscription', 'log_basis'), ('subscription', 'early_resets_basis'),
     *(('subscription', 'early_resets', '*', k) for k in ('window', 'at')))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
