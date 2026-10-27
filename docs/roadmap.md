@@ -148,6 +148,12 @@ Hosted validation passed all eight jobs at `1167473`:
   non-credential source (for example output the user pastes from `claude mcp list`); until then
   the coverage limitation points the user to that command.
 
+- **MCP inventory (removed in 0.14.5)**: the project `.mcp.json`, managed MCP and plugin MCP
+  readers, `extensions.mcp_servers`, `SEC-mcp-exposure`, `HYG-mcp-config` config notes and
+  `transcripts.mcp_configured_but_unused` are gone; the directory still flagged MCP files as a
+  credential source. `SEC-mcp-review` tells the user to run `claude mcp list` themselves. The
+  earlier MCP inventory items below are history. Tool-call and connection-failure counts stay.
+
 - **No-credential-reads follow-ups** (deferred from the 0.14.0 review): in the collector-failure
   fallback a whole-file Read of `settings.json` or `.mcp.json` still brings `env`/`headers`
   values into context although SKILL.md forbids reading them (a names-only fallback script would

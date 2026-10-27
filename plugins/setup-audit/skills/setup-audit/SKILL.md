@@ -217,7 +217,7 @@ Missing sources go under "Not checked"; they don't block the run.
 Read `coverage`, `managed_settings`, and the `instructions` inventory before drawing
 configuration conclusions. Query bounded instruction excerpts and frontmatter selectively for
 contradictions and skill permission grants; imports and actual activation remain unverified.
-Use `extensions` for MCP/plugin source, transport, credential mechanism and component evidence.
+Use `extensions` for plugin source and component evidence; MCP config files are not read, so ask the user to run `claude mcp list` (checklist `SEC-mcp-review`).
 Treat enablement as a per-file observation. Do not remove a server solely because the bounded
 transcript scan has no calls. See `references/coverage.md` for inventory limits. Copy the
 collector's coverage object into the report, preserving source scopes, statuses, counts and
@@ -457,7 +457,7 @@ review and never edit them. Statuses and reasons are in `references/ledger.md`.
   (templates such as `.env.example` are fine), the `env` blocks of devcontainer, compose or mise
   files, or the OS keychain. Never read or print the values of `env`, `headers`, `oauth`
   or any helper-command setting (the API-key, cloud-auth and telemetry-header helpers), in a
-  settings file or `.mcp.json`. This holds with or without the collector. For user and local MCP servers, tell the user to run `claude mcp list`
+  settings file. Do not open MCP config files (project, managed or plugin) either. This holds with or without the collector. For all MCP servers (user, local, project, managed and plugin), tell the user to run `claude mcp list`
   themselves; never run `claude mcp get`.
 - Never print or copy secret values, even when flagging them; name the file and key instead.
   Redaction is best-effort, not a guarantee: don't tell the user a value is safe to share because

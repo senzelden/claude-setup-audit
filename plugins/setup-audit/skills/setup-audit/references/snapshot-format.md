@@ -48,7 +48,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   |---|---|
   | `project_roots` | project root directories: projects/readiness keys, session and correction project paths, coverage.projects_collected, collection_scope.project, session and worktree roots |
   | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
-  | `config_files` | settings, instruction, managed and MCP config file paths, previous audit file names, the drift log path and the /insights report path |
+  | `config_files` | settings, instruction and managed config file paths, previous audit file names, the drift log path and the /insights report path |
   | `plugin_paths` | plugin install roots, plugin component files and hook scripts that decide permissions |
   | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`), MCP executables |
   | `other_paths` | fail-closed counter: path-like kept strings and dict keys (whitespace-free, not a URL or `name/N` basis string) that no family above names, hashed after the families so a new field is hashed, not leaked |
@@ -74,8 +74,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (since 0.12.0: `using_skill_file_size_guess` when a `skills/using-*/SKILL.md` size is the guess, else `not_measured`
   with a null estimate; earlier snapshots say `file_size_estimate`).
-- `extensions.mcp_servers[]` exposure fields and `transcripts.tool_errors`: optional; names, counts,
-  booleans and enums only; additive within snapshot v1. 0.14.0 removed credential-adjacent fields
+- `transcripts.tool_errors`: optional; names, counts, booleans and enums only; additive within
+  snapshot v1. 0.14.5 removed `extensions.mcp_servers`, per-project `mcp_servers`,
+  `transcripts.mcp_configured_but_unused` and its note, and the `configured` flag on
+  `mcp_failures.servers[]` (the audit no longer reads MCP config files). 0.14.0 removed credential-adjacent fields
   (see CHANGELOG): MCP `env_*`, `headers_*`, `oauth_*` and `url_variable_references`,
   `project_trust_accepted`, user and local scope rows, `extensions.mcp_project_state`,
   `extensions.mcp_name_collisions`, `global.mcp_user`, hook `header_keys` and `allowed_env_vars`,
@@ -133,8 +135,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `sessions_with_deferred_records`, `used[]` (`tool`, `sessions`; 40 rows, `used_omitted`),
   `listed_never_called[]` (`tool`, `sessions_listed`; 40 rows, `listed_never_called_total`,
   `listed_never_called_omitted`), `basis`. `mcp_failures`: `sessions_observed`, `servers[]`
-  (`server`, `sessions_failed`, `sessions_pending`, `sessions_needs_auth`, `sessions_present`, `error_codes[]` of `code`, `sessions`, and
-  `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
+  (`server`, `sessions_failed`, `sessions_pending`, `sessions_needs_auth`, `sessions_present`, `error_codes[]` of `code`, `sessions`), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
 - `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC

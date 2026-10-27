@@ -324,8 +324,7 @@ class FailClosed(PatchedHome):
     def documented_exception(path, value, full_mode):
         if '://' in value or privacy.BASIS_RE.match(value):  # URL origins and targets, `collected_chars/4`
             return True
-        if any(c.isspace() for c in value) and (path[-1] == 'mcp_configured_but_unused_note'
-                                                or (len(path) > 2 and path[1] == 'limitations')
+        if any(c.isspace() for c in value) and ((len(path) > 2 and path[1] == 'limitations')
                                                 or path[0] == 'coverage' and path[1] == 'limitations'):
             return True  # fixed explanatory sentences
         return full_mode and ('hook_commands' in path or path[-1] == 'target')  # documented free text

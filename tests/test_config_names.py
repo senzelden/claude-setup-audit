@@ -199,6 +199,14 @@ class FakeHomeCanary(FakeHome):
                                     'projects': {root: {'mcpServers': {'localsrv': server},
                                                         'hasTrustDialogAccepted': True}}})
         self.write('repo/.mcp.json', {'mcpServers': {'projectsrv': server}})
+        install = os.path.join(self.claude, 'plugins/cache/m/demo/1')
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {
+            'demo@m': [{'scope': 'user', 'installPath': install, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/m/demo/1/.claude-plugin/plugin.json',
+                   {'name': 'demo', 'mcpServers': {'inlinesrv': server}})
+        self.write('.claude/plugins/cache/m/demo/1/.mcp.json', {'mcpServers': {'pluginsrv': server}})
+        self.write('managed/managed-mcp.json', {'mcpServers': {'managedsrv': server}})
+        self.write('managed/managed-settings.json', {'managedMcpServers': {'managedkeysrv': server}})
         hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {CANARY_NAME: CANARY},
                 'allowedEnvVars': [CANARY_NAME]}
         settings = {'env': {CANARY_NAME: CANARY, 'CLAUDE_CODE_SUBAGENT_MODEL': CANARY, 'HOME': CANARY},
@@ -233,13 +241,15 @@ class FakeHomeCanary(FakeHome):
 
         with mock.patch('builtins.open', spy_open), mock.patch.object(io, 'open', spy_open), \
                 mock.patch('os.open', spy_os_open):
-            snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
+            with mock.patch.object(collect, 'managed_directory', return_value=os.path.join(self.home, 'managed')):
+                snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
         self.assertFalse([p for p in opened if p.endswith(
-            ('.claude.json', '.envrc', 'mise.toml', 'devcontainer.json', 'docker-compose.yml'))])
-        self.assertTrue(any(p.endswith('.mcp.json') for p in opened))  # not vacuous: other configs are read
-        for text in (CANARY, CANARY_NAME, 'CANARY_PASS', 'usersrv', 'localsrv'):
+            ('.claude.json', '.envrc', 'mise.toml', 'devcontainer.json', 'docker-compose.yml',
+             '.mcp.json', 'managed-mcp.json'))])
+        self.assertTrue(any(p.endswith('settings.json') for p in opened))  # not vacuous: other configs are read
+        for text in (CANARY, CANARY_NAME, 'CANARY_PASS', 'usersrv', 'localsrv', 'projectsrv', 'inlinesrv',
+                     'pluginsrv', 'managedsrv', 'managedkeysrv'):
             self.assertNotIn(text, snap)
-        self.assertIn('projectsrv', snap)
 
     def test_settings_sandbox_credentials_are_dropped_and_helpers_presence_only(self):
         root, *_ = self.build()
@@ -259,12 +269,11 @@ class FakeHomeCanary(FakeHome):
                          ['mise.toml', '.devcontainer/devcontainer.json', 'docker-compose.yml'])
 
     def test_helpers_return_no_canary(self):
-        _, server, hook, settings = self.build()
-        for value in (config_names.server_facts(server), config_names.server_map({'mcpServers': {'a': server}}),
-                      config_names.hook_handler_view(hook), config_names.documented_env_set(settings, ['CLAUDE_CODE_SUBAGENT_MODEL'])):
+        _, _, hook, settings = self.build()
+        for value in (config_names.hook_handler_view(hook),
+                      config_names.documented_env_set(settings, ['CLAUDE_CODE_SUBAGENT_MODEL'])):
             self.assertNotIn(CANARY, repr(value))
             self.assertNotIn(CANARY_NAME, repr(value))
-        self.assertEqual(config_names.server_facts(server)['configured_mechanisms'], ['oauth'])
 
     def test_envrc_presence_only(self):
         root, *_ = self.build()

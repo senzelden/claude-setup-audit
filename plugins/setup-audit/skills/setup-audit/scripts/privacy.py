@@ -297,13 +297,8 @@ CONFLICT_KEEP = (
     *(('config_conflicts', 'permission_overlaps', '*') + k for k in (('stack',), ('match',), ('by', 'list'),
                                                                       ('allow', 'layer'), ('allow', 'path'),
                                                                       ('by', 'layer'), ('by', 'path'))))
-MCP_ID_FIELDS = ('transport_class', 'endpoint_locality', 'file_git_status', 'tool_prefix', 'plugin')
-MCP_ID_LISTS = ('config_notes',)
 SWEEP_KEEP = (  # string fields added by plans 2A and 2B (classified 2026-09-30)
     *CONFLICT_KEEP,
-    *(('extensions', 'mcp_servers', '*', k) for k in MCP_ID_FIELDS),
-    *(('extensions', 'mcp_servers', '*', k, '*') for k in MCP_ID_LISTS),
-    *(('extensions', 'mcp_servers', '*', 'policy_observations', '*', k) for k in ('source', 'kind')),
     ('transcripts', 'tool_errors', 'by_tool', '*', 'tool'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'server'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'top_error_tools', '*', '*'))
@@ -336,7 +331,7 @@ SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, se
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'installed_plugins')),
-          *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'mcp_servers', 'skills', 'agents',
+          *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'skills', 'agents',
                                                 'commands', 'hooks', 'git')),
           ('memory', 'by_project', '*', 'entries', '*', 'file'),
           *(('usage', k) for k in ('coverage_note', 'window_note', 'stats_scope_note', 'facets_scope_note',
@@ -346,16 +341,10 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
                                              'facet_friction')),
           *(('usage', s, '*', k) for s in ('heaviest_sessions', 'most_friction_sessions') for k in ('project', 'start')),
           ('corrections', 'by_project', '*', '*'), ('corrections', 'samples', '*', 'project'),
-          *(('transcripts', k) for k in ('coverage_note', 'window_note', 'quantile_method', 'mcp_count_note',
-                                         'mcp_configured_but_unused_note')),
+          *(('transcripts', k) for k in ('coverage_note', 'window_note', 'quantile_method', 'mcp_count_note')),
           *(('transcripts', k, '*', '*') for k in ('context_baseline_by_project_median', 'mcp_calls_by_server')),
-          ('transcripts', 'mcp_configured_but_unused', '*'),
           ('transcripts', 'tool_errors', 'categories_basis'), ('transcripts', 'tool_errors', 'scope_note'),
           ('instructions', 'limitations', '*'), ('extensions', 'limitations', '*'),
-          *(('extensions', 'mcp_servers', '*', k) for k in ('source', 'scope', 'status', 'name', 'project',
-                'active_state', 'representation', 'transport', 'executable', 'package_version_evidence',
-                'endpoint_origin', 'endpoint_detail', 'reason')),
-          *(('extensions', 'mcp_servers', '*', k, '*') for k in ('credential_mechanisms',)),
           *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
@@ -411,7 +400,7 @@ _PROJECT_STRINGS = (
     ('usage', 'heaviest_sessions', '*', 'project'), ('usage', 'most_friction_sessions', '*', 'project'),
     ('usage', 'sessions_per_project', '*', '*'), ('corrections', 'by_project', '*', '*'),
     ('corrections', 'samples', '*', 'project'),
-    ('extensions', 'mcp_servers', '*', 'project'), ('extensions', 'plugins', '*', 'project'),
+    ('extensions', 'plugins', '*', 'project'),
     *(('instructions', 'contexts', '*', k) for k in ('session_cwd', 'worktree_root', 'main_checkout')))
 _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed only when path-like
     *(p + ('path',) for p in _SETTINGS),
@@ -421,8 +410,6 @@ _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed onl
     ('instructions', 'entries', '*', 'source'), ('instructions', 'sources', '*', 'source'),
     ('managed_settings', 'sources', '*', 'source'), ('extensions', 'sources', '*', 'source'),
     ('coverage', 'sources', '*', 'source'),
-    ('extensions', 'mcp_servers', '*', 'source'),
-    ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
     ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
     ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'),
     ('subscription', 'extra_usage', 'settings', '*', 'path'), ('subscription', 'log', 'path'))
@@ -469,7 +456,7 @@ PATH_FAMILIES = {
                    ('memory', 'similar_across_projects', '*', 'b_file'),
                    ('readiness', '*', 'app_caching', 'uncached_files', '*'),
                    ('readiness', '*', 'app_caching', 'possible_cache_breakers', '*', '*')),
-        'maybe': (('extensions', 'mcp_servers', '*', 'executable'),)},
+        'maybe': ()},
 }
 
 # Counters that are not path patterns (recorded beside the families in hashed_path_families).

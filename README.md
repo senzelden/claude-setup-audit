@@ -7,7 +7,7 @@
 [![Latest release](https://img.shields.io/github/v/release/senzelden/claude-setup-audit)](https://github.com/senzelden/claude-setup-audit/releases)
 
 An evidence-backed auditor for Claude Code configuration, usage patterns, and common setup risks.
-It reads your user and per-project settings, permissions, hooks, MCP servers, skills, plugins,
+It reads your user and per-project settings, permissions, hooks, skills, plugins,
 CLAUDE.md files, memory,
 and usage and transcript data, and compares them with the **current** official docs. You get a
 short, ranked list of fixes for:
@@ -16,7 +16,7 @@ short, ranked list of fixes for:
   wildcards that match more than they read, deny rules Claude Code ignores, broken hooks, sandbox
   gaps. Hygiene checks also flag hooks that can never fire, duplicate hooks and shadowed allow rules.
 - **Cost & context**: your *measured* per-session context baseline, oversized CLAUDE.md files,
-  unused MCP servers, skill-listing overflow, model and compaction settings, and prompt-cache
+  MCP call counts and connection failures, skill-listing overflow, model and compaction settings, and prompt-cache
   health (hit ratio, 1-hour vs 5-minute cache writes, and mid-session cache rewrites classified
   by cause: idle gap, model switch, compaction). With the opt-in rate-limit status-line log
   ([rate-limit-log.md](plugins/setup-audit/skills/setup-audit/references/rate-limit-log.md)) it
@@ -195,10 +195,10 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
 ## What it reads, writes and sends
 
 - **Does not read** credential-bearing files or values: it never opens `~/.claude.json`, never reads
-  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), and never reads MCP `env`, `headers` or
-  `oauth` blocks or hook `headers`/`allowedEnvVars`, which hold or point to credentials. From
-  settings `env` it only checks names against a fixed list of documented variables. User and local
-  MCP servers live in `~/.claude.json`, so you can review them with `claude mcp list` yourself.
+  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), and never reads MCP config files at all (project, managed or plugin MCP definitions), nor hook
+  `headers`/`allowedEnvVars`, which hold or point to credentials. From
+  settings `env` it only checks names against a fixed list of documented variables. The audit
+  lists no MCP servers; you can review them with `claude mcp list` yourself.
 - **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.

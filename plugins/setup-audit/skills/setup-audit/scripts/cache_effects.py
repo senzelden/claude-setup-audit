@@ -197,7 +197,7 @@ def classify_file(name):
         return _row('memory.claude_md')
     if base == 'MEMORY.md' or '/memory/' in n:
         return _row('memory.auto_memory')
-    if base in ('.mcp.json', '.claude.json'):
+    if base == '.claude.json':
         return _row('mcp.config')
     return _row('file.other')
 

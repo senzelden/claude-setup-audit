@@ -109,8 +109,7 @@ class Totals:
                 "listed_never_called_omitted": max(0, len(never) - ROW_CAP),
                 "basis": BASIS}
 
-    def failures(self, configured=None):
-        """configured: set of configured MCP server names, or None when unknown."""
+    def failures(self):
         servers = sorted(set(self.failed) | set(self.pending) | set(self.needs),
                          key=lambda n: (-self.failed[n], -self.pending[n], -self.needs[n], n))
         def present(n):
@@ -120,8 +119,7 @@ class Totals:
         rows = [{"server": n, "sessions_failed": self.failed[n], "sessions_pending": self.pending[n],
                  "sessions_needs_auth": self.needs[n], "sessions_present": present(n),
                  "error_codes": [{"code": c, "sessions": k} for (srv, c), k in
-                                 sorted(self.codes.items(), key=lambda kv: (-kv[1], kv[0][1])) if srv == n],
-                 **({} if configured is None else {"configured": n in configured})}
+                                 sorted(self.codes.items(), key=lambda kv: (-kv[1], kv[0][1])) if srv == n]}
                 for n in servers[:ROW_CAP]]
         return {"sessions_observed": self.with_deferred, "servers": rows,
                 "servers_omitted": max(0, len(servers) - ROW_CAP), "basis": FAILURE_BASIS}

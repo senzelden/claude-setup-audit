@@ -97,7 +97,7 @@ class Table(unittest.TestCase):
             self.assertEqual(ce.effect_for('setting', key)['effect'], 'applies_next_session', key)
         for name in ('/h/CLAUDE.md', 'CLAUDE.md', '/h/p/CLAUDE.local.md', '/h/.claude/projects/x/memory/MEMORY.md'):
             self.assertEqual(ce.effect_for('file', name)['effect'], 'applies_next_session', name)
-        self.assertEqual(ce.effect_for('file', '/h/p/.mcp.json')['effect'], 'applies_next_session')
+        self.assertEqual(ce.effect_for('file', '/h/.claude.json')['effect'], 'applies_next_session')
         self.assertEqual(ce.effect_for('setting', 'enabledMcpjsonServers')['effect'], 'applies_next_session')
 
     def test_not_covered_families_are_unknown_not_guessed(self):

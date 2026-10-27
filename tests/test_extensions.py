@@ -6,31 +6,27 @@ import extensions
 
 class ExtensionInventory(FakeHome):
     def scan(self, roots=(), settings=()):
-        return extensions.collect_extensions(self.home, self.claude, roots, [], None, [],
-                                              settings, collect.redact, collect.hook_handler_entry)
+        return extensions.collect_extensions(self.home, self.claude, roots, [], settings,
+                                              collect.redact, collect.hook_handler_entry)
 
-    def test_scopes_and_credentials(self):
+    def test_mcp_config_files_are_not_read_or_inventoried(self):
         root = os.path.join(self.home, 'repo')
-        remote = {'type': 'http', 'url': 'https://user:opaque@example.com/opaque?token=opaque',
-                  'headers': {'Authorization': 'opaque'}, 'env': {'AUTH': '${AUTH_TOKEN:-opaque}'},
-                  'oauth': {'clientId': 'opaque', 'scopes': 'opaque'}}
-        self.write('.claude.json', {'mcpServers': {'USER_PRIVATE_SERVER': remote}, 'projects': {
-            root: {'mcpServers': {'LOCAL_PRIVATE_SERVER': remote}}}})
-        self.write('repo/.mcp.json', {'mcpServers': {'project': remote}})
+        remote = {'type': 'http', 'url': 'https://example.com/opaque?token=opaque',
+                  'headers': {'Authorization': 'opaque'}, 'env': {'AUTH': 'opaque'}}
+        install = os.path.join(self.claude, 'plugins/cache/market/demo/1')
+        self.write('.claude.json', {'mcpServers': {'USER_PRIVATE_SERVER': remote}})
+        self.write('repo/.mcp.json', {'mcpServers': {'PROJECT_SERVER': remote}})
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {
+            'demo@market': [{'scope': 'user', 'installPath': install, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/market/demo/1/.claude-plugin/plugin.json',
+                   {'name': 'demo', 'mcpServers': {'INLINE_SERVER': remote}})
+        self.write('.claude/plugins/cache/market/demo/1/.mcp.json', {'mcpServers': {'PLUGIN_FILE_SERVER': remote}})
         result = self.scan([root])
-        self.assertEqual({s['scope'] for s in result['mcp_servers']}, {'project'})  # ~/.claude.json is not read
-        self.assertFalse([s for s in result['sources'] if s['source'].endswith('.claude.json')])
-        for text in ('opaque', 'USER_PRIVATE_SERVER', 'LOCAL_PRIVATE_SERVER', 'AUTH', 'Authorization'):
+        self.assertNotIn('mcp_servers', result)
+        for text in ('opaque', 'USER_PRIVATE_SERVER', 'PROJECT_SERVER', 'INLINE_SERVER', 'PLUGIN_FILE_SERVER'):
             self.assertNotIn(text, str(result))
-        server = result['mcp_servers'][0]
-        self.assertEqual(server['endpoint_origin'], 'https://example.com')
-        self.assertEqual(server['credential_mechanisms'], ['oauth_configured'])  # key presence only
-        for removed in ('env_keys', 'headers_keys', 'env_literal_keys', 'headers_literal_keys', 'oauth_keys',
-                        'oauth_scopes', 'url_variable_references', 'project_trust_accepted'):
-            self.assertNotIn(removed, server)
-        self.assertNotIn('mcp_project_state', result)
-        self.assertNotIn('mcp_name_collisions', result)
-        self.assertEqual(self.scan()['mcp_servers'], [])
+        for src in result['sources']:
+            self.assertFalse(src['source'].endswith(('.mcp.json', '.claude.json')), src)
 
     def test_plugin_registry_selects_version_and_never_executes(self):
         root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
@@ -49,14 +45,13 @@ class ExtensionInventory(FakeHome):
         self.assertEqual(plugin['enablement_observations'][0]['value'], False)
         self.assertEqual(plugin['active_state'], 'unknown')
         self.assertTrue(any(c.get('frontmatter', {}).get('allowed-tools') == 'Bash(*)' for c in plugin['components']))
-        self.assertEqual(result['mcp_servers'][0]['scope'], 'plugin')
 
     def test_external_component_and_unknown_registry_do_not_read_arbitrary_paths(self):
         root = os.path.join(self.claude, 'plugins/cache/p/1')
-        self.write('private.json', {'mcpServers': {'PRIVATE': {'command': 'private'}}})
+        self.write('private.json', {'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': 'PRIVATE'}]}]}})
         self.write('.claude/plugins/installed_plugins.json', {'plugins': {'p@m': [
             {'scope': 'user', 'installPath': root}, {'scope': 'user', 'installPath': self.home}]}})
-        self.write('.claude/plugins/cache/p/1/.claude-plugin/plugin.json', {'mcpServers': os.path.join(self.home, 'private.json')})
+        self.write('.claude/plugins/cache/p/1/.claude-plugin/plugin.json', {'hooks': os.path.join(self.home, 'private.json')})
         result = self.scan()
         self.assertNotIn('PRIVATE', str(result))
         self.assertTrue(any(s.get('reason') == 'external_component_path' for s in result['sources']))
@@ -72,15 +67,6 @@ class ExtensionInventory(FakeHome):
         self.write('.claude/plugins/installed_plugins.json', {'plugins': {}})
         result = self.scan()
         self.assertTrue(any(src.get('scanned') == 0 for src in result['sources']))
-
-    def test_malformed_servers_and_limit(self):
-        root = os.path.join(self.home, 'repo')
-        self.write('repo/.mcp.json', {'mcpServers': {'broken': [], 'valid': {'command': 'node'}}})
-        from unittest import mock
-        with mock.patch.object(extensions, 'MAX_ENTRIES', 1):
-            result = self.scan([root])
-        self.assertEqual(result['mcp_servers'][0]['status'], 'unavailable')
-        self.assertTrue(any(s.get('reason') == 'server_limit' for s in result['sources']))
 
     def test_only_skill_md_counts_as_a_skill(self):
         root = os.path.join(self.claude, 'plugins/cache/market/demo/1')

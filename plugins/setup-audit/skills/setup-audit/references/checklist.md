@@ -119,39 +119,17 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
     reverse — it's instructions the *hook* sends to a model, so treat a hook prompt built from
     unsanitized tool input the same way `SEC-risky-allow` treats an unsafe command: something that
     can be steered by whatever text it's fed.
-  - `mcp_tool`: only as trustworthy as the target server; cross-reference `SEC-mcp`.
+  - `mcp_tool`: only as trustworthy as the target server; cross-reference `SEC-mcp-review`.
 
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
-- **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
-  `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
-- **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
-  `settings[].mcp_policy`; static, never connected, no values stored). The audit does not read
-  MCP `env`, `headers` or `oauth` values or names, so it makes no claim about literal credentials
-  there; for a committed `.mcp.json` the user checks those blocks themselves. User and local
-  servers live in `~/.claude.json`, which the audit does not open (the user can run `claude mcp list` to see them).
-  Weigh, citing field and source:
-  - `url_has_userinfo` or `url_has_query` on a remote server: a credential may sit in the URL.
-    Suggest moving it to a header that references an environment variable (docs page `mcp`).
-  - `plaintext_transport`: tokens and tool traffic in cleartext to a non-loopback host.
-    Recommendation-level; the docs do not rate it.
-  - A `project` server with a `policy_observations` kind `approval_enable_all` or
-    `approval_enabled`: any server a teammate adds to `.mcp.json` loads. In `claude -p`, SDK and
-    cloud sessions, project servers load without asking (mcp.md). Propose `disabledMcpjsonServers`
-    for unwanted ones. Committed approvals are ignored in an untrusted folder, so mention that the
-    approval only applies once the user has accepted the trust dialog for that folder (docs page
-    `mcp`); the audit does not record whether they have.
-  - `credential_mechanisms` containing `headersHelper_configured` on a `project` server: a
-    repo-supplied shell command that runs once the folder is trusted ("arbitrary shell command",
-    mcp.md).
-  - `permission_allow` (or `permission_allow_any_server`) observations on a server that writes to
-    external systems: calls run without a prompt. `mcp__*` in allow is skipped by Claude Code;
-    rule validity is reported by the permission-rule checks, not here.
-  - Allowlist posture, once per audit and only in an organization context: `allowedMcpServers`
-    without `allowManagedMcpServersOnly` merges user allowlists, and a `serverName` entry "is not
-    a security control" (managed-mcp.md). `serverUrl`/`serverCommand` entries are not evaluated
-    here, so never claim a server is unrestricted without checking them.
-  Cross-check reliability through `tool_prefix` = `transcripts.tool_errors.by_mcp_server[].server`.
+- **SEC-mcp-review** (no evidence; the audit does not read MCP config files): the collector opens
+  no project `.mcp.json`, managed MCP file or plugin MCP definition and never runs `claude mcp list`,
+  so it can't name or rate any server. Tell the user to run `claude mcp list` themselves and to
+  review each project `.mcp.json` for servers they don't recognise, unpinned `@latest` packages,
+  remote servers over plain HTTP and servers with write access to external systems (docs page `mcp`).
+  Never read or print `env`, `headers` or `oauth` blocks. `settings[].mcp_policy` and
+  permission-rule observations from settings files remain available for context.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
   already-supplied version observation; unavailable diagnostics are not installation failures.
@@ -187,11 +165,11 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   context. Apply only with the split protocol in SKILL.md.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
-- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these project,
-  plugin and managed server names have no observed calls in the scanned records. User and local
-  servers (stored in `~/.claude.json`, which the audit does not open) are not in this list, so it
-  can't call them unused; for those suggest the user run `claude mcp list` themselves. Check transcript coverage and
-  `extensions` provenance/activation before drawing conclusions. Empty global-scope transcript scans
+- **COST-mcp-unused** (`transcripts.mcp_calls_by_server`, bounded observation): the collector knows
+  no configured MCP server (it reads no MCP config), so it lists only servers with observed calls.
+  Ask the user to compare that list with `claude mcp list` (they run it themselves); servers in their
+  list but absent here have no observed calls in the scanned records. Check transcript coverage
+  before drawing conclusions. Empty global-scope transcript scans
   provide no usage evidence. Propose removal only with additional evidence that the server is
   unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools. Per-tool
   evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
@@ -281,7 +259,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
     fix authentication or configuration (the user can run `claude mcp get <name>` themselves; Claude never runs it, because its
     output can include a server's environment and headers), or
-    propose removal together with its `SEC-mcp-exposure` fields. The thresholds are a
+    propose removal after the user reviews it (`SEC-mcp-review`). The thresholds are a
     recommendation.
   - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.
   - `nonzero_exit` clusters: missing run or test commands (`RDY-test-loop`, CLAUDE.md).
@@ -543,18 +521,14 @@ metric that motivated it, so the next run can check whether it moved.
     baseline, so do not treat their absence there as clean. Plugins that spawn sessions without a
     trace in the files the collector reads (remember's nested summarizer, autoharness forks) are
     not attributed.
-- **HYG-mcp-config** (`config_notes`): `url_without_type` (Claude Code skips the server; add
-  `"type": "http"`), `sdk_type_skipped`, `reserved_name` (skipped at load) and `sse_deprecated`
-  (switch to `http`). Same-name servers across scopes are not compared, since user and local scopes
-  are not read. `empty_url_placeholder` is a documented placeholder, not a finding. Connection
-  failures (`transcripts.mcp_failures`, observed, undocumented): per server name, `sessions_failed`
-  and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts (error text is
-  never stored) and `configured` (exact name match to a collected config name; plugin and connector
-  servers use other names, so `false` is not proof of absence). A server failing in many sessions
+- **HYG-mcp-config** (`transcripts.mcp_failures`, observed, undocumented): connection
+  failures per server name: `sessions_failed` and `sessions_pending` of `sessions_observed`,
+  `error_codes[]` as session counts (error text is never stored). A server failing in many sessions
   (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones) is a
   configuration or availability problem to fix or remove: an endpoint that does not exist
-  (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after checking
-  scope and activation in `extensions.mcp_servers`; a pending server may only be slow to start.
+  (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after the user checks
+  scope and activation with `claude mcp list`; a pending server may only be slow to start. Plugin and
+  connector servers use their own names, so a name absent from the user's list is not proof of absence.
 
 ## Agent readiness (`RDY-`, opt-in via `focus=readiness`)
 

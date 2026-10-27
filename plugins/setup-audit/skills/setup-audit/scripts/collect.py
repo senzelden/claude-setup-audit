@@ -701,7 +701,7 @@ def snapshot_coverage(snap, roots):
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
                 "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
-                "User- and local-scope MCP servers live in ~/.claude.json, which the audit does not read; the user can review them with `claude mcp list`.",
+                "MCP config files and ~/.claude.json are not read, so no MCP server inventory exists; the user can review all MCP servers with `claude mcp list`.",
                 *snap.get("instructions", {}).get("limitations", []),
                 *snap.get("extensions", {}).get("limitations", []),
                 *snap.get("instruction_clarity", {}).get("limitations", [])]}
@@ -863,8 +863,6 @@ def collect_projects(roots):
                     entry["claude_md_dead_refs"] = dead_references(os.path.join(dirpath, "CLAUDE.md"), root)
                 if "/.worktrees/" in dirpath or "/worktrees/" in dirpath:
                     entry["is_worktree_copy"] = True
-            if ".mcp.json" in filenames:
-                entry["mcp_servers"] = sorted((load_json(os.path.join(dirpath, ".mcp.json")) or {}).get("mcpServers", {}).keys())
             cdir = os.path.join(dirpath, ".claude")
             if os.path.isdir(cdir):
                 entry["settings"] = [s for s in (summarize_settings(os.path.join(cdir, n))
@@ -1544,7 +1542,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 baselines.append(total)
                                 per_project[os.path.basename(os.path.dirname(path))].append(total)
                                 need_baseline = False
-                    # MCP call counts are usage evidence for COST-mcp-unused: the user's own sessions only.
+                    # MCP call counts are usage evidence for the user's own sessions only; they are compared with `claude mcp list` by the user.
                     if record.get("type") == "assistant" and spawn is None:
                         content = (record.get("message") or {}).get("content", record.get("content", []))
                         for item in content if isinstance(content, list) else []:
@@ -2372,13 +2370,11 @@ def build_snapshot(a):
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
     hook_index, hook_index_reasons = harness.hook_index(CLAUDE, settings)
     snap["global"]["plugin_session_start_hooks"] = plugin_session_start_hooks(hook_index)
-    snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
-                                                       snap['managed_settings']['sources'], settings,
-                                                       redact, hook_handler_entry, git_status=git_status)
+    snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, settings,
+                                                       redact, hook_handler_entry)
     layers = ([("user", None, s) for s in snap["global"]["settings"]]
               + [("project", p, s) for p, e in snap["projects"].items() for s in e.get("settings", [])]
               + [("managed", None, s) for s in snap["managed_settings"]["settings"]])
-    extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers, lambda p: p.replace(HOME, "~"))
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap["subscription"]["extra_usage"] = subscription_usage.extra_usage(
         [s for _, _, s in layers], snap["subscription"]["limit_events"])
@@ -2408,20 +2404,6 @@ def build_snapshot(a):
     env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_documented_set") or []
                  if isinstance(k, str)}
     snap["transcripts"]["subagent_models"]["configured"] = {k: v in env_names for k, v in SUBAGENT_ENV.items()}
-    configured = set()  # user- and local-scope servers live in ~/.claude.json, which is not read
-    for entry in snap["projects"].values():
-        configured |= set(entry.get("mcp_servers") or [])
-    # Managed and plugin servers, under the label tool calls carry (mcp__<label>__tool).
-    configured |= {row["tool_prefix"] for row in snap["extensions"]["mcp_servers"]
-                   if row.get("status") == "collected" and row.get("scope") in ("managed", "plugin")
-                   and row.get("tool_prefix")}
-    used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
-    snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
-    for row in snap["transcripts"]["mcp_failures"]["servers"]:
-        row["configured"] = row["server"] in configured
-    snap["transcripts"]["mcp_configured_but_unused_note"] = (
-        "Servers from project .mcp.json files, managed MCP files and installed plugins (plugin servers by tool-call label) without observed calls; user- and local-scope servers in ~/.claude.json are not read, so they are never listed here. Check scope, scan coverage and extension activation. "
-        "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
     replaced = privacy.mask_snapshot(snap) if metadata_only else {}
     snap["coverage"]["privacy"] = {

@@ -34,7 +34,7 @@ Verified 2026-09-15 against official documentation:
 
 Managed files are inspected for every requested scope because their reach includes projects.
 Requested scope still controls existing project and usage collection. Other effective-coverage
-work beyond the instruction/worktree and MCP/plugin inventories below (including runtime
+work beyond the instruction/worktree and plugin inventories below (including runtime
 overrides) stays explicitly unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
 
@@ -173,25 +173,14 @@ grants; never execute a skill or its dynamic context to inspect it.
 
 ## MCP and plugins
 
-`extensions` inventories selected MCP transport, executable, origin, argument count, package version
-shape, credential mechanisms and source scope. Argument values and URL paths are omitted. The audit
-does not read MCP `env`, `headers` or `oauth` values or names, because they hold or point to
-credentials; only the presence of the `oauth` and `headersHelper` mechanisms is recorded. Neither
-MCP servers nor authentication helpers are run. It does not open `~/.claude.json`, where user and
-local MCP servers live, so only project (`.mcp.json`), plugin and managed servers appear; the user can review the
-rest with `claude mcp list` (`coverage.limitations` says so). Remote connectors and runtime
-overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds alone
-for removal.
-
-MCP exposure fields (`transport_class`, `endpoint_locality`, `plaintext_transport`, URL flags,
-`tool_prefix`, `file_git_status`) come from configuration text only. Locality needs no DNS, and
-nothing is connected, authenticated or executed. URL path, query, userinfo, argument, env, header,
-`clientId` and `headersHelper` values are never copied. Allow and deny policy and permission rules
-from settings files are per-source observations (`policy_observations`), not effective state;
-`serverUrl`/`serverCommand` entries are counted, not evaluated. Approval lists, enable/disable
-toggles and trust-dialog state live in `~/.claude.json`, so they are not observed. `tool_prefix`
-uses the documented plugin normalization for every server. Documentation checked 2026-09-29:
-`mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
+`extensions` inventories installed plugins and their components. The audit does not read MCP
+config files at all (project `.mcp.json`, managed MCP files, plugin MCP
+definitions) nor `~/.claude.json`, because MCP servers keep `env` and `headers` credentials there.
+It builds no MCP server inventory; the user reviews every MCP server with `claude mcp list`
+(`coverage.limitations` says so), and checklist `SEC-mcp-review` says what to look for. Neither
+MCP servers nor authentication helpers are run. Remote connectors and runtime overrides remain
+unverified. Observed MCP tool calls (`transcripts.mcp_calls_by_server`) come from transcript tool
+names only; "not observed in these transcripts" is not "unused" or grounds alone for removal.
 
 Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
 `is_error: true` counts. Categories are heuristic text patterns observed 2026-09-29; the error
@@ -318,13 +307,11 @@ Plugin candidates come from `installed_plugins.json` records, not newest cache d
 User/managed installs and matching project/local installs are inspected. Enablement settings
 are reported as per-source observations, with active state unknown. Only paths within plugin
 storage and components within their install are read. Default/custom skills, agents, commands,
-hooks and MCP definitions are inspected; other manifest keys are inventoried, not implemented.
-Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
+hooks are inspected; MCP definitions are not read; other manifest keys are inventoried, not implemented.
+Limits: 1 MiB/JSON; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 
-Verified 2026-09-15 against MCP (docs page `mcp`) (project `.mcp.json`; user and
-local definitions live in `.claude.json`, which the audit does not open) and
-plugin reference (docs page `plugins-reference`) (inline/custom component
+Verified 2026-09-15 against plugin reference (docs page `plugins-reference`) (inline/custom component
 locations). Installed-registry list records and field types were separately observed locally
 on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.
 Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime

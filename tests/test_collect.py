@@ -826,12 +826,10 @@ class ScopeCLI(unittest.TestCase):
         os.makedirs(cfg)
         repo_a = os.path.join(tmp.name, "repo-a")
         repo_b = os.path.join(tmp.name, "repo-b")
-        # .mcp.json server names are embedded verbatim in a project's entry, unlike CLAUDE.md
+        # Skill directory names are listed verbatim in a project's entry, unlike CLAUDE.md
         # (which only contributes a token/line count) -- a reliable marker for "was this read".
         for repo, marker in ((repo_a, "marker-a-only"), (repo_b, "marker-b-only")):
-            os.makedirs(repo)
-            with open(os.path.join(repo, ".mcp.json"), "w") as f:
-                json.dump({"mcpServers": {marker: {}}}, f)
+            os.makedirs(os.path.join(repo, ".claude", "skills", marker))
         return tmp, cfg, repo_a, repo_b
 
     def test_scope_project_never_reads_the_other_project(self):

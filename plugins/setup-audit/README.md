@@ -1,7 +1,7 @@
 # Setup Audit
 
 Audits your Claude Code configuration and usage against the current official documentation:
-user and project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files,
+user and project settings, permissions, hooks, skills, plugins, CLAUDE.md files,
 memory, and usage and transcript data. You get ranked, evidence-backed proposals for security,
 cost and context efficiency, and repeated mistakes, plus an optional check of whether a repository
 is ready for Claude Code to work in. Approved fixes are applied with backups and verified.
@@ -21,11 +21,11 @@ Ask Claude to "audit my Claude Code setup", or run `/setup-audit:setup-audit`.
   (settings, plugins, memory, transcripts, usage data, prompt history) and `.claude/` plus CLAUDE.md
   in projects you have used with Claude Code. It does not open `~/.claude.json`, does not read
   `.envrc` or mise, devcontainer and compose env files (it only notes whether they exist), and
-  never reads MCP `env`, `headers` or `oauth` blocks, hook `headers`/`allowedEnvVars`, or the
+  never reads MCP config files at all (project, managed or plugin MCP definitions), hook
+  `headers`/`allowedEnvVars`, or the
   `sandbox.credentials` settings, which hold or point to credentials. From settings `env` it only
-  checks names against a fixed list of documented variables. MCP servers defined in
-  `~/.claude.json` (user and local scope) are therefore not audited; you can review them with
-  `claude mcp list` yourself. Best-effort secret detection redacts anything that looks like a
+  checks names against a fixed list of documented variables. MCP servers are therefore not
+  audited; you can review them with `claude mcp list` yourself. Best-effort secret detection redacts anything that looks like a
   credential before it reaches a report.
 - **Runs** only the Python standard-library scripts bundled in `skills/setup-audit/scripts/`,
   plus read-only `git` queries to tell tracked files from ignored ones. It never runs hooks, MCP

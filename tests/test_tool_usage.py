@@ -161,36 +161,21 @@ class Failures(Base):
                                     pending=["../etc"])])
         self.assertEqual(self.scan()["mcp_failures"]["servers"], [])
 
-    def test_snapshot_joins_configured_names(self):
+    def test_snapshot_attributes_servers_from_transcript_names_only(self):
         self.write(".claude/settings.json", {})
         root = os.path.join(self.home, "repo")
-        self.write("repo/.mcp.json", {"mcpServers": {"github": {"command": "x"}}})
-        self.write(".claude.json", {"mcpServers": {"usersrv": {"command": "x"}}})  # user scope is not read
-        self.put("-a", "s1", [delta(failed=[failure("github"), failure("usersrv"), failure("ghost")])])
+        self.write("repo/.mcp.json", {"mcpServers": {"projsrv": {"command": "x"}}})  # never read
+        self.put("-a", "s1", [delta(failed=[failure("github"), failure("ghost")]),
+                              calls("mcp__github__q", "mcp__usedsrv__q")])
         snap = collect.build_snapshot(args(roots=[root]))
-        rows = {r["server"]: r for r in snap["transcripts"]["mcp_failures"]["servers"]}
-        self.assertEqual((rows["github"]["configured"], rows["usersrv"]["configured"], rows["ghost"]["configured"]),
-                         (True, False, False))
-
-    def test_unused_covers_project_managed_and_plugin_servers(self):
-        root = os.path.join(self.home, "repo")
-        self.write("repo/.mcp.json", {"mcpServers": {"projsrv": {"command": "x"}}})
-        self.write("managed/managed-mcp.json", {"mcpServers": {"orgsrv": {"command": "x"}}})
-        plugin_root = os.path.join(self.claude, "plugins/cache/m/demo/1")
-        self.write(".claude/plugins/installed_plugins.json", {"plugins": {
-            "demo@m": [{"scope": "user", "installPath": plugin_root}]}})
-        self.write(".claude/plugins/cache/m/demo/1/.claude-plugin/plugin.json",
-                   {"name": "demo", "mcpServers": {"inl": {"command": "x"}}})
-        self.put("-a", "s1", [calls("mcp__usedsrv__q", "mcp__projsrv__q")])
-        snap = collect.build_snapshot(args(roots=[root]))
-        unused = snap["transcripts"]["mcp_configured_but_unused"]
-        self.assertEqual(unused, ["orgsrv", "plugin_demo_inl"])
-        self.put("-a", "s1", [calls("mcp__orgsrv__q", "mcp__plugin_demo_inl__q", "mcp__projsrv__q")])
-        snap = collect.build_snapshot(args(roots=[root]))
-        self.assertEqual(snap["transcripts"]["mcp_configured_but_unused"], [])
-        note = snap["transcripts"]["mcp_configured_but_unused_note"]
-        self.assertIn("managed", note)
-        self.assertIn("plugins", note)
+        t = snap["transcripts"]
+        self.assertEqual({r["server"] for r in t["mcp_failures"]["servers"]}, {"github", "ghost"})
+        for row in t["mcp_failures"]["servers"]:
+            self.assertNotIn("configured", row)
+        self.assertEqual(dict(t["mcp_calls_by_server"]), {"github": 1, "usedsrv": 1})
+        self.assertNotIn("mcp_configured_but_unused", t)
+        self.assertNotIn("mcp_configured_but_unused_note", t)
+        self.assertNotIn("projsrv", json.dumps(snap))
 
 
 class Privacy(Base):

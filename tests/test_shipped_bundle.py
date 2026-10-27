@@ -45,6 +45,14 @@ MODS_FEATURE = re.compile(r'SEC-mods|mods_policy|allowManagedModsOnly|allowModsT
 # rule describes them by family. Gone from shipped text in 0.14.3.
 HELPER_COMMAND_KEYS = re.compile(r'apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|gcpAuthRefresh')
 
+# Also added in 0.11.0: the MCP inventory, which opened project .mcp.json, managed-mcp.json,
+# managed managedMcpServers and installed plugins' MCP files, where servers keep env and headers
+# credentials (rule MCP_FORWARDS_CREDENTIAL_ENV). Gone from 0.14.5; the audit tells the user to
+# review MCP servers themselves.
+MCP_INVENTORY = re.compile(r'servers_from|server_facts|server_map|mcp_observations|credential_mechanisms'
+                           r'|managedMcpServers|SEC-mcp-exposure')
+MCP_FILE_NAMES = ('.mcp.json', 'managed-mcp.json')
+
 
 # Stdlib modules that can open a connection (or load one by name); urllib.parse only parses URLs.
 NETWORK_MODULES = ('socket', 'socketserver', 'ssl', 'http', 'urllib.request', 'urllib.error', 'ftplib',
@@ -161,6 +169,20 @@ class ShippedBundleTests(unittest.TestCase):
         for path, text in shipped_text_files():
             match = HELPER_COMMAND_KEYS.search(text)
             self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_file_offers_the_mcp_inventory(self):
+        for path, text in shipped_text_files():
+            match = MCP_INVENTORY.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_script_names_an_mcp_config_file(self):
+        for path, text in shipped_text_files():
+            if path.suffix != '.py':
+                continue
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    for name in MCP_FILE_NAMES:
+                        self.assertNotIn(name, node.value, '%s: %s' % (path.relative_to(ROOT), name))
 
 
 class RiskyRulePatterns(unittest.TestCase):
