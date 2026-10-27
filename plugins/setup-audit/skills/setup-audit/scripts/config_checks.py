@@ -72,8 +72,12 @@ def normalize_matcher(matcher):
 
 
 def handler_fingerprint(event, matcher, handler):
-    """First 16 hex of SHA-256 over event, normalized matcher and the whole handler (type defaulted)."""
-    body = dict(handler)
+    """First 16 hex of SHA-256 over event, normalized matcher and the whole handler (type defaulted).
+
+    Header values never enter the hash: config_names.hook_handler_view replaces ``headers`` with the
+    sorted header names, so the snapshot carries no digest of a credential-bearing value.
+    """
+    body = config_names.hook_handler_view(handler)
     body.setdefault('type', 'command')
     text = json.dumps([event, normalize_matcher(matcher), body], sort_keys=True,
                       separators=(',', ':'), ensure_ascii=False, default=str)

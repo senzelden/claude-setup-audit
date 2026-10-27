@@ -55,6 +55,17 @@ def hook_header_names(handler):
     return names['keys'] if names else []
 
 
+def hook_handler_view(handler):
+    """Copy of a hook handler with ``headers`` replaced by its sorted header names, for fingerprinting.
+
+    Every other field is kept as is; a non-mapping ``headers`` value becomes an empty name list.
+    """
+    view = dict(handler)
+    if 'headers' in view:
+        view['headers'] = hook_header_names(handler)
+    return view
+
+
 def split_url(url):
     """urlsplit with the WHATWG rule that '\\' equals '/' in special schemes (http, https, ws, wss)."""
     if url.split(':', 1)[0].lower() in ('http', 'https', 'ws', 'wss'):

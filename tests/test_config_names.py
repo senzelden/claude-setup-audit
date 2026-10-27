@@ -3,8 +3,10 @@ import json
 import os
 import re
 import unittest
+from unittest import mock
 from test_collect import FakeHome, SCRIPTS, collect
 from test_drift import parsed
+import config_checks
 import config_names
 
 CANARY = 'CANARY-9f3e'
@@ -41,6 +43,14 @@ class CanaryNeverLeaves(FakeHome):
         self.write('.claude/settings.json', settings)
         self.write('repo/.claude/settings.json', settings)
         self.write('repo/.envrc', f'export ENVRC_API_KEY={CANARY}-long-enough\nexport PLAIN_NAME={CANARY}\n')
+        managed_dir = os.path.join(self.home, 'managed')
+        self.write('managed/managed-mcp.json', {'mcpServers': {'managedsrv': server}})
+        plugin_root = os.path.join(self.claude, 'plugins/cache/market/demo/1')
+        self.write('.claude/plugins/installed_plugins.json', {'version': 2, 'plugins': {
+            'demo@market': [{'scope': 'user', 'installPath': plugin_root, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/market/demo/1/.claude-plugin/plugin.json',
+                   {'name': 'demo', 'mcpServers': {'inlinesrv': server}})
+        self.write('.claude/plugins/cache/market/demo/1/.mcp.json', {'pluginfilesrv': server})
 
         returns = [config_names.mapping_names(server['env']), config_names.mapping_names(server['headers']),
                    config_names.server_facts(server), config_names.user_mcp_state(self.home),
@@ -52,15 +62,21 @@ class CanaryNeverLeaves(FakeHome):
         self.assertIn('MCP_ENV_NAME', repr(returns[3]))
         self.assertIn('ENVRC_API_KEY', repr(returns[-1]))
 
-        snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
+        returns.append(config_names.server_map({'mcpServers': {'managedsrv': server}}))
+        returns.append(config_names.hook_handler_view(hook))
+        for value in returns[-2:]:
+            self.assertNotIn(CANARY, repr(value))
+
+        with mock.patch.object(collect, 'managed_directory', lambda: managed_dir):
+            snap = json.dumps(collect.build_snapshot(parsed('--claude-dir', self.claude, '--roots', root)))
         self.assertNotIn(CANARY, snap)
         for name in ('MCP_ENV_NAME', 'X-Mcp-Header', 'SETTINGS_ENV_NAME', 'X-Hook-Header', 'ENVRC_API_KEY',
-                     'usersrv', 'localsrv', 'projectsrv'):
+                     'usersrv', 'localsrv', 'projectsrv', 'managedsrv', 'inlinesrv', 'pluginfilesrv'):
             self.assertIn(name, snap)
 
 
 # Static guard. Heuristic (line-based regexes over every scripts/*.py except config_names.py):
-#   1. a quoted '.claude.json' or '.envrc' literal passed to a path/read call: os.path.join, open,
+#   1. a string literal ending in '.claude.json' or '.envrc' ("~/.claude.json", f"{home}/.envrc", ...) passed to a path/read call: os.path.join, open,
 #      Path, any *load*/*read* function (load_json, json_object, read_text, _read, ...), or a
 #      pathlib "/ '.claude.json'" join. Mentions elsewhere (classification tables such as
 #      cache_effects' file-name rows, git_status(root, '.envrc'), comments, source labels) pass.
@@ -69,7 +85,7 @@ class CanaryNeverLeaves(FakeHome):
 #      the shape the pre-0.13.1 extensions.py used to read both mappings.
 # Comment lines are skipped. The guard targets reads, so it cannot see a read written through a
 # variable key; it pins the known shapes and keeps reviewers pointed at config_names.py.
-SENSITIVE_FILE = r"""['"](?:\.claude\.json|\.envrc)['"]"""
+SENSITIVE_FILE = r"""['"][^'"\n]*(?:\.claude\.json|\.envrc)['"]"""
 GUARD_PATTERNS = (
     re.compile(r'(?:\bjoin|\bopen|\bPath|\w*(?:load|read)\w*|json_object)\([^#]*' + SENSITIVE_FILE),
     re.compile(r'/\s*' + SENSITIVE_FILE),
@@ -102,7 +118,10 @@ class OnlyModuleReadsSensitiveSources(unittest.TestCase):
                   "p = Path(home) / '.claude.json'",
                   'headers = x.get("headers")',
                   "env = data['env']",
-                  "for key in ('env', 'headers'):")
+                  "for key in ('env', 'headers'):",
+                  'data = load_json(os.path.expanduser("~/.claude.json"))',
+                  'f = open(f"{home}/.claude.json")',
+                  "text = Path(root, 'sub/.envrc').read_text()")
         allowed = ("if base in ('.mcp.json', '.claude.json'):",
                    '"git": git_status(root, ".envrc")}',
                    'sources.append(".envrc")',
@@ -111,6 +130,27 @@ class OnlyModuleReadsSensitiveSources(unittest.TestCase):
             self.assertTrue(any(p.search(line) for p in GUARD_PATTERNS), line)
         for line in allowed:
             self.assertFalse(any(p.search(line) for p in GUARD_PATTERNS), line)
+
+
+class HookFingerprintHasNoHeaderValues(unittest.TestCase):
+    """Rule: an http hook fingerprint depends on header names, never on header values."""
+
+    def handler(self, headers):
+        return {'type': 'http', 'url': 'https://hooks.example.com/h', 'timeout': 5, 'headers': headers}
+
+    def test_header_value_never_changes_fingerprint(self):
+        fp = config_checks.handler_fingerprint
+        base = fp('Stop', None, self.handler({'Authorization': 'Bearer one', 'X-Id': 'a'}))
+        for value in ('Bearer two', CANARY, '', '${TOKEN}'):
+            self.assertEqual(fp('Stop', None, self.handler({'Authorization': value, 'X-Id': 'a'})), base, value)
+        self.assertNotEqual(fp('Stop', None, self.handler({'X-Other': 'Bearer one', 'X-Id': 'a'})), base)
+        self.assertNotEqual(fp('Stop', None, self.handler({'Authorization': 'Bearer one'})), base)
+
+    def test_fingerprint_hashes_the_names_only_view(self):
+        handler = self.handler({'B': CANARY, 'A': CANARY})
+        self.assertEqual(config_names.hook_handler_view(handler)['headers'], ['A', 'B'])
+        config_checks.handler_fingerprint('Stop', None, handler)
+        self.assertEqual(handler['headers'], {'B': CANARY, 'A': CANARY})  # caller's handler untouched
 
 
 if __name__ == '__main__':

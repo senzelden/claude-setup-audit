@@ -186,8 +186,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude Code
     ignores there; `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
     (env values are never collected, so the last two are conditional). Managed files get neither field;
-  - handler `fingerprint`, and `on_failure` (`command`/`http`, a documented value only), `background`
-    (a command hook with `async` or `asyncRewake`),
+  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler with
+    `headers` reduced to its sorted names: header values never enter it), and `on_failure`
+    (`command`/`http`, a documented value only), `background` (a command hook with `async` or
+    `asyncRewake`),
     `issues`/`unknown_fields`/`plugin_relative` when present.
 
   Additive within snapshot v1.

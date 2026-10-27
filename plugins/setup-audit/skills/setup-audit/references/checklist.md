@@ -518,7 +518,8 @@ metric that motivated it, so the next run can check whether it moved.
   another machine or user.
 - **HYG-worktrees** (`is_worktree_copy`): many stale worktree copies of CLAUDE.md.
 - **HYG-hook-duplicates** (`config_conflicts.hook_duplicates`, static): the same handler (event,
-  matcher, whole handler object; `fingerprint` joins to `hook_handlers[].fingerprint` for the
+  matcher, whole handler object with http `headers` reduced to names, so two hooks differing only
+  in a header value group together; `fingerprint` joins to `hook_handlers[].fingerprint` for the
   redacted command) in several places of one stack. Per the hooks docs (fetched 2026-09-30), the
   same handler in more than one settings file runs once (`effect: deduplicated`: clutter, low); a
   plugin's copy stays separate (`separate_copies`: it runs twice, double cost and side effects,
