@@ -242,8 +242,9 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
 
 
 def add_hooks(plugin, data, path, hook_summary, root=None):
-    # A hooks file that lists JS `modules` has no event table of its own; its modules are not read.
-    hooks = data.get('hooks', {} if isinstance(data, dict) and 'modules' in data else data)
+    # JS hook `modules` are not read; any events beside them still are, and the component says partial.
+    modules = isinstance(data, dict) and 'modules' in data
+    hooks = data.get('hooks', {k: v for k, v in data.items() if k != 'modules'} if modules else data)
     if not isinstance(hooks, dict):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
@@ -251,7 +252,9 @@ def add_hooks(plugin, data, path, hook_summary, root=None):
         handlers = [dict(hook_summary(ev, group.get('matcher'), h), **plugin_footprint.hook_effects(ev, h, root))
                     for ev, groups in hooks.items() for group in groups for h in group.get('hooks', [])]
         component = dict(source=path, kind='hooks', handlers=handlers[:MAX_ENTRIES],
-                         status='partial' if len(handlers) > MAX_ENTRIES else 'collected')
+                         status='partial' if modules or len(handlers) > MAX_ENTRIES else 'collected')
+        if modules:
+            component['reason'] = 'js_modules_not_scanned'
         plugin['components'].append(component)
     except (TypeError, AttributeError, KeyError):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))

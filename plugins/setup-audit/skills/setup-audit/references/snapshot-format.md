@@ -112,6 +112,8 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `static_scan`), `decision_file` (plugin-relative script, a hashed/masked path) and `scan_gap`
     (`script_unresolved`, `script_truncated`, `no_local_script`). The static scan is heuristic.
     Matches: `permissionDecision` allow/deny, top-level `decision` approve/block, exit code 2.
+  - A plugin hooks component whose file lists JS hook `modules` is `partial` with `reason:
+    js_modules_not_scanned`: the modules are not read (from 0.14.3); events beside them are.
   - Handler `issues` gains `timeout_suspect_ms` (`timeout` above 600; not for `async: true` or `SessionEnd`).
   - Drift's `injected_tokens` signal gains `unit: chars_text`; earlier entries lack it.
   - `harness_overhead.injected_context`: `output_cap_chars` (10000), per source `chars_max` and

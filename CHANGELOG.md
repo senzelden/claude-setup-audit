@@ -18,7 +18,8 @@ evidence and `--hash-paths`.
   and the settings-scope and env-name tables behind them are gone.
 - The mods inventory and `SEC-mods`: plugins' JS hook modules are no longer scanned
   (`components[].mod`), and the built-in guard options are no longer read from managed
-  `pluginConfigs` (`settings[].mods`).
+  `pluginConfigs` (`settings[].mods`). A plugin hooks file that lists JS modules is reported
+  `partial` (`js_modules_not_scanned`); events beside the modules are still read.
 
 ### Changed
 

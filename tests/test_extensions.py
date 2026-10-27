@@ -102,10 +102,15 @@ class HooksFileShapes(FakeHome):
         extensions.add_hooks(plugin, data, 'hooks/hooks.json', lambda ev, m, h: {'event': ev})
         return plugin['components'][0]
 
-    def test_a_modules_only_hooks_file_is_collected_with_no_handlers(self):
-        # A JS-module hooks file has no event table; it isn't scanned (0.14.3) but it isn't unreadable.
+    def test_a_modules_only_hooks_file_is_partial_with_no_handlers(self):
+        # JS hook modules are not read (0.14.3); the component says so instead of looking empty.
         c = self.add({'modules': ['hooks/mod.js']})
-        self.assertEqual((c['status'], c['handlers']), ('collected', []))
+        self.assertEqual((c['status'], c['reason'], c['handlers']), ('partial', 'js_modules_not_scanned', []))
+
+    def test_events_beside_modules_are_still_read(self):
+        c = self.add({'modules': ['hooks/mod.js'], 'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]})
+        self.assertEqual((c['status'], c['reason'], [h['event'] for h in c['handlers']]),
+                         ('partial', 'js_modules_not_scanned', ['Stop']))
 
     def test_an_event_table_without_a_hooks_key_is_still_read(self):
         c = self.add({'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]})
