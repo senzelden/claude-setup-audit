@@ -16,9 +16,13 @@ from apply_trace import ApplyTrace
 
 _ROOT = Path(__file__).resolve().parents[2]
 # In the repo the plugin is under plugins/setup-audit; stage_plugin.py puts it at the root.
-SCRIPTS = next(c for c in (_ROOT / 'skills/setup-audit/scripts',
-                           _ROOT / 'plugins/setup-audit/skills/setup-audit/scripts')
-               if c.is_dir())
+_SCRIPT_DIRS = (_ROOT / 'skills/setup-audit/scripts',
+                _ROOT / 'plugins/setup-audit/skills/setup-audit/scripts')
+SCRIPTS = next((c for c in _SCRIPT_DIRS if c.is_dir()), None)
+if SCRIPTS is None:
+    raise SystemExit('check_quality.py: plugin scripts not found; expected one of '
+                     + ', '.join(str(c) for c in _SCRIPT_DIRS)
+                     + ' (run from the repository or a stage_plugin.py staging dir)')
 sys.path.insert(0, str(SCRIPTS))
 import report_state
 

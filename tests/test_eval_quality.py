@@ -295,3 +295,17 @@ class EvalQuality(unittest.TestCase):
         manifests = list((suite / 'results/manifests').glob('*.json'))
         self.assertEqual(len(manifests), 1)
         self.assertEqual(json.loads(manifests[0].read_text())['workspace'], str(work.resolve()))
+
+
+class MissingPluginLayout(unittest.TestCase):
+    def test_clear_exit_when_no_scripts_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helpers = Path(tmp) / 'evals/helpers'
+            helpers.mkdir(parents=True)
+            for name in ('check_quality.py', 'apply_trace.py'):
+                shutil.copy(EVALS / 'helpers' / name, helpers / name)
+            proc = subprocess.run(['python3', '-I', str(helpers / 'check_quality.py'), '--help'],
+                                  capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('plugin scripts not found', proc.stderr)
+        self.assertNotIn('Traceback', proc.stderr)
