@@ -94,3 +94,19 @@ class ExtensionInventory(FakeHome):
         skills = [c for c in plugin['components'] if c['kind'] == 'skills']
         self.assertEqual([os.path.basename(c['source']) for c in skills], ['SKILL.md'])
         self.assertEqual(len([c for c in plugin['components'] if c['kind'] == 'agents']), 1)
+
+
+class HooksFileShapes(FakeHome):
+    def add(self, data):
+        plugin = {'components': []}
+        extensions.add_hooks(plugin, data, 'hooks/hooks.json', lambda ev, m, h: {'event': ev})
+        return plugin['components'][0]
+
+    def test_a_modules_only_hooks_file_is_collected_with_no_handlers(self):
+        # A JS-module hooks file has no event table; it isn't scanned (0.14.3) but it isn't unreadable.
+        c = self.add({'modules': ['hooks/mod.js']})
+        self.assertEqual((c['status'], c['handlers']), ('collected', []))
+
+    def test_an_event_table_without_a_hooks_key_is_still_read(self):
+        c = self.add({'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]})
+        self.assertEqual((c['status'], [h['event'] for h in c['handlers']]), ('collected', ['Stop']))

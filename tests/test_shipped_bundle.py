@@ -33,7 +33,8 @@ SCOPE_IGNORED = re.compile(r'scope[_-]ignored|ignored_env_keys|SETTINGS_SCOPES|E
 # Also added in 0.11.0: SEC-mods and the mods inventory, which read a plugin's JS hook modules and
 # the managed guard options. Gone from 0.14.3.
 MODS_FEATURE = re.compile(r'SEC-mods|mods_policy|allowManagedModsOnly|allowModsToOverrideDenyRules'
-                          r'|cc-plugin-sec-default')
+                          r'|cc-plugin-sec-default|scan_mod|MOD_EVENT|MOD_CALL'
+                          r'|components\[\]\.mod\b|settings\[\]\.mods\b')
 # Helper-command settings run a user-supplied command whose output is a credential; the never-open
 # rule describes them by family. Gone from shipped text in 0.14.3.
 HELPER_COMMAND_KEYS = re.compile(r'apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|gcpAuthRefresh')
@@ -93,6 +94,24 @@ class ShippedBundleTests(unittest.TestCase):
             sys.path.pop(0)
         self.assertFalse(hasattr(config_checks, 'scope_ignored'))
 
+    def test_no_shipped_file_offers_the_mods_inventory(self):
+        for path, text in shipped_text_files():
+            match = MODS_FEATURE.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
+        try:
+            import collect
+            import extensions
+        finally:
+            sys.path.pop(0)
+        self.assertFalse(hasattr(collect, 'mods_policy'))
+        self.assertFalse(hasattr(extensions, 'scan_mod'))
+
+    def test_no_shipped_file_names_a_helper_command_setting(self):
+        for path, text in shipped_text_files():
+            match = HELPER_COMMAND_KEYS.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
 
 class RiskyRulePatterns(unittest.TestCase):
     # collect.py builds these two patterns from named command lists (a regex that inlines download
@@ -105,22 +124,6 @@ class RiskyRulePatterns(unittest.TestCase):
                          r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")
         self.assertEqual(patterns['interpreter-wildcard'],
                          r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-[ce]\s*['\"]?\s*)?\*")
-
-    def test_no_shipped_file_offers_the_mods_inventory(self):
-        for path, text in shipped_text_files():
-            match = MODS_FEATURE.search(text)
-            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
-        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
-        try:
-            import collect
-        finally:
-            sys.path.pop(0)
-        self.assertFalse(hasattr(collect, 'mods_policy'))
-
-    def test_no_shipped_file_names_a_helper_command_setting(self):
-        for path, text in shipped_text_files():
-            match = HELPER_COMMAND_KEYS.search(text)
-            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
 
 
 if __name__ == '__main__':

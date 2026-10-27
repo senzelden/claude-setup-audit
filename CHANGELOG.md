@@ -9,7 +9,8 @@ All notable changes to this project are documented here. The format follows
 ## [0.14.3] - 2026-10-27
 
 The directory still held 0.14.2 for "uses a credential from the user's machine". This release
-removes the two security checks 0.11.0 added, so what is left of 0.11.0 is cost evidence only.
+removes HYG-scope-ignored and the mods inventory with SEC-mods; what remains of 0.11.0 is the cost
+evidence and `--hash-paths`.
 
 ### Removed
 

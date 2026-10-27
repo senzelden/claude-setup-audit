@@ -242,7 +242,8 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
 
 
 def add_hooks(plugin, data, path, hook_summary, root=None):
-    hooks = data.get('hooks', data)
+    # A hooks file that lists JS `modules` has no event table of its own; its modules are not read.
+    hooks = data.get('hooks', {} if isinstance(data, dict) and 'modules' in data else data)
     if not isinstance(hooks, dict):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
