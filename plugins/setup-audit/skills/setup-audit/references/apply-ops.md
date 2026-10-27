@@ -20,7 +20,7 @@ the cache. Information only: no status, ordering or refusal depends on it.
 
 ## Sources
 
-Keys, types and scopes: fetched 2026-09-29 (raw pages, `curl -sL <url>`):
+Keys, types and scopes: fetched 2026-09-29 (raw pages, saved with `scripts/fetch_doc.py en/<page>.md <out>`):
 
 - <https://code.claude.com/docs/en/settings-reference.md>
 - <https://code.claude.com/docs/en/sandboxing.md>
