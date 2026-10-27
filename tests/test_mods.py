@@ -55,7 +55,9 @@ class ModInventory(FakeHome):
         self.assertEqual(mod['events'], ['commented.event', 'prompt.submit', 'settings.read', 'tool.call'])
         self.assertEqual(mod['calls'], ['env.get', 'fs.read', 'fs.write', 'http.fetch', 'process.run'])
         self.assertFalse(mod['truncated'])
-        for secret in ('SECRET_PATH_LITERAL', 'SECRET_URL', 'SECRET_ENV_NAME', 'rm', 'literal.example', 'not valid'):
+        # Argument values stay out: the quoted 'rm' and '-rf' can't occur inside a random temp-dir name.
+        for secret in ('SECRET_PATH_LITERAL', 'SECRET_URL', 'SECRET_ENV_NAME', "'rm'", '-rf', 'literal.example',
+                       'not valid'):
             self.assertNotIn(secret, str(result['plugins']))
         comp = next(c for c in result['plugins'][0]['components'] if c.get('mod'))
         self.assertEqual(comp['handlers'], [])
