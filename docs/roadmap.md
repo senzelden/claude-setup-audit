@@ -135,7 +135,8 @@ Hosted validation passed all eight jobs at `2f0cdd0`:
   extra-usage settings, with checklist items `COST-subscription-headroom`,
   `COST-model-scoped-limits`, `COST-extra-usage` and `COST-limit-resets`.
 
-Hosted validation: not yet run.
+Hosted validation passed all eight jobs at `1167473`:
+[run](https://github.com/senzelden/claude-setup-audit/actions/runs/40469296347).
 
 ## Next candidates, separately scoped
 

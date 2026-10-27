@@ -30,6 +30,15 @@ All notable changes to this project are documented here. The format follows
   - Early resets count once per new reset time and need the entry more than 60 s before the
     previous reset.
 
+### Validation and limits
+
+- 941 local regression tests pass, and strict plugin validation passes on a clean export. Hosted
+  validation passed all eight jobs at `1167473`
+  ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/40469296347)), including Linux/macOS on
+  Python 3.11/3.13/3.14, the coverage floor and strict plugin validation. No paid model
+  evaluations were run. Limit-message wrappers are unverified (no real limit message observed), and
+  headroom findings need about three weeks of status-line log.
+
 ## [0.12.0] - 2026-10-25
 
 Coexisting with runtime plugins such as TokenEconomizer: what plugins do outside their own files,
