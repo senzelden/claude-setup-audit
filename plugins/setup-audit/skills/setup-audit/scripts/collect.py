@@ -496,15 +496,6 @@ def settings_shape(d):
     return d, sorted(issues)
 
 
-def _settings_layer(path):
-    """user, project or local, from where a non-managed settings file lives (settings.md "Settings files")."""
-    if os.path.basename(path) == "settings.local.json":
-        return "local"
-    def norm(p):  # CLAUDE_CONFIG_DIR may be spelled with a trailing slash, `..` or a leading `~`
-        return os.path.normpath(os.path.abspath(HOME + p[1:] if p == "~" or p.startswith("~/") else p))
-    return "user" if norm(os.path.dirname(path)) == norm(CLAUDE) else "project"
-
-
 GUARD_ID = "cc-plugin-sec-default@builtin"
 GUARD_OPTIONS = (("allowManagedModsOnly", "allow_managed_mods_only"),
                  ("allowModsToOverrideDenyRules", "allow_mods_override_deny_rules"))
@@ -606,11 +597,6 @@ def summarize_settings(path, data=None, managed=False):
         found = plugin_footprint.markers(raw)
         if found:
             summary["plugin_markers"] = found
-        ignored_keys, ignored_env = config_checks.scope_ignored(_settings_layer(path), d)
-        if ignored_keys:
-            summary["scope_ignored_keys"] = ignored_keys
-        if ignored_env:
-            summary["ignored_env_keys"] = ignored_env
     # Raw rules for config_stacks(); never part of a summary, which is serialized.
     _RAW_PERMISSIONS[summary["path"]] = {k: [r for r in (perms.get(k) if isinstance(perms.get(k), list) else [])
                                             if isinstance(r, str)] for k in ("allow", "ask", "deny")}

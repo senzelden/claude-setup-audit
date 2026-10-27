@@ -99,7 +99,8 @@ Hosted validation passed all eight jobs at `0022836`:
 - [x] Subagent model mix (requested vs actual model, cache reads split out) and per-request
   model, effort, thinking and cache TTL counts; `COST-subagents` explains why subagents ran a
   top-tier model.
-- [x] Settings keys and env names a project or local file can't set (`HYG-scope-ignored`);
+- [x] Settings keys and env names a project or local file can't set (`HYG-scope-ignored`;
+  removed in 0.14.3, its tables named credential-adjacent settings and variables);
   `idleCompaction` and per-model auto-compact named as cost levers.
 - [x] Mods inventory (static scan of declared JS hook modules) and the built-in guard options
   from managed settings (`SEC-mods`).
@@ -190,7 +191,7 @@ Hosted validation passed all eight jobs at `1167473`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
-- **Claude Code 2.1.286-2.1.310 follow-ups:** mods, scope-ignored settings and the compaction
+- **Claude Code 2.1.286-2.1.310 follow-ups:** mods, scope-ignored settings (removed in 0.14.3) and the compaction
   levers shipped in 0.11.0. Not pursued after measurement (2026-10-25): attributing cache breaks
   to `shapeHash` changes (35 of 36 were followed by small writes) and skipping blob lines (a
   30-day collection takes 13 s). `prompt_snapshot` records are per session start or compaction,

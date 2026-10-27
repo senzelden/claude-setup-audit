@@ -8,7 +8,7 @@ The contract stabilizes the envelope: required sections, their container types, 
 source provenance and coverage statuses/counts. Family-specific analytical payloads remain
 extensible objects, not exhaustively typed records. The settings summary definition is applied to
 `global.settings` and `managed_settings.settings`; project settings and `instructions.settings_candidates`
-stay untyped objects, so their summary fields (`scope_ignored_keys` among them) are not schema-checked. Validation establishes structure, not
+stay untyped objects, so their summary fields are not schema-checked. Validation establishes structure, not
 factual correctness, redaction completeness or effective policy. The collector validates the
 serialized, sanitized snapshot before printing or writing it; invalid output is not published.
 
@@ -184,15 +184,6 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     (`permissions`, `permissions.allow`, `hooks`, `env`, ...); a managed file with any is `partial`
     with reason `invalid_entries`;
   - `permissions.rule_shape_issues`;
-  - `scope_ignored_keys` (non-managed files, when non-empty): `{key, scope}` for each setting the file's
-    layer (user, project or local, from the file location) cannot set, matched at the nested path;
-    `scope` is `user_or_managed`, `managed`, `global_config`, `user_local_managed` or `user`. Table:
-    settings reference, fetched 2026-10-24. Static, names only; `null` values and keys absent from
-    the table are not reported;
-  - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude
-    Code ignores there, drawn from a fixed documented vocabulary (no other `env` names are read);
-    `reason` is `project_local`, `every_file` or `ignored_if_1` (env values
-    are never collected, so the last two are conditional). Managed files get neither field;
   - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without
     its `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`
     (`command`/`http`, a documented value only), `background` (a command hook with `async` or

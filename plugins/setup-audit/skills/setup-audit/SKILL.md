@@ -186,8 +186,8 @@ What is **measured** versus **estimated** matters for credibility; say which in 
 - Measured: `transcripts.context_baseline_tokens` (real tokens of each session's first turn),
   MCP call counts, token usage by model, tool errors, and `harness_overhead` (hook-injected
   context, skill listing, subagent spend; injected tokens are chars/4 of measured text).
-- Static (configuration text only): `permissions.rule_shape_issues`, hook handler `issues`,
-  `scope_ignored_keys`/`ignored_env_keys` and `config_conflicts`. Their effects come from the quoted docs, not observed runs; say so.
+- Static (configuration text only): `permissions.rule_shape_issues`, hook handler `issues`
+  and `config_conflicts`. Their effects come from the quoted docs, not observed runs; say so.
   Plugin footprint (`HYG-plugin-footprint`: `plugin_written_rules`, `plugin_markers`, `plugin_state`,
   `decides_permissions`/`rewrites_input`) is a mix: ledger and marker attribution are exact matches
   on a file or key from a dated table, the hook-script flags are a heuristic text scan; label which.

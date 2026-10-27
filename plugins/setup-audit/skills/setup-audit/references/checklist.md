@@ -471,39 +471,6 @@ metric that motivated it, so the next run can check whether it moved.
   so ask the user to check `/status` or `claude doctor`. High severity when the key is
   `permissions` or `hooks`, since the skipped part can be a deny rule or guard hook; managed files
   keep enforcing the rest (`coverage` reason `invalid_entries`).
-- **HYG-scope-ignored** (`settings[].scope_ignored_keys`, `settings[].ignored_env_keys`, static,
-  names only): a setting, or an `env` variable from a fixed documented list, in a file where Claude
-  Code ignores it, so it does nothing there. Say so as an ineffective setting, not a security
-  finding, and propose moving it to the file that works (or removing it). Which file works comes
-  from the key's documented scope (settings reference, key table "Scope" column and each key's
-  **Scope** line, fetched 2026-10-24):
-  - `user_or_managed` is honoured in user and managed settings only, so a project or local file
-    ignores it (`axScreenReader`, `autoMode`, `modelPicker`, `skipAutoPermissionPrompt`,
-    `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
-    `sandbox.network.strictAllowlist`, ...). `user` (`worktree.location`) is user-only.
-  - `managed` is honoured in managed settings only (the page: "Claude Code ignores the key in user,
-    project, and local settings"), so even a user file ignores it. Either an admin deploys it or
-    the line is dead.
-  - `global_config` keys (`claudeInChromeDefaultEnabled`, `autoConnectIde`, ...) live in
-    `~/.claude.json`; every settings file ignores them.
-  - `user_local_managed` (`syncClaudeAiSkills`, `syncClaudeAiPlugins`, `useAutoModeDuringPlan`,
-    `skipDangerousModePermissionPrompt`) is ignored in the shared project `.claude/settings.json`
-    only, so the personal `settings.local.json` is the right place.
-  - `ignored_env_keys` only names variables on a fixed vocabulary written into the audit from the
-    settings reference (`ignored_env_keys` itself lists the vocabulary names present; `settings[].env_documented_set`
-    covers only the documented subagent model variables). The
-    audit does not enumerate other `env` names, and credential-shaped names are never reported.
-  - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
-    "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
-    process wrapper and sync variables, the dialog timer and `CLAUDE_CODE_DISABLE_ATTACHMENTS` from
-    2.1.290); `every_file` = ignored from every settings file, user included (hosting-environment
-    identity variables, `CLAUDE_CODE_RESTRICTED`, ...); `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` set
-    to `1` is ignored there (env-vars page, fetched 2026-10-24), other values apply. The telemetry
-    and tracing variables on the docs' list are not in the vocabulary: they name export endpoints
-    and their auth headers, which this audit doesn't look at. Claude Code logs the dropped ones in `claude --debug`
-    and lists them in `/status` or `claude doctor`; a `-p` run shows no notice.
-  - Managed files are never flagged. A key missing from the table isn't judged. Unmeasured: whether
-    `--settings` or the launch environment also sets the value.
 - **HYG-missing-hook-script** (`missing_hook_scripts`): a hook points at a file that doesn't exist.
   High severity for PreToolUse, because it can block every call.
 - **HYG-dead-refs** (`claude_md_dead_refs`): CLAUDE.md names paths that don't exist. Before reporting,

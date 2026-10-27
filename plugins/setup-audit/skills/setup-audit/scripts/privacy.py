@@ -280,9 +280,7 @@ SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'),
                  ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_documented_set', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
-                 ('other', 'autoUpdates'),  # scope_ignored_keys / ignored_env_keys: table vocabulary and fixed env names (0.11.0)
-                 ('scope_ignored_keys', '*', 'key'), ('scope_ignored_keys', '*', 'scope'),
-                 ('ignored_env_keys', '*', 'name'), ('ignored_env_keys', '*', 'reason')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
+                 ('other', 'autoUpdates')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
 ENTRY_KEEP = tuple((k,) for k in ('source', 'scope', 'status', 'kind', 'relation', 'active_state',
                                   'reason', 'frontmatter_status', 'estimate_basis')) \
     + tuple(('frontmatter', k) for k in FRONTMATTER_KEEP)

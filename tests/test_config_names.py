@@ -283,14 +283,6 @@ class DocumentedEnvSet(unittest.TestCase):
         for bad in ({}, {'env': ['A']}, {'env': None}, None, 'text'):
             self.assertEqual(config_names.documented_env_set(bad, ['A']), [])
 
-    def test_credential_shaped_vocabulary_names_are_rejected(self):
-        for name in ('CLAUDE_CODE_MESSAGING_TOKEN', 'OTEL_EXPORTER_OTLP_CLIENT_KEY', 'OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY'):
-            self.assertNotIn(name, config_checks.ENV_VOCABULARY)
-        self.assertIn('HOME', config_checks.ENV_VOCABULARY)
-        self.assertIn('CLAUDE_CODE_ACCOUNT_UUID', config_checks.ENV_VOCABULARY)
-        got = config_checks.scope_ignored('project', {'env': {'CLAUDE_CODE_MESSAGING_TOKEN': CANARY, 'HOME': 'x'}})
-        self.assertEqual(got[1], [{'name': 'HOME', 'reason': 'project_local'}])
-
 
 class HookFingerprintHasNoCredentialFields(unittest.TestCase):
     """Rule: an http hook fingerprint depends on neither headers nor allowedEnvVars."""

@@ -6,28 +6,6 @@
     "settings_summary": {
       "type": "object",
       "properties": {
-        "scope_ignored_keys": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["key", "scope"],
-            "properties": {
-              "key": {"type": "string"},
-              "scope": {"type": "string", "enum": ["user_or_managed", "managed", "global_config", "user_local_managed", "user"]}
-            }
-          }
-        },
-        "ignored_env_keys": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name", "reason"],
-            "properties": {
-              "name": {"type": "string"},
-              "reason": {"type": "string", "enum": ["project_local", "every_file", "ignored_if_1"]}
-            }
-          }
-        },
         "plugin_written_rules": {
           "type": "array",
           "items": {

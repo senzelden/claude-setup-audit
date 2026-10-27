@@ -96,15 +96,7 @@ plugin names, relative script paths and pattern ids.
 `config_conflicts` is coverage source `config_conflicts` (`collected`, or `partial` when the caps
 omitted entries; `basis: static`). It reads settings text only.
 
-- Scope-ignored settings (`settings[].scope_ignored_keys`, `ignored_env_keys`, `basis: static`): the
-  table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`"
-  list (plus env-vars `CLAUDE_CODE_ENABLE_CFC`; the `env` names looked up are that fixed list, never
-  the file's other names), fetched 2026-10-24; it must be refreshed when the docs change and judges
-  only the file's own location. Not seen: `--settings` files, the launch environment,
-  `~/.claude.json` (not opened), env values and other env names (so the telemetry group and
-  `CLAUDE_CODE_ENABLE_CFC` are conditional), and a managed file never being flagged even where the
-  key would be ignored. Metadata-only keeps the key names, scope classes, env names and reasons
-  (fixed vocabulary). `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
+- `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
   present in `env`. `settings[].sandbox` omits `credentials`; `sandbox_credentials_configured`
   records only whether it is set. Not read either: `.envrc`, mise `[env]`, devcontainer env and
   compose `environment` (existence only: `env.envrc_not_read`, `env.env_files_not_read`).

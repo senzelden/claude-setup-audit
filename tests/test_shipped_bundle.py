@@ -26,6 +26,10 @@ EXPORT_VOCABULARY = re.compile(r'OTEL_|BETA_TRACING|GatewayUrl|\benv\.get\b|\bht
 # Also added in 0.11.0: --hash-salt-file read a key (the HMAC salt) from a user file. Gone from 0.14.2.
 SALT_FILE = re.compile(r'salt[ _-]file|hash-salt|hash_salt', re.I)
 
+# Also added in 0.11.0: HYG-scope-ignored, whose tables named credential-adjacent settings and env
+# variables. Gone from 0.14.3.
+SCOPE_IGNORED = re.compile(r'scope[_-]ignored|ignored_env_keys|SETTINGS_SCOPES|ENV_EVERY_FILE')
+
 
 def shipped_text_files():
     for path in sorted(PLUGIN.rglob('*')):
@@ -69,6 +73,17 @@ class ShippedBundleTests(unittest.TestCase):
         for path, text in shipped_text_files():
             match = SALT_FILE.search(text)
             self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+    def test_no_shipped_file_offers_scope_ignored_settings(self):
+        for path, text in shipped_text_files():
+            match = SCOPE_IGNORED.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
+        try:
+            import config_checks
+        finally:
+            sys.path.pop(0)
+        self.assertFalse(hasattr(config_checks, 'scope_ignored'))
 
 
 class RiskyRulePatterns(unittest.TestCase):
