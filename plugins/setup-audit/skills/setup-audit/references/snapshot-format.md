@@ -82,9 +82,13 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   true/false/null (null: unset, non-boolean or not a managed file). Guard options are read only from
   `pluginConfigs["cc-plugin-sec-default@builtin"].options` in managed settings; no plugin ids are kept.
   Additive within snapshot v1.
-- `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
-  `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,
-  booleans, enums and OAuth scope tokens only; additive within snapshot v1.
+- `extensions.mcp_servers[]` exposure fields and `transcripts.tool_errors`: optional; names, counts,
+  booleans and enums only; additive within snapshot v1. 0.14.0 removed credential-adjacent fields
+  (see CHANGELOG): MCP `env_*`, `headers_*`, `oauth_*` and `url_variable_references`,
+  `project_trust_accepted`, user and local scope rows, `extensions.mcp_project_state`,
+  `extensions.mcp_name_collisions`, `global.mcp_user`, hook `header_keys` and `allowed_env_vars`,
+  `settings[].env_keys` (now `env_documented_set`), and the `envrc` names. The audit does not read
+  credential-bearing files or values. Readers ignore the missing fields.
 - `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
   transcript shapes (Claude Code 2.1.310, 2026-10-25). `subagent_models.rows[]`: `agent_type`,
   `requested_model` (the meta `model`: usually the model Claude passed for the call, `inherit` for
@@ -138,7 +142,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
 - `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC dates
-  and setting names only; never message text, plan tier or `~/.claude.json` data:
+  and setting names only; never message text or plan tier; `~/.claude.json` is not opened:
   - `limit_events`: per documented limit-message kind (`session`, `weekly`, `opus`, `sonnet`,
     `warning_85`, `auto_continue_wait`, `spend_limit`, `credits_required_1m`,
     `fable_consent_unanswered`; kinds with no event are omitted) `count`, `sessions` (distinct
@@ -184,10 +188,10 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     settings reference, fetched 2026-10-24. Static, names only; `null` values and keys absent from
     the table are not reported;
   - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude Code
-    ignores there; `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
+    ignores there, drawn from a fixed documented vocabulary (no other `env` names are read); `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
     (env values are never collected, so the last two are conditional). Managed files get neither field;
-  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler with
-    `headers` reduced to its sorted names: header values never enter it), and `on_failure`
+  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without its
+    `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`
     (`command`/`http`, a documented value only), `background` (a command hook with `async` or
     `asyncRewake`),
     `issues`/`unknown_fields`/`plugin_relative` when present.

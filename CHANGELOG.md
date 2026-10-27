@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+The audit no longer reads credential-bearing files or values. This answers the directory's "reads
+a credential" hold: it does not open `~/.claude.json`, read `.envrc` contents, or read env, header
+or OAuth values or names. Enforced by tests that fail if a script opens such a file or reads such a
+value. Snapshot version stays 1; readers ignore the missing fields.
+
+### Removed
+
+- `~/.claude.json` as a source, and with it: `global.mcp_user`, user and local scope rows in
+  `extensions.mcp_servers`, `extensions.mcp_project_state` (approval lists, toggles),
+  `extensions.mcp_name_collisions`, and `mcp_servers[].project_trust_accepted`.
+- MCP `env`, `headers` and `oauth` fields: `env_keys`, `headers_keys`, `env_variable_references`,
+  `headers_variable_references`, `env_literal_keys`, `headers_literal_keys`, `oauth_keys`,
+  `oauth_scopes`, and `url_variable_references`.
+- HTTP hook `header_keys` and `allowed_env_vars` in `hook_handlers`.
+- `settings[].env_keys` (replaced, see Changed).
+- `.envrc` contents: `envrc.pointer_lines` and `envrc.literal_secret_names`, and `.envrc` names
+  in `env.declared`.
+- Checks: RDY-envrc-literal-secret; the SEC-mcp-exposure literal-key, `${VAR}`-reference,
+  `oauth_scopes` and `project_trust_accepted` bullets; the HYG-mcp-config same-name-across-scopes
+  check; the http-hook header and allowed-env-var review in SEC-hooks.
+
+### Changed
+
+- `.envrc` is presence only: `envrc` is `{present, git}` or `null`, and `env.envrc_not_read` is
+  true when the file exists. RDY-env-undeclared says a variable may be declared in `.envrc`
+  instead of treating it as undeclared; RDY-env-invisible-to-claude rests on presence.
+- `settings[].env_keys` became `settings[].env_documented_set`, the documented `SUBAGENT_ENV` names
+  present in `env`. HYG-scope-ignored `ignored_env_keys` reports only names from a fixed
+  vocabulary taken from the settings reference; credential-shaped names are never reported.
+- `credential_mechanisms` records only that `oauth` or `headersHelper` is configured.
+- `mcp_configured_but_unused` covers project, plugin and managed servers; its note and a new
+  `coverage.limitations` entry say user and local servers live in `~/.claude.json`, which is not
+  read, and to review them with `claude mcp list`.
+- The hook handler fingerprint no longer covers `headers` or `allowedEnvVars`.
+- Eval case `readiness-envrc-pointers` now expects the `.envrc` to be reported as present but not
+  read, with undeclared variables left unverified and nothing from inside the file reported.
+
 ## [0.13.3] - 2026-10-27
 
 The directory's scan of 0.13.2 passed its security scan and kept two holds: "Uses a credential

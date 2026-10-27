@@ -22,7 +22,7 @@ and cache-health cases. Ask for approval before paid runs; the plan itself autho
 | Tag | Cases | What it measures | Cost |
 |---|---|---|---|
 | `trigger` | 3 should-trigger, 3 near-miss should-not-trigger | whether the skill fires on natural phrasing, and stays out of adjacent requests | cheap: turn cap of 3–4 |
-| `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits | expensive: full audits |
+| `quality` | `audit-flags-risky-permissions`, `readiness-envrc-pointers` | a full read-only audit against a fixture config: findings, secret handling, no edits; the readiness case checks that a `.envrc` is treated as present but not read (undeclared variables stay unverified, nothing from inside it is reported) | expensive: full audits |
 | `quality`, `apply` | `approved-apply-permission` | one explicitly approved removal, original-byte backup, preserved unrelated settings and reported verification | paid; evidence kept local |
 | `quality`, `suppression` | `decision-suppression` | report finalization with matching, changed, expired and unverified decisions | not yet piloted |
 | `quality`, `cache` | `cache-health` | known transcript totals, TTL subset, rewrite classifications and incomplete usage | not yet piloted |
@@ -134,7 +134,7 @@ collector integration evidence. Under two-arm evaluation the built-in `with-only
 informational, so also inspect collector status independently of the aggregate score. Fixture
 or safety check failures must not be hidden by a high model score.
 
-Readiness has four independent judge obligations. The author calibration examples in
+Readiness has four independent judge obligations (the `.envrc` is present but never read). The author calibration examples in
 `readiness-envrc-pointers/rubric-examples.json` cover positive, negative and borderline replies;
 they are not an independent accuracy estimate. Review judge disagreements against these examples
 and the answer before changing a rubric. The free checker tests run with the normal Python suite:

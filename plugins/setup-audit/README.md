@@ -19,9 +19,11 @@ Ask Claude to "audit my Claude Code setup", or run `/setup-audit:setup-audit`.
 
 - **Reads** Claude Code configuration on your machine: managed settings files, `~/.claude/`
   (settings, plugins, memory, transcripts, usage data, prompt history) and `.claude/` plus
-  CLAUDE.md in projects you have used with Claude Code. For MCP servers, hooks and environment
-  files it records names and variable names only, never their values. Best-effort secret
-  detection redacts anything that looks like a credential before it reaches a report.
+  CLAUDE.md in projects you have used with Claude Code. It does not open `~/.claude.json`, does
+  not read `.envrc` (it only notes whether the file exists), and never reads environment, header
+  or OAuth values or names, because those files and values hold or point to credentials. MCP
+  servers defined in `~/.claude.json` (user and local scope) are therefore not audited; review
+  them with `claude mcp list`. Best-effort secret detection redacts anything that looks like a credential before it reaches a report.
 - **Runs** only the Python standard-library scripts bundled in `skills/setup-audit/scripts/`,
   plus read-only `git` queries to tell tracked files from ignored ones. It never runs hooks, MCP
   servers, package launchers or downloaded code. The optional status-line logger

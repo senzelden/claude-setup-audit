@@ -113,9 +113,9 @@ readiness, cost metrics and harness overhead.
     (`background`, i.e. `async`/`asyncRewake`) or on `Stop`, `SubagentStop`, `TaskCompleted` and
     `TeammateIdle`; a `block` set there is `on_failure_no_effect` (HYG-hook-config).
   - `http`: a network egress point — every matching event's JSON is POSTed to that URL. Flag an
-    unfamiliar host, a matcher wide enough to send most tool calls, and whether `header_keys` /
-    `allowed_env_vars` on the handler (names only, never values) suggest a secret is being
-    interpolated into the request.
+    unfamiliar host, a matcher wide enough to send most tool calls, and whether the request may
+    carry a credential. The audit does not read the handler's `headers` or `allowedEnvVars`, so
+    it cannot say; ask the user to review those in the settings file.
   - `prompt` / `agent`: another LLM trust boundary. The hook's own `prompt` text is untrusted-in
     reverse — it's instructions the *hook* sends to a model, so treat a hook prompt built from
     unsanitized tool input the same way `SEC-risky-allow` treats an unsafe command: something that
@@ -157,24 +157,21 @@ readiness, cost metrics and harness overhead.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
 - **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
-  `settings[].mcp_policy`; static, never connected, no values stored). Weigh, citing field and
-  source:
-  - `headers_literal_keys` / `env_literal_keys` on a `project` server whose `file_git_status` is
-    `tracked`: a committed credential is likely. Confirm on the file (never copy the value), then
-    propose moving the value out of `.mcp.json`: reference an environment variable (`${VAR}` in
-    `headers`/`env`) or use `headersHelper`, and rotate the credential if it was committed. This
-    is MCP-specific; `SEC-secret-literal` covers tokens in allow rules, not this.
+  `settings[].mcp_policy`; static, never connected, no values stored). The audit does not read
+  MCP `env`, `headers` or `oauth` values or names, so it makes no claim about literal credentials
+  there; for a committed `.mcp.json` the user checks those blocks themselves. User and local
+  servers live in `~/.claude.json`, which the audit does not open (`claude mcp list` shows them).
+  Weigh, citing field and source:
   - `url_has_userinfo` or `url_has_query` on a remote server: a credential may sit in the URL.
-    Prefer headers with `${VAR}` references. Credential variables such as `ANTHROPIC_API_KEY` in a
-    remote `url`/`headers` read as empty (mcp.md), so `url_variable_references` naming one means a
-    broken server, not a leak.
+    Suggest moving it to a header that references an environment variable (docs page `mcp`).
   - `plaintext_transport`: tokens and tool traffic in cleartext to a non-loopback host.
     Recommendation-level; the docs do not rate it.
   - A `project` server with a `policy_observations` kind `approval_enable_all` or
     `approval_enabled`: any server a teammate adds to `.mcp.json` loads. In `claude -p`, SDK and
     cloud sessions, project servers load without asking (mcp.md). Propose
     `disabledMcpjsonServers` for unwanted ones. Committed approvals are ignored in an untrusted
-    folder, so cite `project_trust_accepted`.
+    folder, so mention that the approval only applies once the user has accepted the trust dialog for that
+    folder (docs page `mcp`); the audit does not record whether they have.
   - `credential_mechanisms` containing `headersHelper_configured` on a `project` server: a
     repo-supplied shell command that runs once the folder is trusted ("arbitrary shell command",
     mcp.md).
@@ -185,8 +182,6 @@ readiness, cost metrics and harness overhead.
     without `allowManagedMcpServersOnly` merges user allowlists, and a `serverName` entry "is not
     a security control" (managed-mcp.md). `serverUrl`/`serverCommand` entries are not evaluated
     here, so never claim a server is unrestricted without checking them.
-  - `oauth_scopes: null` on a sensitive remote service: suggest pinning `oauth.scopes`, the
-    documented way to restrict a server.
   Cross-check reliability through `tool_prefix` = `transcripts.tool_errors.by_mcp_server[].server`.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
@@ -224,7 +219,9 @@ readiness, cost metrics and harness overhead.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
 - **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these
-  legacy user/project names have no observed calls in the scanned records. Check transcript
+  project, plugin and managed server names have no observed calls in the scanned records. User and local servers (stored in
+  `~/.claude.json`, which the audit does not open) are not in this list, so it can't call them
+  unused; for those suggest `claude mcp list`. Check transcript
   coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
   transcript scans provide no usage evidence. Propose removal only with additional evidence that
   the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
@@ -474,7 +471,7 @@ metric that motivated it, so the next run can check whether it moved.
   `permissions` or `hooks`, since the skipped part can be a deny rule or guard hook; managed files
   keep enforcing the rest (`coverage` reason `invalid_entries`).
 - **HYG-scope-ignored** (`settings[].scope_ignored_keys`, `settings[].ignored_env_keys`, static,
-  names only): a setting or `env` variable in a file where Claude Code ignores it, so it does
+  names only): a setting, or an `env` variable from a fixed documented list, in a file where Claude Code ignores it, so it does
   nothing there. Say so as an ineffective setting, not a security finding, and propose moving it to
   the file that works (or removing it). Which file works comes from the key's documented scope
   (settings reference, key table "Scope" column and each key's **Scope** line, fetched 2026-10-24):
@@ -490,6 +487,9 @@ metric that motivated it, so the next run can check whether it moved.
   - `user_local_managed` (`syncClaudeAiSkills`, `syncClaudeAiPlugins`, `useAutoModeDuringPlan`,
     `skipDangerousModePermissionPrompt`) is ignored in the shared project `.claude/settings.json`
     only, so the personal `settings.local.json` is the right place.
+  - `ignored_env_keys` only names variables on a fixed vocabulary written into the audit from the
+    settings reference (`settings[].env_documented_set` lists the documented names present). The
+    audit does not enumerate other `env` names, and credential-shaped names are never reported.
   - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
     "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
     process wrapper and sync variables, the telemetry exporter group from Claude Code 2.1.282, the
@@ -610,11 +610,10 @@ metric that motivated it, so the next run can check whether it moved.
     baseline, so do not treat their absence there as clean. Plugins that spawn sessions without a
     trace in the files the collector reads (remember's nested summarizer, autoharness forks) are
     not attributed.
-- **HYG-mcp-config** (`config_notes`, `extensions.mcp_name_collisions`): `url_without_type`
+- **HYG-mcp-config** (`config_notes`): `url_without_type`
   (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`
-  (skipped at load), `sse_deprecated` (switch to `http`), and the same name in several scopes with
-  `endpoint_origins_differ: true` (OAuth sign-ins are stored per endpoint, so sign-in state differs
-  between projects). `empty_url_placeholder` is a documented placeholder, not a finding.
+  (skipped at load) and `sse_deprecated` (switch to `http`). Same-name servers across scopes are not
+  compared, since user and local scopes are not read. `empty_url_placeholder` is a documented placeholder, not a finding.
   Connection failures (`transcripts.mcp_failures`, observed, undocumented): per server name,
   `sessions_failed` and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts
   (error text is never stored) and `configured` (exact name match to a collected config name;
@@ -641,18 +640,19 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   no version pins, combined with `environment_issue` friction or repeated install failures. Fix: a
   `make setup` / `just setup` / `dev` script, plus pins in the repo's existing style.
 - **RDY-env-undeclared** (`env.undeclared`): the code reads variables that no mechanism declares.
-  Any mechanism counts: `.env.example`, a pointer-only `.envrc` (direnv + pass/1Password/sops),
-  mise `[env]`, devcontainer, compose, pydantic settings. Propose a declaration in the mechanism the
+  Any mechanism the audit reads counts: `.env.example`, mise `[env]`, devcontainer, compose,
+  pydantic settings. The audit does not read `.envrc` (it holds credentials or pointers to them), so
+  when `env.envrc_not_read` is true, a variable listed as undeclared **may be declared in
+  `.envrc`**: say so and ask the user, never claim it is undeclared. Propose a declaration in the mechanism the
   repo already uses; suggest `.env.example` only when there is none. Lead with `kind: required`
   (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only` only as
   counts (`undeclared_counts`).
 - **RDY-env-failfast** (`env.validation` empty, several required reads): suggest validation in the
   stack's idiom (pydantic-settings, zod/t3-env, envalid). Parked for small scripts.
-- **RDY-envrc-literal-secret** (`envrc.literal_secret_names`, counted under security): a `.envrc`
-  holds values rather than pointers. Worse if `envrc.git` is `tracked`. Report names only.
-- **RDY-env-invisible-to-claude** (`envrc` present and `claude_env_hook` false, especially with
+- **RDY-env-invisible-to-claude** (`envrc.present` and `claude_env_hook` false, especially with
   `env_error_hits` > 0): direnv loads at an interactive prompt, which Claude's Bash tool never
-  shows, so variables that work in the user's terminal are missing for Claude. Offer these
+  shows, so variables that work in the user's terminal are missing for Claude. This rests on the
+  file's presence, not its contents. Offer these
   options, stating the trade-off:
   1. *Non-secret* variables: a `SessionStart` + `CwdChanged` hook that writes `export` lines to
      `CLAUDE_ENV_FILE` (see the hooks docs), filtered to an allowlist of non-secret names.

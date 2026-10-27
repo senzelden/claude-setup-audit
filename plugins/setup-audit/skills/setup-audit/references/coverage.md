@@ -98,11 +98,12 @@ omitted entries; `basis: static`). It reads settings text only.
 
 - Scope-ignored settings (`settings[].scope_ignored_keys`, `ignored_env_keys`, `basis: static`): the
   table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`" list
-  (plus env-vars `CLAUDE_CODE_ENABLE_CFC`), fetched 2026-10-24; it must be refreshed when the docs
+  (plus env-vars `CLAUDE_CODE_ENABLE_CFC`; the `env` names looked up are that fixed list, never the file's other names), fetched 2026-10-24; it must be refreshed when the docs
   change and judges only the file's own location. Not seen: `--settings` files, the launch environment,
-  `~/.claude.json` contents, env values (so the telemetry group and `CLAUDE_CODE_ENABLE_CFC` are
+  `~/.claude.json` (not opened), env values and other env names (so the telemetry group and `CLAUDE_CODE_ENABLE_CFC` are
   conditional), and a managed file never being flagged even where the key would be ignored.
   Metadata-only keeps the key names, scope classes, env names and reasons (fixed vocabulary).
+  `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names present in `env`.
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the
   highest-precedence file in the stack (managed > local > project > user).
@@ -178,23 +179,22 @@ grants; never execute a skill or its dynamic context to inspect it.
 
 `extensions` inventories selected MCP transport, executable, origin, argument count, package
 version shape, credential mechanisms and source scope. Argument values and URL paths are
-omitted; environment/header keys and variable names are retained without their values.
-Neither MCP servers nor authentication helpers are run. Same names across scopes are separate
-observations; `mcp_name_collisions` flags a name present in more than one scope for a project,
-comparing origins only, and is not a computed effective merge. Remote connectors and runtime
-overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds
+omitted. The audit does not read MCP `env`, `headers` or `oauth` values or names, because
+they hold or point to credentials; only the presence of the `oauth` and `headersHelper`
+mechanisms is recorded. Neither MCP servers nor authentication helpers are run. It does not open
+`~/.claude.json`, where user and local MCP servers live, so only project (`.mcp.json`), plugin and
+managed servers appear; review the rest with `claude mcp list`
+(`coverage.limitations` says so). Remote connectors and runtime overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds
 alone for removal.
 
 MCP exposure fields (`transport_class`, `endpoint_locality`, `plaintext_transport`, URL flags,
-literal-key lists, OAuth fields, `tool_prefix`, `file_git_status`) come from configuration text
+`tool_prefix`, `file_git_status`) come from configuration text
 only. Locality needs no DNS, and nothing is connected, authenticated or executed. URL path,
 query, userinfo, argument, env, header, `clientId` and `headersHelper` values are never copied.
-Approvals, toggles, allow and deny policy, and permission rules are per-source observations
+Allow and deny policy and permission rules from settings files are per-source observations
 (`policy_observations`), not effective state; `serverUrl`/`serverCommand` entries are counted,
-not evaluated. The `~/.claude.json` `projects[...]` approval lists (`enabledMcpjsonServers`,
-`disabledMcpjsonServers`) are an undocumented location observed on 2026-09-29; the
-`disabledMcpServers`/`enabledMcpServers` toggles and `hasTrustDialogAccepted` are documented
-there. `tool_prefix` uses the documented plugin normalization for every server. Documentation
+not evaluated. Approval lists, enable/disable toggles and trust-dialog state live in
+`~/.claude.json`, so they are not observed. `tool_prefix` uses the documented plugin normalization for every server. Documentation
 checked 2026-09-29: `mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
 
 Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
@@ -232,8 +232,8 @@ including `cache_read_tokens` (billed at a fraction of base input), not spend. `
 (`querySource`, `params.model`, `params.output_config.effort`, `params.thinking.type`,
 `cacheControl[].value.ttl`) are counted per source class, deduplicated by project (the transcript directory's project, also for subagent files), sessionId and
 request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25).
-`configured` reads env key names only, never values, and cannot see shell or managed environment
-variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
+`configured` is an exact name match to collected project, plugin and managed server names; user
+and local servers (in `~/.claude.json`) are not read, so they are never `configured`. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
 as an error.
 
 Limit messages (`subscription.limit_events`, 0.13.0): the message texts are documented (errors, "Usage
@@ -339,8 +339,8 @@ of `prependPlugins`/`appendPlugins`.
 Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 
-Verified 2026-09-15 against MCP (docs page `mcp`) (user and per-project
-local definitions in `.claude.json`, project `.mcp.json`) and
+Verified 2026-09-15 against MCP (docs page `mcp`) (project `.mcp.json`; user and
+local definitions live in `.claude.json`, which the audit does not open) and
 plugin reference (docs page `plugins-reference`) (inline/custom component
 locations). Installed-registry list records and field types were separately observed locally
 on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.

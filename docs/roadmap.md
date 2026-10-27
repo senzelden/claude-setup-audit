@@ -140,10 +140,13 @@ Hosted validation passed all eight jobs at `1167473`:
 
 ## Next candidates, separately scoped
 
-- **Directory-scan follow-ups** (deferred from the 0.13.1 review): `~/.claude.json` is read twice
-  (unbounded for `mcp_user`, capped for the names-only view); collect.py's `plugin_relative` check
-  JSON-dumps the whole hook handler, header values included, to compute a boolean;
-  `handler_fingerprint` still hashes the raw command and URL (use the redacted command and the
+- **No credential reads (0.14.0, unreleased)**: the audit no longer opens `~/.claude.json`, reads
+  `.envrc` contents, or reads env, header or OAuth values and names. This answers the directory's
+  "reads a credential" hold. Open question: user and local MCP coverage would need a supported
+  non-credential source (for example output the user pastes from `claude mcp list`); until then
+  the coverage limitation points the user to that command.
+
+- **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still hashes the raw command and URL (use the redacted command and the
   URL's origin and path shape); `stage_plugin.py` copies the working tree (`__pycache__`,
   `.claude/`) and leaves its temp dir behind on failure, and its symlink test covers only
   `evals/`; `fetch_doc.py`'s `O_TRUNC` write keeps an existing file's mode and leaves a partial
