@@ -37,7 +37,8 @@ or sent credential values, and its snapshot output is unchanged apart from the f
 ### Validation and limits
 
 - Local regression tests pass, including the fetch_doc tests under a symlinked temp dir (the
-  macOS layout), and strict plugin validation passes. No paid model evaluations were run, so
+  macOS layout), and strict plugin validation passes. Hosted validation passed all eight jobs at
+  `5873f74` ([run](https://github.com/senzelden/claude-setup-audit/actions/runs/40497365085)). No paid model evaluations were run, so
   eval discovery from the staged layout is not yet verified. The directory's scanner cannot be
   run locally, so clearance of the hold is not confirmed until Anthropic re-reviews.
 
