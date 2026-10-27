@@ -2,9 +2,7 @@
 import os
 from pathlib import Path
 import re
-import stat
 import config_names
-import harness
 import inventory
 import plugin_footprint
 
@@ -218,7 +216,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
                 if kind == 'mcpServers':
                     servers_from(data, manifest_path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
                 elif kind == 'hooks':
-                    add_hooks(plugin, data, manifest_path, hook_summary, root, redact)
+                    add_hooks(plugin, data, manifest_path, hook_summary, root)
             if len(set(paths)) > MAX_ENTRIES:
                 sources.append(inventory.source(manifest_path, 'plugin', 'partial', reason='component_path_limit',
                                                 omitted=len(set(paths))-MAX_ENTRIES))
@@ -232,7 +230,7 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
                     if kind == 'mcpServers':
                         servers_from(data, path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
                     else:
-                        add_hooks(plugin, data, path, hook_summary, root, redact)
+                        add_hooks(plugin, data, path, hook_summary, root)
                 else:
                     component_files(plugin, path, kind, sources, redact)
     sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
@@ -240,69 +238,11 @@ def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sourc
     return dict(mcp_servers=servers, plugins=plugins, sources=sources,
                 limitations=['Effective activation, runtime overrides and remote connectors remain unknown; approvals, server policy and permission rules are per-source observations, not effective state.',
                              'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
-                             'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.']
-                + ([MOD_SETTINGS_LIMITATION] if any(
-                    'settings.read' in (c.get('mod') or {}).get(k, ()) for p in plugins
-                    for c in p['components'] for k in ('events', 'calls')) else []))
+                             'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.'])
 
 
-MOD_EXTENSIONS = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx')
-MOD_MAX_BYTES = 512 * 1024
-MOD_MAX_NAMES = 50
-MOD_NAME_CAP = 64
-MOD_NAME = re.compile(r'[A-Za-z][\w.]*')
-# Heuristic text patterns (mods reference "The hook function", mods-admin "Review what a mod can do",
-# fetched 2026-10-25): on('<event>' and $.<namespace>.<method>. Comments and strings can add names.
-MOD_EVENT = re.compile(r"""(?<![\w.$])on\s*\(\s*(['"`])([^'"`\n]{1,%d})\1""" % MOD_NAME_CAP)
-MOD_CALL = re.compile(r'\$\.([A-Za-z]\w*(?:\.[A-Za-z]\w*)+)')
-MOD_SETTINGS_LIMITATION = ('A mod that registers settings.read can rewrite merged settings, so the collected settings '
-                           'files are not the effective settings.')
-
-
-def _names(found):
-    """(sorted unique valid names up to MOD_MAX_NAMES, whether names were dropped for the cap)."""
-    names = sorted({n for n in found if len(n) <= MOD_NAME_CAP and MOD_NAME.fullmatch(n)})
-    return names[:MOD_MAX_NAMES], len(names) > MOD_MAX_NAMES
-
-
-def scan_mod(hooks_path, root, modules, redact):
-    """Static scan of the one module a hooks.json `modules` array names; never imports or runs it.
-
-    Returns the plugin component's `mod` record: names only, no source text, comments or literals.
-    """
-    rel = modules[0] if isinstance(modules, list) and len(modules) >= 1 and isinstance(modules[0], str) else None
-    if rel is None:
-        return dict(module=None, exists=False, bytes=0, events=[], calls=[], truncated=False,
-                    reason='invalid_modules')
-    mod = dict(module=redact(rel)[:200], exists=False, bytes=0, events=[], calls=[], truncated=False)
-    path = os.path.abspath(os.path.join(os.path.dirname(hooks_path), rel))
-    if not harness._inside(path, root):
-        return dict(mod, reason='outside_plugin_root')
-    if not path.lower().endswith(MOD_EXTENSIONS):
-        return dict(mod, reason='unsupported_extension')
-    try:
-        # Nonblocking, no-follow open: a FIFO or a link swapped in at the path must not stall or redirect the read.
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
-        with os.fdopen(fd, 'rb') as f:
-            info = os.fstat(f.fileno())
-            if not stat.S_ISREG(info.st_mode):
-                return dict(mod, reason='not_regular_file')
-            raw = f.read(MOD_MAX_BYTES + 1)
-    except FileNotFoundError:
-        return dict(mod, reason='absent')
-    except OSError:
-        return dict(mod, reason='unreadable')
-    over = len(raw) > MOD_MAX_BYTES
-    text = raw[:MOD_MAX_BYTES].decode('utf-8', errors='replace')
-    events, more_events = _names(m.group(2) for m in MOD_EVENT.finditer(text))
-    calls, more_calls = _names(m.group(1) for m in MOD_CALL.finditer(text))
-    return dict(mod, exists=True, bytes=info.st_size, events=events, calls=calls,
-                truncated=over or more_events or more_calls)
-
-
-def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
-    is_mod = isinstance(data, dict) and 'modules' in data
-    hooks = data.get('hooks', {} if is_mod else data)
+def add_hooks(plugin, data, path, hook_summary, root=None):
+    hooks = data.get('hooks', data)
     if not isinstance(hooks, dict):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
@@ -311,8 +251,6 @@ def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
                     for ev, groups in hooks.items() for group in groups for h in group.get('hooks', [])]
         component = dict(source=path, kind='hooks', handlers=handlers[:MAX_ENTRIES],
                          status='partial' if len(handlers) > MAX_ENTRIES else 'collected')
-        if is_mod and root:
-            component['mod'] = scan_mod(path, root, data['modules'], redact or str)
         plugin['components'].append(component)
     except (TypeError, AttributeError, KeyError):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))

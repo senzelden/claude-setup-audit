@@ -359,9 +359,6 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
-          # Mod API vocabulary (event and call names matching a strict identifier pattern); module path is masked.
-          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
-          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
 KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + TOOL_USAGE_KEEP + SUBSCRIPTION_KEEP
     + SINGLE
@@ -452,9 +449,8 @@ PATH_FAMILIES = {
                'drift log path and the /insights report path',
         'leaves': (), 'maybe': _FILE_SOURCES},
     'plugin_paths': {
-        'doc': 'plugin install roots, plugin component files, declared mod modules and hook scripts that decide permissions',
-        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'mod', 'module'),
-                   ('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', 'decision_file')), 'maybe': (('extensions', 'plugins', '*', 'source'),
+        'doc': 'plugin install roots, plugin component files and hook scripts that decide permissions',
+        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', 'decision_file'),), 'maybe': (('extensions', 'plugins', '*', 'source'),
                                 ('extensions', 'plugins', '*', 'components', '*', 'source'))},
     'referenced_files': {
         'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '

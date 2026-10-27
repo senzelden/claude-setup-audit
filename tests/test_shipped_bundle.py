@@ -30,6 +30,11 @@ SALT_FILE = re.compile(r'salt[ _-]file|hash-salt|hash_salt', re.I)
 # variables. Gone from 0.14.3.
 SCOPE_IGNORED = re.compile(r'scope[_-]ignored|ignored_env_keys|SETTINGS_SCOPES|ENV_EVERY_FILE')
 
+# Also added in 0.11.0: SEC-mods and the mods inventory, which read a plugin's JS hook modules and
+# the managed guard options. Gone from 0.14.3.
+MODS_FEATURE = re.compile(r'SEC-mods|mods_policy|allowManagedModsOnly|allowModsToOverrideDenyRules'
+                          r'|cc-plugin-sec-default')
+
 
 def shipped_text_files():
     for path in sorted(PLUGIN.rglob('*')):
@@ -97,6 +102,17 @@ class RiskyRulePatterns(unittest.TestCase):
                          r"Bash\((curl|wget|nc|ssh|scp|rsync)[ :]\*?\*?\)|Bash\((curl|wget)[: ]\*")
         self.assertEqual(patterns['interpreter-wildcard'],
                          r"Bash\((python3?|node|bash|sh|npx|uv run|\.venv/bin/python)[ :]*(-[ce]\s*['\"]?\s*)?\*")
+
+    def test_no_shipped_file_offers_the_mods_inventory(self):
+        for path, text in shipped_text_files():
+            match = MODS_FEATURE.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
+        try:
+            import collect
+        finally:
+            sys.path.pop(0)
+        self.assertFalse(hasattr(collect, 'mods_policy'))
 
 
 if __name__ == '__main__':

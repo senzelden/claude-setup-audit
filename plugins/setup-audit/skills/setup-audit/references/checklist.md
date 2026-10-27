@@ -123,36 +123,6 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
 
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
-- **SEC-mods** (`extensions.plugins[].components[].mod`, `settings[].mods`; mods overview "What a
-  mod can reach", mods-admin "Review what a mod can do", fetched 2026-10-25): a mod is a plugin
-  whose `hooks/hooks.json` has `modules`. Its module runs unsandboxed with the user's permissions,
-  so weigh `mod.calls` and `mod.events` (names from a heuristic text scan, never executed):
-  - calls: `fs.read` / `fs.write` (files), `process.run` / `process.spawn` (commands),
-    the network and environment families, `settings.read`, `mcp.call`, `model.complete` (spends
-    tokens), `prompt.submit` and `session.send` (acts as the user). Weigh a mod higher when it
-    combines file or environment access with network or process calls; a read-only status panel
-    is not a concern.
-  - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call, past
-    `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
-    `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
-    the collected files are then not the effective settings, see coverage).
-  - Guard options (mods-admin "Set options on the built-in guard", fetched 2026-10-25) are read
-    only at `pluginConfigs["cc-plugin-sec-default@builtin"].options` and only from managed settings;
-    `settings[].mods` records them as `true`/`false`/null (unset or non-boolean) for managed files only.
-    - `allow_managed_mods_only` true stops user-installed mods from loading. When it is not true,
-      mention that once per audit, and only when a mod is installed or managed settings exist.
-    - `allow_mods_override_deny_rules` true in managed settings is a finding: a user's mod that
-      approves tool calls can approve a call a `deny` rule refuses, so deny rules no longer bind mods.
-    - `prepend_names_guard` false (a managed `prependPlugins` list without `sec-default@builtin` or
-      `cc-plugin-sec-default@builtin`): the guard does not load, so neither option applies.
-    - `guard_options_ignored` true (HYG note, not protection): a user, project or local file carries the
-      guard entry, which neither sets nor loosens an option. Its value is deliberately not recorded.
-    - `prepend_plugins` / `append_plugins` change plugin load order; report presence only.
-  - The scan is heuristic: names can include extras from comments or strings, member calls such as
-    `child.on(...)` are skipped but indirect or dynamic use is missed, and a mod with `reason`
-    (`outside_plugin_root`, `not_regular_file`, `absent`, `unsupported_extension`,
-    `unreadable`, `invalid_modules`) was not read, and `mod.truncated` means a cap cut the scan. For the authoritative list tell the user to run
-    `claude plugin validate <dir>` themselves; collection never runs it.
 - **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
   `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
 - **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
@@ -286,7 +256,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   share of spend. Name how many subagent tokens ran on a top-tier model (`rows[].actual_model`) and
   why, from `requested_model` (the sibling meta file's `model` value):
   - A model name (e.g. `opus`): Claude passed it for that call. The per-invocation parameter outranks
-    everything except a mod's `agent.spawn` hook. Fix: CLAUDE.md guidance on when to pass `model`, or
+    the other model settings. Fix: CLAUDE.md guidance on when to pass `model`, or
     `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` together with `CLAUDE_CODE_SUBAGENT_MODEL` set to the wanted
     model (FORCE alone runs subagents on the main model), which makes Claude unable to pass one.
   - `inherit`, usually `agent_type: fork`: a fork, which runs on the main model. It is not a per-call

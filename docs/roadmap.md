@@ -103,7 +103,8 @@ Hosted validation passed all eight jobs at `0022836`:
   removed in 0.14.3, its tables named credential-adjacent settings and variables);
   `idleCompaction` and per-model auto-compact named as cost levers.
 - [x] Mods inventory (static scan of declared JS hook modules) and the built-in guard options
-  from managed settings (`SEC-mods`).
+  from managed settings (`SEC-mods`); removed in 0.14.3 with the scan, the guard options and
+  `settings[].mods`.
 - [x] `--hash-paths` (per-run salt; the optional salt file was removed in 0.14.2); fails closed for path-like kept strings.
 
 Hosted validation passed all eight jobs at `a794fa1`:
@@ -191,7 +192,7 @@ Hosted validation passed all eight jobs at `1167473`:
   for hosted results of subsequent commits. Further model runs require separate approval;
   all pilot results remain local. Deterministic implementation is included in 0.6.0; full
   eval-runner compatibility and model-quality evidence remain separate work.
-- **Claude Code 2.1.286-2.1.310 follow-ups:** mods, scope-ignored settings (removed in 0.14.3) and the compaction
+- **Claude Code 2.1.286-2.1.310 follow-ups:** mods and scope-ignored settings (both removed in 0.14.3) and the compaction
   levers shipped in 0.11.0. Not pursued after measurement (2026-10-25): attributing cache breaks
   to `shapeHash` changes (35 of 36 were followed by small writes) and skipping blob lines (a
   30-day collection takes 13 s). `prompt_snapshot` records are per session start or compaction,
