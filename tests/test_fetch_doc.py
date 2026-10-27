@@ -153,17 +153,28 @@ class FetchDoc(unittest.TestCase):
         self.assertIn('not a real directory', err)
         self.assertEqual(os.listdir(real), [])
 
-    def test_root_swapped_after_resolution_refused(self):
-        # Simulates the allowed-root prefix pointing elsewhere by the time it is opened.
+    def test_symlink_back_to_allowed_dir_used_as_prefix_refused(self):
         allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')
-        other = tempfile.mkdtemp(prefix='fetchdoc.other.')
-        dest = os.path.join(allowed, 'p.md')
-        swapped = (other, os.path.realpath(allowed), [])
-        with self.only_allowed(allowed), mock.patch.object(fetch_doc, '_allowed_root', return_value=swapped):
-            code, _, err, _ = run('llms.txt', dest, response=FakeResponse(b'x'))
-        self.assertEqual(code, 1)
-        self.assertIn('changed while being opened', err)
-        self.assertEqual(os.listdir(other), [])
+        os.symlink(allowed, os.path.join(allowed, 'loop'))
+        err = self.assert_refused_nothing_written(allowed, os.path.join(allowed, 'loop', 'p.md'))
+        self.assertIn('through a symlink', err)
+        self.assertEqual(sorted(os.listdir(allowed)), ['loop'])
+
+    def test_allowed_root_under_symlinked_ancestor_works(self):
+        # macOS-style: $TMPDIR=/var/folders/... where /var -> /private/var.
+        base = tempfile.mkdtemp(prefix='fetchdoc.mac.')
+        real_tmp = os.path.join(base, 'private', 'var', 'folders', 'T')
+        os.makedirs(real_tmp, 0o700)
+        os.symlink(os.path.join(base, 'private', 'var'), os.path.join(base, 'var'))
+        tmpdir = os.path.join(base, 'var', 'folders', 'T')
+        env = {'TMPDIR': tmpdir, 'CLAUDE_CONFIG_DIR': os.path.join(base, 'nocfg')}
+        dest = os.path.join(tmpdir, 'setup-audit-docs', 'p.md')
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(fetch_doc.tempfile, 'gettempdir', return_value='/nonexistent-tmp'):
+            code, _, err, _ = run('llms.txt', dest, response=FakeResponse(b'mac'))
+        self.assertEqual(code, 0, err)
+        with open(os.path.join(real_tmp, 'setup-audit-docs', 'p.md'), 'rb') as f:
+            self.assertEqual(f.read(), b'mac')
 
     def test_out_directly_in_allowed_root_written(self):
         allowed = tempfile.mkdtemp(prefix='fetchdoc.allowed.')

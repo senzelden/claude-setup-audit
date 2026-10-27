@@ -43,12 +43,18 @@ def _open(request):
     return urllib.request.build_opener(_SameHostOnly).open(request, timeout=TIMEOUT)
 
 
-def _allowed_dirs():
+def _allowed_spellings():
+    """The allowed directories as configured (absolute, not resolved)."""
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
-    dirs = {os.path.realpath(tempfile.gettempdir()), os.path.realpath(os.path.join(config, "audits"))}
+    dirs = {tempfile.gettempdir(), os.path.join(config, "audits")}
     if os.environ.get("TMPDIR"):
-        dirs.add(os.path.realpath(os.environ["TMPDIR"]))
-    return dirs
+        dirs.add(os.environ["TMPDIR"])
+    return {os.path.abspath(d) for d in dirs}
+
+
+def _allowed_dirs():
+    """The allowed directories, resolved."""
+    return {os.path.realpath(d) for d in _allowed_spellings()}
 
 
 def _out_is_allowed(out):
@@ -63,14 +69,22 @@ class _Refused(Exception):
 
 
 def _allowed_root(parent):
-    """Split PARENT into (prefix, remaining names) at the deepest prefix that is an allowed dir."""
+    """Split PARENT into (resolved allowed dir, names below it) at its deepest allowed prefix.
+
+    The prefix must be spelled as an allowed directory is configured or resolved (so $TMPDIR
+    under a symlinked /var still works); a symlink below an allowed directory that leads back to
+    one is refused rather than followed.
+    """
     allowed = _allowed_dirs()
+    spellings = _allowed_spellings() | allowed
     names = []
     prefix = parent
     while True:
         real = os.path.realpath(prefix)
         if real in allowed:
-            return prefix, real, list(reversed(names))
+            if prefix not in spellings:
+                raise _Refused(f"{prefix} reaches an allowed directory through a symlink")
+            return real, list(reversed(names))
         head, name = os.path.split(prefix)
         if head == prefix:
             raise _Refused("OUT is not under an allowed directory")
@@ -85,12 +99,10 @@ def _open_parent(out):
     checks the opened directory itself, so a path swapped by another user after a check is not the
     one written to.
     """
-    prefix, real, names = _allowed_root(os.path.dirname(os.path.abspath(out)))
-    fd = os.open(prefix, os.O_RDONLY | os.O_DIRECTORY)
+    root, names = _allowed_root(os.path.dirname(os.path.abspath(out)))
+    # The walk starts at the resolved allowed directory, never at the path as written.
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        root, expected = os.fstat(fd), os.stat(real)
-        if (root.st_dev, root.st_ino) != (expected.st_dev, expected.st_ino):
-            raise _Refused(f"{prefix} changed while being opened")
         for name in names:
             try:
                 os.mkdir(name, 0o700, dir_fd=fd)
