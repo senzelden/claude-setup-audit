@@ -459,10 +459,9 @@ review and never edit them. Statuses and reasons are in `references/ledger.md`.
   prompt-injection hardening, not a security boundary the tags enforce by themselves.
 - Never open `~/.claude.json`, `~/.claude/.credentials.json`, `.envrc`, `.env` or `.env.*` files
   (templates such as `.env.example` are fine), the `env` blocks of devcontainer, compose or mise
-  files, or the OS keychain. Never read or print the values of `env`, `headers`, `oauth`,
-  `apiKeyHelper` or other helper-command settings (`awsAuthRefresh`, `awsCredentialExport`,
-  `otelHeadersHelper`, `gcpAuthRefresh`), in a settings file or `.mcp.json`. This holds with or
-  without the collector. For user and local MCP servers, tell the user to run `claude mcp list`
+  files, or the OS keychain. Never read or print the values of `env`, `headers`, `oauth`
+  or any helper-command setting (the API-key, cloud-auth and telemetry-header helpers), in a
+  settings file or `.mcp.json`. This holds with or without the collector. For user and local MCP servers, tell the user to run `claude mcp list`
   themselves; never run `claude mcp get`.
 - Never print or copy secret values, even when flagging them; name the file and key instead.
   Redaction is best-effort, not a guarantee: don't tell the user a value is safe to share because

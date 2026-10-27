@@ -34,6 +34,9 @@ SCOPE_IGNORED = re.compile(r'scope[_-]ignored|ignored_env_keys|SETTINGS_SCOPES|E
 # the managed guard options. Gone from 0.14.3.
 MODS_FEATURE = re.compile(r'SEC-mods|mods_policy|allowManagedModsOnly|allowModsToOverrideDenyRules'
                           r'|cc-plugin-sec-default')
+# Helper-command settings run a user-supplied command whose output is a credential; the never-open
+# rule describes them by family. Gone from shipped text in 0.14.3.
+HELPER_COMMAND_KEYS = re.compile(r'apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|gcpAuthRefresh')
 
 
 def shipped_text_files():
@@ -113,6 +116,11 @@ class RiskyRulePatterns(unittest.TestCase):
         finally:
             sys.path.pop(0)
         self.assertFalse(hasattr(collect, 'mods_policy'))
+
+    def test_no_shipped_file_names_a_helper_command_setting(self):
+        for path, text in shipped_text_files():
+            match = HELPER_COMMAND_KEYS.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
 
 
 if __name__ == '__main__':

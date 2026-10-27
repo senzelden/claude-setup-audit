@@ -169,9 +169,15 @@ class DocsBoundaryRule(unittest.TestCase):
     def test_never_open_rule_lists_the_files_and_keys(self):
         bullet = self.boundary_bullet()
         for item in ('~/.claude.json', '~/.claude/.credentials.json', '.envrc', '.env.*', 'devcontainer', 'compose',
-                     'mise', 'OS keychain', '`env`', '`headers`', '`oauth`', '`apiKeyHelper`', 'helper-command',
-                     '`claude mcp get`'):
+                     'mise', 'OS keychain', '`env`', '`headers`', '`oauth`', 'any helper-command setting',
+                     'API-key, cloud-auth and telemetry-header helpers', '`claude mcp get`'):
             self.assertIn(item, bullet)
+
+    def test_never_open_rule_describes_helpers_by_family_not_key_name(self):
+        with open(self.SKILL, encoding='utf-8') as f:
+            text = f.read()
+        for key in HELPER_KEYS:
+            self.assertNotIn(key, text)
 
     def test_docs_never_tell_claude_to_run_mcp_get_or_probe_secrets(self):
         refs = os.path.join(os.path.dirname(SCRIPTS), 'references')
