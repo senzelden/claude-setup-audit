@@ -24,6 +24,15 @@ class MappingNames(unittest.TestCase):
         self.assertIsNone(config_names.mapping_names(None))
 
 
+class UserMcpServerNames(FakeHome):
+    def test_non_object_claude_json_has_no_names(self):
+        for data in ([1], 'text', 7, {'mcpServers': ['a']}):
+            self.write('.claude.json', data)
+            self.assertEqual(config_names.user_mcp_server_names(self.home), [], data)
+        self.write('.claude.json', {'mcpServers': {'b': {}, 'a': {}}})
+        self.assertEqual(config_names.user_mcp_server_names(self.home), ['a', 'b'])
+
+
 class CanaryNeverLeaves(FakeHome):
     """A canary value in every credential-bearing source never leaves config_names or reaches the snapshot."""
 
