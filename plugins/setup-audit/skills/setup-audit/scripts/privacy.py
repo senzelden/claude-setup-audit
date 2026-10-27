@@ -335,7 +335,11 @@ SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, se
     ('subscription', 'limit_events', 'basis'), ('subscription', 'model_mix', 'basis'),
     *(('subscription', 'limit_events', '*', k) for k in ('first_date', 'last_date')),
     *(('subscription', 'extra_usage', 'settings', '*', k) for k in ('path', 'setting', 'value')),
-    ('subscription', 'extra_usage', 'not_observable', '*'))
+    ('subscription', 'log', 'path'),
+    ('subscription', 'extra_usage', 'not_observable', '*'),
+    *(('subscription', 'log', k) for k in ('status', 'first_at', 'last_at')),  # path is hashed as a config file
+    ('subscription', 'log_basis'), ('subscription', 'early_resets_basis'),
+    *(('subscription', 'early_resets', '*', k) for k in ('window', 'at')))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -453,7 +457,7 @@ _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed onl
     ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
     ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
     ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'),
-    ('subscription', 'extra_usage', 'settings', '*', 'path'))
+    ('subscription', 'extra_usage', 'settings', '*', 'path'), ('subscription', 'log', 'path'))
 # One row per family: `leaves` are hashed whenever they hold a string; `maybe` only when the string is path-like
 # (the field also carries fixed vocabulary); `keys` are dict containers whose keys are hashed.
 PATH_FAMILIES = {

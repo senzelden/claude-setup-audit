@@ -1,7 +1,9 @@
 """Snapshot `subscription` from fake homes: documented limit messages in transcripts, model mix by family
 and the documented extra-usage settings. Only kinds, session keys and UTC dates are kept, never text."""
 import json
+import os
 import time
+from unittest import mock
 
 from test_collect import collect
 from test_plugin_footprint import observer_key
@@ -172,3 +174,90 @@ class Privacy(Base):
             mutate(bad["subscription"])
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(bad)
+
+
+def log_line(at, pct, resets_at, kind="seven_day"):
+    return json.dumps({"version": 1, "at": at, "windows": {kind: {"used_percentage": pct, "resets_at": resets_at}}})
+
+
+class RateLimitLog(Base):
+    def make_log(self, name="rate-limits.jsonl"):
+        # Two closed weekly windows (both reset long before now); entries a few hours before each reset.
+        path = f"{self.home}/.claude/audits/{name}"
+        self.write(f".claude/audits/{name}", "\n".join([
+            log_line("2026-01-01T00:00:00Z", 40, 1767312000),
+            log_line("2026-01-01T23:00:00Z", 60, 1767312000),
+            log_line("2026-01-08T00:00:00Z", 30, 1767916800),
+            log_line("2026-01-08T23:00:00Z", 90, 1767916800)]) + "\n")
+        return path
+
+    def test_log_absent_without_flag(self):
+        sub = self.sub()
+        self.assertEqual(sub["log"], {"status": "absent"})
+        self.assertNotIn("windows", sub)
+        self.assertNotIn("early_resets", sub)
+
+    def test_log_absent_for_missing_file(self):
+        sub = self.sub(rate_limit_log=f"{self.home}/.claude/audits/none.jsonl")
+        self.assertEqual(sub["log"]["status"], "absent")
+        self.assertNotIn("windows", sub)
+
+    def test_log_collected(self):
+        sub = self.sub(rate_limit_log=self.make_log())
+        self.assertEqual(sub["log"]["status"], "collected")
+        self.assertEqual((sub["log"]["entries"], sub["log"]["malformed"]), (4, 0))
+        self.assertEqual((sub["log"]["first_at"], sub["log"]["last_at"]),
+                         ("2026-01-01T00:00:00Z", "2026-01-08T23:00:00Z"))
+        self.assertEqual(sub["windows"]["seven_day"]["closed"], 2)
+        self.assertEqual(sub["early_resets"], [])
+        self.assertIn("rate-limit log", sub["log_basis"])
+        self.assertTrue(sub["log"]["path"].startswith("~/") or sub["log"]["path"].startswith("/"))
+
+    def test_log_global_scope_without_transcripts(self):
+        sub = self.sub(scope="global", rate_limit_log=self.make_log())
+        self.assertEqual(sub["windows"]["seven_day"]["closed"], 2)
+
+    def test_log_outside_allowed_is_invalid(self):
+        path = f"{self.home}/elsewhere.jsonl"
+        self.write("elsewhere.jsonl", log_line("2026-01-01T00:00:00Z", 40, 1767312000) + "\n")
+        # the fake home lives in the system temp directory, which is allowed; narrow the rule to audits only
+        with mock.patch.object(collect, "_out_allowed_dirs", lambda: {os.path.realpath(f"{self.home}/.claude/audits")}):
+            sub = self.sub(rate_limit_log=path)
+            ok = self.sub(rate_limit_log=self.make_log())
+        self.assertEqual(ok["log"]["status"], "collected")
+        self.assertEqual(sub["log"]["status"], "invalid")
+        self.assertNotIn("windows", sub)
+
+    def test_log_path_hashed(self):
+        snap = collect.build_snapshot(args(hash_paths=True, rate_limit_log=self.make_log()))
+        self.assertRegex(snap["subscription"]["log"]["path"], r"^h:[0-9a-f]{12}$")
+        self.assertNotIn("rate-limits.jsonl", json.dumps(snap))
+        base = collect.build_snapshot(args(hash_paths=True))["coverage"]["privacy"]["hashed_path_families"]
+        counts = snap["coverage"]["privacy"]["hashed_path_families"]
+        self.assertEqual(counts["config_files"], base["config_files"] + 1)
+        self.assertEqual(counts["other_paths"], base["other_paths"])
+
+    def test_metadata_only_keeps_numbers(self):
+        path = self.make_log()
+        full = self.sub(rate_limit_log=path)
+        meta = self.sub(rate_limit_log=path, metadata_only=True)
+        self.assertEqual(meta, full)
+
+    def test_every_string_leaf_is_classified(self):
+        sub = self.sub(rate_limit_log=self.make_log())
+        for path, v in privacy.leaves({"subscription": sub}):
+            if isinstance(v, str):
+                self.assertTrue(privacy.is_kept(path), path)
+
+    def test_schema_types_log_fields(self):
+        import snapshot_contract as contract
+        snap = collect.build_snapshot(args(rate_limit_log=self.make_log()))
+        contract.validate_snapshot(snap)
+        bad = json.loads(json.dumps(snap))
+        bad["subscription"]["windows"]["seven_day"]["closed"] = "2"
+        with self.assertRaises(contract.SnapshotError):
+            contract.validate_snapshot(bad)
+        bad = json.loads(json.dumps(snap))
+        bad["subscription"]["log"]["status"] = "weird"
+        with self.assertRaises(contract.SnapshotError):
+            contract.validate_snapshot(bad)

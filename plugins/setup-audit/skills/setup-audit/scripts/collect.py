@@ -2316,6 +2316,29 @@ def apply_collection_args(ap, a):
         ap.error("--roots is only used with --scope all")
 
 
+def collect_rate_limit_log(path, now):
+    """`subscription` fields from the opt-in rate-limit log: only `log` (status absent) without a readable log."""
+    if not path:
+        return {"log": {"status": "absent"}}
+    path = os.path.abspath(os.path.expanduser(path))
+    display = path.replace(HOME, "~")
+    try:
+        path = drift_log.check_path(path, _out_allowed_dirs())
+    except drift_log.DriftLogError:
+        return {"log": {"status": "invalid", "path": display}}
+    if not (os.path.exists(path) or os.path.exists(path + ".1")):
+        return {"log": {"status": "absent", "path": display}}
+    entries, malformed = subscription_usage.read_log(path)
+    return {
+        "log": {"status": "collected", "path": display, "entries": len(entries), "malformed": malformed,
+                "first_at": entries[0]["at"] if entries else None, "last_at": entries[-1]["at"] if entries else None},
+        "windows": subscription_usage.analyze_windows(entries, now),
+        "early_resets": subscription_usage.early_resets(entries),
+        "log_basis": subscription_usage.BASIS_LOG,
+        "early_resets_basis": subscription_usage.BASIS_RESETS,
+    }
+
+
 def build_snapshot(a):
     """Collect, sanitize and validate a snapshot for parsed arguments; return the JSON-native dict."""
     metadata_only = getattr(a, "metadata_only", False)  # drift.py's namespace has no such flag
@@ -2341,9 +2364,10 @@ def build_snapshot(a):
     # global restrict usage/corrections/transcripts to the same roots collect_projects()/readiness()
     # already got, including the empty set for scope=global (matches no project, so none get read).
     project_filter = None if a.scope == "all" else set(roots)
+    generated_at = time.time()  # one clock reading for the generated stamp and the log analysis
     snap = {
         "snapshot_version": VERSION,
-        "generated": time.strftime("%Y-%m-%d %H:%M"),
+        "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime(generated_at)),
         "window_days": a.days,
         "collection_scope": {"requested": a.scope, "project": a.project, "projects_collected": len(roots)},
         "global": collect_global(),
@@ -2371,6 +2395,7 @@ def build_snapshot(a):
             snap["drift_signals"] = drift_log.summarize(entries, malformed, display)
         except drift_log.DriftLogError:
             snap["drift_signals"] = {"status": "invalid", "path": display}
+    snap["subscription"].update(collect_rate_limit_log(getattr(a, "rate_limit_log", None), generated_at))
     snap["instructions"] = inventory.collect_instructions(HOME, CLAUDE, roots, contexts, managed_directory(), redact, summarize_settings)
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
     hook_index, hook_index_reasons = harness.hook_index(CLAUDE, settings)
@@ -2459,6 +2484,7 @@ def main():
     ap.add_argument("--hash-salt-file", help="read the --hash-paths salt from this existing file (stable tags across runs)")
     ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
     ap.add_argument("--drift-log", help="drift log to summarize (read-only)")
+    ap.add_argument("--rate-limit-log", help="opt-in rate-limit log to analyze (read-only)")
     a = ap.parse_args()
     apply_collection_args(ap, a)
     if a.metadata_only and a.clarity_pilot:

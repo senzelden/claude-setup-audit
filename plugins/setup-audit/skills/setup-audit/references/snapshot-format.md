@@ -155,6 +155,11 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `fable_consent_unanswered` counts from `limit_events`); `not_observable` (`plan tier`,
     `usage-credit balance and limit`, `available limit resets`).
   - Settings summaries' `other` also carries those three keys when set.
+  - `log` (`--rate-limit-log`): `status` (`absent` without the flag or file, `collected`, `invalid` for a path
+    outside the audits or temp directories), `path`, `entries`, `malformed`, `first_at`/`last_at`. Only a
+    collected log adds `windows` (per `five_hour`/`seven_day`/`spend_limit`: window and closed counts,
+    `stale_excluded`, `peak_used_pct` and `unused_at_close_pct` min/median/max, `median_lead_hours`,
+    `reached_85`/`reached_100`, `current`), `early_resets[]` (inferred), `log_basis` and `early_resets_basis`.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

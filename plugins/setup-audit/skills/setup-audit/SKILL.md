@@ -108,6 +108,11 @@ instead. The collector accepts only paths inside the Claude audits directory or 
 and records anything else as status `invalid`. The audit never writes the drift log. See
 `references/drift.md`.
 
+When `<claude config dir>/audits/rate-limits.jsonl` exists, append
+`--rate-limit-log "<claude config dir>/audits/rate-limits.jsonl"`. It is the opt-in status-line
+logger's default log; the same path rules apply (anything outside the audits or a temp directory is
+recorded as status `invalid`) and the audit never writes it.
+
 **If this command — or Bash itself — fails to run at all** (permission denied, a sandbox/seccomp
 error, or any other failure before the collector produces output), tell the user up front, once,
 that the collector couldn't run (quote the error after redacting secret values) and that findings below come from reading

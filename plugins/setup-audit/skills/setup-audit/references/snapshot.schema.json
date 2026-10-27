@@ -239,6 +239,28 @@
         }
       }
     },
+    "rate_limit_window": {
+      "type": "object",
+      "required": ["windows", "closed", "stale_excluded", "peak_used_pct", "unused_at_close_pct",
+                   "median_lead_hours", "reached_85", "reached_100", "current"],
+      "properties": {
+        "windows": {"type": "integer", "minimum": 0},
+        "closed": {"type": "integer", "minimum": 0},
+        "stale_excluded": {"type": "integer", "minimum": 0},
+        "peak_used_pct": {"$ref": "#/$defs/pct_distribution"},
+        "unused_at_close_pct": {"$ref": "#/$defs/pct_distribution"},
+        "median_lead_hours": {"type": ["number", "null"]},
+        "reached_85": {"type": "integer", "minimum": 0},
+        "reached_100": {"type": "integer", "minimum": 0},
+        "current": {"type": ["object", "null"], "properties": {
+          "used_percentage": {"type": "number"}, "resets_at": {"type": "number"}}}
+      }
+    },
+    "pct_distribution": {
+      "type": ["object", "null"],
+      "required": ["min", "median", "max"],
+      "properties": {"min": {"type": "number"}, "median": {"type": "number"}, "max": {"type": "number"}}
+    },
     "limit_event": {
       "type": "object",
       "required": ["count", "sessions", "first_date", "last_date", "subagent_count"],
@@ -1295,7 +1317,40 @@
             },
             "not_observable": {"type": "array", "items": {"type": "string"}}
           }
-        }
+        },
+        "log": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {"enum": ["absent", "collected", "invalid"]},
+            "path": {"type": "string"},
+            "entries": {"type": "integer", "minimum": 0},
+            "malformed": {"type": "integer", "minimum": 0},
+            "first_at": {"type": ["string", "null"]},
+            "last_at": {"type": ["string", "null"]}
+          }
+        },
+        "windows": {
+          "type": "object",
+          "properties": {
+            "five_hour": {"$ref": "#/$defs/rate_limit_window"},
+            "seven_day": {"$ref": "#/$defs/rate_limit_window"},
+            "spend_limit": {"$ref": "#/$defs/rate_limit_window"}
+          }
+        },
+        "early_resets": {"type": "array", "items": {
+          "type": "object",
+          "required": ["window", "at", "previous_pct", "new_pct", "previous_resets_at", "new_resets_at"],
+          "properties": {
+            "window": {"type": "string"},
+            "at": {"type": "string"},
+            "previous_pct": {"type": "number"},
+            "new_pct": {"type": "number"},
+            "previous_resets_at": {"type": "number"},
+            "new_resets_at": {"type": "number"}
+          }}},
+        "log_basis": {"type": "string"},
+        "early_resets_basis": {"type": "string"}
       }
     },
     "harness_overhead": {
