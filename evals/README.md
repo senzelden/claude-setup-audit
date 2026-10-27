@@ -194,7 +194,8 @@ case remains outside this slice; no general apply engine is introduced here.
 Before a pilot, request approval with the exact commit, command, models, tools and spend
 threshold. Select only `--case approved-apply-permission --runs 1 --ablation none --concurrency 1`,
 retain `--scaffold --keep-temp --trust-plugin --no-publish`, and grant only `"Bash(python3 *)"`
-and `Write` beyond the listed read tools. Keep output under ignored `evals/results/`.
+and `Write` beyond the listed read tools. Output lands in `$staged/evals/results/`; copy it back
+to the ignored `evals/results/` with the helper's printed `cp -r` line.
 Do not run the broader `quality` tag under an approval for the older read-only cases.
 No model run is authorized by these instructions. Pilot evidence stays in ignored local results.
 The case fields and grants were checked

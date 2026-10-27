@@ -4,13 +4,16 @@ Reads credential-bearing config sources and returns names, counts and booleans o
 returns, logs or stores a value. "Names" here also covers fixed classification labels (transport,
 URL origin and locality, package version shape) and the executable name an MCP server runs.
 
-Sources handled here, and nowhere else (tests/test_config_names.py enforces it):
+Values from these sources are interpreted only here (tests/test_config_names.py enforces it):
 - MCP server configs: ``env`` and ``headers`` mappings, ``url``, ``args`` and ``oauth``, wherever
   the config comes from (~/.claude.json user and local-project scope, .mcp.json, managed and
   plugin MCP files).
-- ~/.claude.json itself (MCP servers and the per-project state lists extensions.py reports).
 - settings ``env`` and http hook ``headers``.
 - a repository's .envrc.
+
+Files: ~/.claude.json (MCP servers and the per-project state lists extensions.py reports) and
+.envrc are also opened and read only here. .mcp.json, managed and plugin MCP files and settings
+files are opened by their existing loaders, which hand the parsed objects to this module.
 
 A value is looked at only transiently, inside this module, to decide something about it (literal
 or ${VAR} reference, URL origin and locality, version shape); only the derived names leave.
