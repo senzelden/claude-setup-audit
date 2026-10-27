@@ -236,6 +236,23 @@ request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching,
 variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
 as an error.
 
+Limit messages (`subscription.limit_events`, 0.13.0): the message texts are documented (errors, "Usage
+limits", and interactive-mode, "Wait for a usage limit to reset"; fetched 2026-10-26); the record wrapper is
+observed, undocumented and unverified for limit messages. Observed on this machine (Claude Code 2.1.310): API-side
+failures are assistant records with `isApiErrorMessage: true`, `message.model: "<synthetic>"` and the text in
+`message.content[0].text`; no limit message exists in the retained transcripts, so the shape of a real limit
+record is unconfirmed. A record counts only when it is such an assistant record or a `system` record and a text
+(top-level `content` or `message.content`, a string or text blocks) *starts with* a documented prefix (after
+leading whitespace and an optional `API Error: `; straight or curly apostrophes). Ordinary assistant text, user
+text and tool results never count, because conversations about this feature quote the strings. Limit messages in
+another wrapper are missed: an under-count, never an over-count. Records are deduplicated by project, sessionId
+and record `uuid` (resumed copies), in window, in the user's own main and subagent files (plugin-spawned excluded).
+Only the kind, session and UTC date are kept. `model_mix` reuses the observed `api-request` counters above.
+`extra_usage.settings` reads the documented keys `autoContinueAtUsageLimit`, `fastMode` and
+`fastModePerSessionOptIn` (settings-reference, fetched 2026-10-26; all Boolean) from collected settings files;
+plan tier, usage-credit balance and limit, and available limit resets are not observable locally (limit resets
+are undocumented; costs, fetched 2026-10-26).
+
 Failure loops (`transcripts.failure_loops`): turns are delimited by user records that are not tool results, meta,
 compact summaries, sidechain or system-injected text (`<system-reminder>`, `<local-command...>`, `<task-notification>`,
 interruption notices); observed, undocumented record shapes, so a change in a later Claude Code release shows up as

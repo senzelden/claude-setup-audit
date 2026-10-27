@@ -137,6 +137,24 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
+- `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC dates
+  and setting names only; never message text, plan tier or `~/.claude.json` data:
+  - `limit_events`: per documented limit-message kind (`session`, `weekly`, `opus`, `sonnet`,
+    `warning_85`, `auto_continue_wait`, `spend_limit`, `credits_required_1m`,
+    `fable_consent_unanswered`; kinds with no event are omitted) `count`, `sessions` (distinct
+    sessions; a subagent file counts under its parent session), `first_date`/`last_date` (UTC
+    `YYYY-MM-DD`) and `subagent_count`; plus `basis`. In-window records of the user's own sessions,
+    plugin-spawned sessions excluded; matched only at the start of the text of a synthetic or
+    API-error assistant record or a system record (see `coverage.md`).
+  - `model_mix.{main,agent}`: per family (`opus`, `sonnet`, `haiku`, `fable`, `other`, by
+    case-insensitive substring of the model id) `requests` and `share` (3 dp; null when the class has
+    no requests), from the full `request_params` model counters (not the capped `by_model` rows); `basis`.
+  - `extra_usage`: `settings[]` (`path` of the collected settings file, `setting`
+    (`autoContinueAtUsageLimit`, `fastMode`, `fastModePerSessionOptIn`), `value` (the boolean, or
+    `invalid` when the file holds a non-boolean)); `messages` (`spend_limit`, `credits_required_1m`,
+    `fable_consent_unanswered` counts from `limit_events`); `not_observable` (`plan tier`,
+    `usage-credit balance and limit`, `available limit resets`).
+  - Settings summaries' `other` also carries those three keys when set.
 - `config_conflicts` (always emitted by current collectors, optional in the schema):
   - `stacks`;
   - `hook_duplicates` (stack, event, normalized matcher, type, 16-hex `fingerprint`, `effect`,

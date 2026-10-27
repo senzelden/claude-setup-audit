@@ -331,6 +331,11 @@ TOOL_USAGE_KEEP = (  # tool, MCP server names and errorCode vocabulary (strict p
     ('transcripts', 'tool_usage', 'listed_never_called', '*', 'tool'),
     ('transcripts', 'mcp_failures', 'servers', '*', 'server'),
     ('transcripts', 'mcp_failures', 'servers', '*', 'error_codes', '*', 'code'))
+SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, setting names, fixed notes (0.13.0)
+    ('subscription', 'limit_events', 'basis'), ('subscription', 'model_mix', 'basis'),
+    *(('subscription', 'limit_events', '*', k) for k in ('first_date', 'last_date')),
+    *(('subscription', 'extra_usage', 'settings', '*', k) for k in ('path', 'setting', 'value')),
+    ('subscription', 'extra_usage', 'not_observable', '*'))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
@@ -362,7 +367,8 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
           *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
-KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + TOOL_USAGE_KEEP + SINGLE
+KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + TOOL_USAGE_KEEP + SUBSCRIPTION_KEEP
+    + SINGLE
     + tuple(p + s for p in SETTINGS_PREFIXES for s in SETTINGS_KEEP + MCP_POLICY_KEEP)
     + tuple(p + s for p in (('instructions', 'entries', '*'), ('extensions', 'plugins', '*', 'components', '*'))
             for s in ENTRY_KEEP)
@@ -446,7 +452,8 @@ _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed onl
     ('extensions', 'mcp_servers', '*', 'source'), ('extensions', 'mcp_project_state', '*', 'source'),
     ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
     ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
-    ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'))
+    ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'),
+    ('subscription', 'extra_usage', 'settings', '*', 'path'))
 # One row per family: `leaves` are hashed whenever they hold a string; `maybe` only when the string is path-like
 # (the field also carries fixed vocabulary); `keys` are dict containers whose keys are hashed.
 PATH_FAMILIES = {

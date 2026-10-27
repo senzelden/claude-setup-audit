@@ -37,6 +37,7 @@ import config_checks
 import drift_log
 import plugin_footprint
 import privacy
+import subscription_usage
 import tool_usage
 from snapshot_contract import VERSION, validate_snapshot
 from datetime import datetime, timezone
@@ -572,7 +573,8 @@ def summarize_settings(path, data=None, managed=False):
         "mcp_policy": mcp_policy(d),
         "mcp_permission_rules": mcp_permission_rules(perms),
         "other": {k: d[k] for k in ("cleanupPeriodDays", "includeCoAuthoredBy", "statusLine", "outputStyle",
-                                     "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks") if k in d},
+                                     "alwaysThinkingEnabled", "autoUpdates", "disableAllHooks",
+                                     *subscription_usage.EXTRA_USAGE_KEYS) if k in d},
     }
     if shape_issues:
         summary["shape_issues"] = shape_issues
@@ -1393,6 +1395,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
     spawned = defaultdict(lambda: {"sessions": 0, "subagent_files": 0, "keys": set()})
     loop_sessions = []  # (project key, finished turns) of the user's own main sessions
     usage_totals = tool_usage.Totals()
+    limit_hits, limit_seen = [], set()  # (kind, session key, UTC date, is subagent): never the text
     for path in top + sub:
         is_top = path in top
         proj_key = os.path.basename(os.path.dirname(path))
@@ -1456,6 +1459,14 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 usage.get("cache_read_input_tokens")) is int else 0
                             agent_models[_label(msg.get("model"))] += 1
                     harness_record(raw, record, path, session_key, is_top, seen_ids)
+                    # Documented limit messages: the user's own sessions only, like tool_usage.
+                    if spawn is None and (kinds := subscription_usage.record_limit_kinds(record)):
+                        uuid, session = record.get("uuid"), record.get("sessionId")
+                        key = (session_key[0], session if isinstance(session, str) and session else path, uuid)
+                        if not isinstance(uuid, str) or key not in limit_seen:
+                            limit_seen.add(key)
+                            day = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
+                            limit_hits.extend((k, session_key, day, not is_top) for k in kinds)
                     if tool_session is not None:
                         tool_session.record(record)
                     if spawn is None:
@@ -1635,6 +1646,12 @@ def collect_transcripts(days, max_files=400, project_filter=None):
         "test_run_seconds_by_project": {p: {"runs": len(v), "median": pct(v, 0.5), "p90": pct(v, 0.9)}
                                         for p, v in test_durations.items() if v},
         "_harness": raw,
+        # Consumed by build_snapshot into the top-level `subscription` object.
+        "_subscription": {
+            "limit_events": subscription_usage.limit_events(limit_hits),
+            # Full model counters, not the capped request_params rows.
+            "model_mix": subscription_usage.model_mix({c: request_stats[c]["model"] for c in ("main", "agent")}),
+        },
     }
 
 
@@ -2340,6 +2357,8 @@ def build_snapshot(a):
         "previous_audits": [p.replace(HOME, "~") for p in audits[-3:]],
     }
     harness_raw = snap["transcripts"].pop("_harness")  # consumed by harness.assemble
+    # Log fields (log, windows, early_resets) join this object when --rate-limit-log is given.
+    snap["subscription"] = snap["transcripts"].pop("_subscription")
     if getattr(a, "ledger", None):
         snap["ledger_signals"] = collect_ledger_signals(
             os.path.abspath(os.path.expanduser(a.ledger)), a.days, project_filter)
@@ -2365,6 +2384,8 @@ def build_snapshot(a):
     extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers,
                                 snap["extensions"]["mcp_project_state"], lambda p: p.replace(HOME, "~"))
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
+    snap["subscription"]["extra_usage"] = subscription_usage.extra_usage(
+        [s for _, _, s in layers], snap["subscription"]["limit_events"])
     snap['skill_listing'] = skill_listing(snap['instructions'], snap['extensions'], settings)
     snap["harness_overhead"] = harness.assemble(
         harness_raw, hook_index, hook_index_reasons, snap["extensions"],

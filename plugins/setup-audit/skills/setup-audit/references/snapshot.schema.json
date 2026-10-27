@@ -239,6 +239,36 @@
         }
       }
     },
+    "limit_event": {
+      "type": "object",
+      "required": ["count", "sessions", "first_date", "last_date", "subagent_count"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "sessions": {"type": "integer", "minimum": 1},
+        "first_date": {"type": "string"},
+        "last_date": {"type": "string"},
+        "subagent_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "model_family_share": {
+      "type": "object",
+      "required": ["requests", "share"],
+      "properties": {
+        "requests": {"type": "integer", "minimum": 0},
+        "share": {"type": ["number", "null"]}
+      }
+    },
+    "model_families": {
+      "type": "object",
+      "required": ["opus", "sonnet", "haiku", "fable", "other"],
+      "properties": {
+        "opus": {"$ref": "#/$defs/model_family_share"},
+        "sonnet": {"$ref": "#/$defs/model_family_share"},
+        "haiku": {"$ref": "#/$defs/model_family_share"},
+        "fable": {"$ref": "#/$defs/model_family_share"},
+        "other": {"$ref": "#/$defs/model_family_share"}
+      }
+    },
     "request_class": {
       "type": "object",
       "required": [
@@ -1212,6 +1242,60 @@
             "last_crossing_at": {"type": ["string", "null"]},
             "scopes": {"type": "array", "items": {"type": "string"}}
           }}}
+      }
+    },
+    "subscription": {
+      "type": "object",
+      "properties": {
+        "limit_events": {
+          "type": "object",
+          "required": ["basis"],
+          "properties": {
+            "session": {"$ref": "#/$defs/limit_event"},
+            "weekly": {"$ref": "#/$defs/limit_event"},
+            "opus": {"$ref": "#/$defs/limit_event"},
+            "sonnet": {"$ref": "#/$defs/limit_event"},
+            "warning_85": {"$ref": "#/$defs/limit_event"},
+            "auto_continue_wait": {"$ref": "#/$defs/limit_event"},
+            "spend_limit": {"$ref": "#/$defs/limit_event"},
+            "credits_required_1m": {"$ref": "#/$defs/limit_event"},
+            "fable_consent_unanswered": {"$ref": "#/$defs/limit_event"},
+            "basis": {"type": "string"}
+          }
+        },
+        "model_mix": {
+          "type": "object",
+          "required": ["main", "agent"],
+          "properties": {
+            "main": {"$ref": "#/$defs/model_families"},
+            "agent": {"$ref": "#/$defs/model_families"},
+            "basis": {"type": "string"}
+          }
+        },
+        "extra_usage": {
+          "type": "object",
+          "required": ["settings", "messages", "not_observable"],
+          "properties": {
+            "settings": {"type": "array", "items": {
+              "type": "object",
+              "required": ["path", "setting", "value"],
+              "properties": {
+                "path": {"type": "string"},
+                "setting": {"enum": ["autoContinueAtUsageLimit", "fastMode", "fastModePerSessionOptIn"]},
+                "value": {"enum": [true, false, "invalid"]}
+              }}},
+            "messages": {
+              "type": "object",
+              "required": ["spend_limit", "credits_required_1m", "fable_consent_unanswered"],
+              "properties": {
+                "spend_limit": {"type": "integer", "minimum": 0},
+                "credits_required_1m": {"type": "integer", "minimum": 0},
+                "fable_consent_unanswered": {"type": "integer", "minimum": 0}
+              }
+            },
+            "not_observable": {"type": "array", "items": {"type": "string"}}
+          }
+        }
       }
     },
     "harness_overhead": {

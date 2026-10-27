@@ -143,5 +143,56 @@ class Reading(unittest.TestCase):
         self.assertEqual([e['windows']['seven_day']['used_percentage'] for e in entries], [1, 3])
 
 
+# Example strings from errors.md ("Usage limits") and interactive-mode.md, fetched 2026-10-26.
+DOCUMENTED = [
+    ("You've hit your session limit · resets 3:45pm", 'session'),
+    ("You've hit your weekly limit · resets Mon 12:00am", 'weekly'),
+    ("You've hit your Opus limit · resets 3:45pm", 'opus'),
+    ("You've hit your Sonnet limit · resets 3:45pm", 'sonnet'),
+    ("You've used 85% of your session limit · resets 3:45pm", 'warning_85'),
+    ('Usage limit reached · continuing automatically at 3:45pm · esc to cancel', 'auto_continue_wait'),
+    ("You've hit your monthly spend limit · raise it at https://claude.ai/settings/usage", 'spend_limit'),
+    ("You've hit your individual spend limit · ask your admin for a higher limit", 'spend_limit'),
+    ("You've hit your org's monthly spend limit · visit https://claude.ai/admin-settings/usage", 'spend_limit'),
+    ("You've hit your channel's monthly spend limit", 'spend_limit'),
+    ("You've hit your team's shared budget · ask your admin to raise it", 'spend_limit'),
+    ("You've hit your individual usage limit", 'spend_limit'),
+    ('API Error: Usage credits required for 1M context · run /usage-credits to turn them on', 'credits_required_1m'),
+    ('Fable limit reached · continuing on Fable 5.1 uses usage credits, and the prompt to confirm went '
+     'unanswered — nothing was sent · answer it where this session is running, or /model to change',
+     'fable_consent_unanswered'),
+    ('Fable 5.1 now uses usage credits · the prompt to confirm went unanswered — nothing was sent',
+     'fable_consent_unanswered'),
+]
+
+
+class Classifier(unittest.TestCase):
+    def test_classify_documented_texts(self):
+        for text, kind in DOCUMENTED:
+            with self.subTest(text=text):
+                self.assertEqual(su.classify_limit_text(text), kind)
+                self.assertEqual(su.classify_limit_text('  \n' + text.replace("'", '’')), kind)
+        self.assertEqual({k for _, k in DOCUMENTED}, set(su.LIMIT_KINDS))
+
+    def test_unanchored_or_other_text_is_not_a_limit(self):
+        for text in ("x You've hit your weekly limit", "Quoted: You've hit your Opus limit",
+                     'API Error: 500 Internal server error', 'Fable 5.1 is experiencing high load', '', None, 5):
+            with self.subTest(text=text):
+                self.assertIsNone(su.classify_limit_text(text))
+
+    def test_is_limit_record(self):
+        self.assertTrue(su.is_limit_record({'type': 'assistant', 'message': {'model': '<synthetic>'}}))
+        self.assertTrue(su.is_limit_record({'type': 'assistant', 'isApiErrorMessage': True, 'message': {}}))
+        self.assertTrue(su.is_limit_record({'type': 'system'}))
+        self.assertFalse(su.is_limit_record({'type': 'assistant', 'message': {'model': 'claude-opus-5-5'}}))
+        self.assertFalse(su.is_limit_record({'type': 'assistant', 'isApiErrorMessage': 'yes', 'message': 5}))
+        self.assertFalse(su.is_limit_record({'type': 'user', 'isApiErrorMessage': True}))
+
+    def test_model_family(self):
+        self.assertEqual([su.model_family(m) for m in ('claude-opus-5-5', 'Claude-Sonnet-5-5', 'claude-haiku-4-5',
+                                                        'claude-fable-5-1', 'gpt-x', None, 7)],
+                         ['opus', 'sonnet', 'haiku', 'fable', 'other', 'other', 'other'])
+
+
 if __name__ == '__main__':
     unittest.main()
