@@ -219,6 +219,53 @@ Hosted validation passed all eight jobs at `1167473`:
   clarity corpus before considering default activation or automatic rewrites; measure collector
   performance before optimizing.
 
+## Next candidates: brainstorm 2026-10-28
+
+Collected while the directory waiver for 0.14.5 is pending. Not yet designed or approved. The
+first three are the recommended next bundle.
+
+Directory policy and listing:
+
+- **Names-only fallback (recommended, 1):** when the collector fails, Claude reads `settings.json`
+  whole, which brings `env` values into context against SKILL.md's never-open rule. A fallback
+  script that reports key names only closes it (see the no-credential-reads follow-ups above).
+- **Fewer, bundled releases:** every version now waits for a reviewer. Bundle changes and send a
+  short reviewer note with each version.
+- **New-text diff against the live version:** a pre-release check listing shipped text added since
+  the last published version that has credential words, URLs or fetch-and-run wording, so the
+  reviewer note explains it up front. The bundle guards only catch known patterns.
+- **Re-read the pre-submission checklist each release** and record the date; the rule tightened
+  before without our code changing.
+- **`userConfig` for any future opt-in input** (paths, baselines) instead of the user's
+  environment, as the checklist asks.
+
+Functionality:
+
+- **Measured outcome after apply (recommended, 3):** use the ledger and drift mode to report what
+  an applied proposal changed (context per session, cache misses) with dates.
+- **MCP coverage without credential files:** parse output of `claude mcp list` that the user
+  pastes, keeping server names and connection status only (no URLs or headers), and combine it
+  with the tool-call counts still collected.
+- **Installed-plugin audit without MCP files:** context added by each plugin's skills and agents,
+  overlapping skill descriptions, plugins that never triggered in transcripts.
+- **Non-interactive team/CI mode:** JSON findings against a checked-in team baseline, building on
+  the decisions file; a step toward enterprise posture.
+- **Readiness fixes:** offer a backed-up apply for safe readiness findings (for example a
+  one-command setup script stub), not only the finding.
+
+Positioning:
+
+- **Privacy as a selling point (recommended, 2):** state on the README's first screen that the
+  scripts have no network code, read no credentials, export metadata only and are read-only by
+  default, backed by the bundle guards.
+- **Complement the built-ins:** `/insights`, `/doctor`, `/context`, `/skill-doctor`, the
+  `fewer-permission-prompts` skill and `claude plugin eval` overlap. Point to their output instead
+  of repeating it; lead with what they lack (permission risk grouping and removal, cross-layer
+  contradictions, measured before and after); add an honest comparison table to the README.
+- **Published eval numbers:** seeded-issue recall from the evals; paid, needs approval.
+- **`claude plugin eval` as the runner:** evaluate replacing our own eval runner with the official
+  one.
+
 ## Distribution follow-up
 
 Resolved 2026-10-19: 0.10.0 is live in the built-in Anthropic plugin directory as
