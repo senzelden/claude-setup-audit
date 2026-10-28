@@ -173,12 +173,11 @@ grants; never execute a skill or its dynamic context to inspect it.
 
 ## MCP and plugins
 
-`extensions` inventories installed plugins and their components. The audit does not read MCP
-config files at all (project `.mcp.json`, managed MCP files, plugin MCP
-definitions) nor `~/.claude.json`, because MCP servers keep `env` and `headers` credentials there.
+`extensions` inventories installed plugins and their components. The audit does not open MCP
+config files (project `.mcp.json`, managed MCP files, plugin MCP files) or `~/.claude.json`.
 It builds no MCP server inventory; the user reviews every MCP server with `claude mcp list`
-(`coverage.limitations` says so), and checklist `SEC-mcp-review` says what to look for. Neither
-MCP servers nor authentication helpers are run. Remote connectors and runtime overrides remain
+(`coverage.limitations` says so), and checklist `SEC-mcp-review` says what to look for. It runs no
+MCP server and no helper command. Remote connectors and runtime overrides remain
 unverified. Observed MCP tool calls (`transcripts.mcp_calls_by_server`) come from transcript tool
 names only; "not observed in these transcripts" is not "unused" or grounds alone for removal.
 
@@ -366,9 +365,7 @@ can be "listed but never called". Counts are per transcript file in the window, 
 session can count twice; sessions without these records (older versions, no tool search) contribute to
 `sessions` but not to listing or failure evidence. Observed (not documented): `addedLines` carries one line per added tool, so a deferred tool costs about one
 listing line until used. Calls in the user's own subagent files count as use for "never called" (plugin-spawned
-sessions do not); `used[].sessions` stays main-thread. `needsAuthMcpServers` is read as names (strings, or objects
-with `name`) into `sessions_needs_auth`; in the author's data the key is present in most records but was never
-non-empty, so its shape is unconfirmed. `sessions_present` counts sessions where a server appears in any of the
-three lists or has `mcp__<server>__*` tools listed or used (names normalized with `_`). `tool_search_observed`
+sessions do not); `used[].sessions` stays main-thread. Which servers need authentication is not read
+(from 0.14.6). `sessions_present` counts sessions where a server appears in either list or has `mcp__<server>__*` tools listed or used (names normalized with `_`). `tool_search_observed`
 uses the same per-file pass and exclusions: any main-thread, non-spawned delta record in the window.
 A shape change shows up as zero `sessions_with_deferred_records`, not as an error.

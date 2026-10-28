@@ -1,7 +1,7 @@
 """Value-free hook facts, .envrc presence and documented env names.
 
-This module never opens ~/.claude.json and never reads .envrc contents; it also never reads,
-returns or stores an env, headers or oauth value. MCP config files are not read by the audit at all. What it offers:
+This module never opens ~/.claude.json or MCP config files and never reads .envrc contents; it
+also never reads, returns or stores an env, headers or oauth value. What it offers:
 - ``url_origin``: scheme://host of a hook handler URL (path, query, userinfo and port dropped).
 - ``hook_handler_view``: a hook handler without its ``headers`` and ``allowedEnvVars`` fields, for
   fingerprinting.

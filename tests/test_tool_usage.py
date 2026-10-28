@@ -139,14 +139,15 @@ class Failures(Base):
         self.assertNotIn(SECRET, json.dumps(f))
         self.assertNotIn("bad code!", json.dumps(f))
 
-    def test_needs_auth_servers_are_counted_by_name(self):
-        rec = delta()
-        rec["attachment"]["needsAuthMcpServers"] = ["claude.ai Gmail", {"name": "docs"}, 7]
+    def test_mcp_auth_state_is_not_read(self):
+        # 0.14.6: which servers need authentication is not collected; failed and pending still are.
+        rec = delta(pending=["slow"])
+        rec["attachment"]["needsAuthMcpServers"] = ["zcauthsrv", {"name": "zcauthdocs"}]
         self.put("-a", "s1", [rec])
-        self.put("-a", "s2", [rec])
-        rows = {r["server"]: r for r in self.scan()["mcp_failures"]["servers"]}
-        self.assertEqual({k: v["sessions_needs_auth"] for k, v in rows.items()}, {"claude.ai Gmail": 2, "docs": 2})
-        self.assertEqual(rows["docs"]["sessions_failed"], 0)
+        f = self.scan()["mcp_failures"]
+        self.assertEqual([r["server"] for r in f["servers"]], ["slow"])
+        self.assertNotIn("sessions_needs_auth", f["servers"][0])
+        self.assertNotIn("zcauth", json.dumps(f))
 
     def test_sessions_present_counts_sessions_where_the_server_appears_or_has_tools(self):
         self.put("-a", "s1", [delta(failed=[failure("plugin:data:definite")])])

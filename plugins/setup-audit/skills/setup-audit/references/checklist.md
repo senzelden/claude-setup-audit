@@ -128,7 +128,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   so it can't name or rate any server. Tell the user to run `claude mcp list` themselves and to
   review each project `.mcp.json` for servers they don't recognise, unpinned `@latest` packages,
   remote servers over plain HTTP and servers with write access to external systems (docs page `mcp`).
-  Never read or print `env`, `headers` or `oauth` blocks. `settings[].mcp_policy` and
+  `settings[].mcp_policy` and
   permission-rule observations from settings files remain available for context.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
@@ -257,8 +257,8 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   (permission prompts refused, rules denying, or the permission system answering: category `permission_gate`) from failures; `failure_rate` already excludes
   them and is `null` under `min_calls_for_rate` calls.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
-    fix authentication or configuration (the user can run `claude mcp get <name>` themselves; Claude never runs it, because its
-    output can include a server's environment and headers), or
+    fix the server's configuration (the user can run `claude mcp get <name>` themselves; Claude never
+    runs it), or
     propose removal after the user reviews it (`SEC-mcp-review`). The thresholds are a
     recommendation.
   - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.

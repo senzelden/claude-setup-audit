@@ -77,12 +77,11 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `transcripts.tool_errors`: optional; names, counts, booleans and enums only; additive within
   snapshot v1. 0.14.5 removed `extensions.mcp_servers`, per-project `mcp_servers`,
   `transcripts.mcp_configured_but_unused` and its note, and the `configured` flag on
-  `mcp_failures.servers[]` (the audit no longer reads MCP config files). 0.14.0 removed credential-adjacent fields
-  (see CHANGELOG): MCP `env_*`, `headers_*`, `oauth_*` and `url_variable_references`,
-  `project_trust_accepted`, user and local scope rows, `extensions.mcp_project_state`,
-  `extensions.mcp_name_collisions`, `global.mcp_user`, hook `header_keys` and `allowed_env_vars`,
-  `settings[].env_keys` (now `env_documented_set`), the `envrc` names, and the contents of
-  `settings[].sandbox.credentials` (0.14.0 kept a presence boolean; 0.14.4 removed it).
+  `mcp_failures.servers[]` (the audit no longer opens MCP config files); 0.14.6 removed the per-server count of
+  sessions that needed authentication. Fields removed in 0.14.0 are listed in the CHANGELOG: among them hook
+  `header_keys` and `allowed_env_vars`, `settings[].env_keys` (now `env_documented_set`), the
+  `envrc` names, and the contents of `settings[].sandbox.credentials` (0.14.0 kept a presence
+  boolean; 0.14.4 removed it).
   `readiness[].env.env_files_not_read` lists existing mise, devcontainer and compose env files
   (existence only, like `envrc_not_read`). The audit does not read credential-bearing files or values. Readers ignore the missing fields.
 - `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
@@ -135,7 +134,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `sessions_with_deferred_records`, `used[]` (`tool`, `sessions`; 40 rows, `used_omitted`),
   `listed_never_called[]` (`tool`, `sessions_listed`; 40 rows, `listed_never_called_total`,
   `listed_never_called_omitted`), `basis`. `mcp_failures`: `sessions_observed`, `servers[]`
-  (`server`, `sessions_failed`, `sessions_pending`, `sessions_needs_auth`, `sessions_present`, `error_codes[]` of `code`, `sessions`), `servers_omitted`, `basis`. Names and counts
+  (`server`, `sessions_failed`, `sessions_pending`, `sessions_present`, `error_codes[]` of `code`, `sessions`), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
 - `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC

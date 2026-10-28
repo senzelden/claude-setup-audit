@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.6] - 2026-10-28
+
+Two remaining MCP-related matches for the directory's MCP credential rule.
+
+### Removed
+
+- MCP auth state: transcripts' `needsAuthMcpServers` is no longer read, and
+  `mcp_failures.servers[].sessions_needs_auth` is gone. Failed and pending servers are still
+  counted.
+
+### Changed
+
+- Disclosures no longer explain the MCP file rule by naming the credential fields MCP servers
+  hold (coverage, checklist, both READMEs, the snapshot-format history note). What the audit
+  opens and refuses is unchanged.
+- A bundle test keeps MCP auth-state reads and sentences that pair MCP with env or header
+  credentials out of shipped files.
+
 ## [0.14.5] - 2026-10-28
 
 The directory still held 0.14.4 under its MCP credential rule, whose docs link is the MCP

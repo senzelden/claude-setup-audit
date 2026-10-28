@@ -195,10 +195,12 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
 ## What it reads, writes and sends
 
 - **Does not read** credential-bearing files or values: it never opens `~/.claude.json`, never reads
-  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), and never opens MCP config files (project, managed or plugin; inline definitions in a plugin manifest or managed settings are parsed with that file but never kept), nor hook
-  `headers`/`allowedEnvVars`, which hold or point to credentials. From
-  settings `env` it only checks names against a fixed list of documented variables. The audit
-  lists no MCP servers; you can review them with `claude mcp list` yourself.
+  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), nor
+  hook `headers`/`allowedEnvVars`, which hold or point to credentials. From settings `env` it only
+  checks names against a fixed list of documented variables.
+- **Does not open MCP config files** (project, managed or plugin; inline definitions in a plugin
+  manifest or managed settings are parsed with that file but never kept), so it lists no MCP
+  servers; you can review them with `claude mcp list` yourself.
 - **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.

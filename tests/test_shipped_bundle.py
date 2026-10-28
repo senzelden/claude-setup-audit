@@ -136,6 +136,16 @@ class ShippedBundleTests(unittest.TestCase):
         self.assertEqual(sorted(m for m in imported_modules(tree) if network_module(m)),
                          ['asyncio', 'http', 'importlib', 'socket', 'ssl', 'urllib.request', 'xmlrpc.client'])
 
+    def test_no_shipped_file_pairs_mcp_with_credentials(self):
+        # 0.14.6: no MCP auth-state reads, and no sentence that ties MCP servers to env or header
+        # credentials (disclosures included); SKILL.md's never-open rule covers the files by name.
+        auth = re.compile(r'needsAuthMcpServers|sessions_needs_auth')
+        pairing = re.compile(r'MCP[^\n.]{0,80}\b(?:env|headers)\b[^\n.]{0,40}credential', re.I)
+        for path, text in shipped_text_files():
+            for rx in (auth, pairing):
+                match = rx.search(text)
+                self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
     def test_no_shipped_file_offers_a_salt_file(self):
         for path, text in shipped_text_files():
             match = SALT_FILE.search(text)
