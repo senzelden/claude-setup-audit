@@ -128,8 +128,8 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   so it can't name or rate any server. Tell the user to run `claude mcp list` themselves and to
   review each project `.mcp.json` for servers they don't recognise, unpinned `@latest` packages,
   remote servers over plain HTTP and servers with write access to external systems (docs page `mcp`).
-  `settings[].mcp_policy` and
-  permission-rule observations from settings files remain available for context.
+  `settings[].mcp_policy` and permission-rule observations from settings files remain available
+  for context.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
   already-supplied version observation; unavailable diagnostics are not installation failures.

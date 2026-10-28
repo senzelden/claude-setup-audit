@@ -78,6 +78,17 @@ def network_module(name):
     return any(name == m or name.startswith(m + '.') for m in NETWORK_MODULES)
 
 
+# A sentence naming MCP together with two credential-field words ties MCP servers to credentials.
+CREDENTIAL_FIELD = re.compile(r'\b(?:env|environment|headers|oauth|credentials?)\b', re.I)
+MCP_WORD = re.compile(r'\bMCP\b|\.mcp\.json')
+
+
+def mcp_credential_sentences(text):
+    flat = re.sub(r'\s+', ' ', text)
+    return [s for s in re.split(r'(?<=[.!?;])\s+(?=[A-Z`(])', flat)
+            if MCP_WORD.search(s) and len({m.lower().rstrip('s') for m in CREDENTIAL_FIELD.findall(s)}) >= 2]
+
+
 def shipped_text_files():
     for path in sorted(PLUGIN.rglob('*')):
         if path.is_file() and '__pycache__' not in path.parts and path != ICON:
@@ -139,12 +150,19 @@ class ShippedBundleTests(unittest.TestCase):
     def test_no_shipped_file_pairs_mcp_with_credentials(self):
         # 0.14.6: no MCP auth-state reads, and no sentence that ties MCP servers to env or header
         # credentials (disclosures included); SKILL.md's never-open rule covers the files by name.
-        auth = re.compile(r'needsAuthMcpServers|sessions_needs_auth')
-        pairing = re.compile(r'MCP[^\n.]{0,80}\b(?:env|headers)\b[^\n.]{0,40}credential', re.I)
-        for path, text in shipped_text_files():
-            for rx in (auth, pairing):
-                match = rx.search(text)
-                self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+        auth = re.compile(r'needsAuthMcpServers|sessions_needs_auth|needs sign-in')
+        files = [*shipped_text_files(), (ROOT / 'README.md', (ROOT / 'README.md').read_text(encoding='utf-8'))]
+        for path, text in files:
+            match = auth.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+            self.assertEqual(mcp_credential_sentences(text), [], path.relative_to(ROOT))
+
+    def test_mcp_credential_pairing_spans_lines_and_word_order(self):
+        old = ('never opens MCP config files (project, managed or plugin), hook\n  `headers`/`allowedEnvVars`, '
+               'which hold or point to credentials. An MCP server with failures: the user can run '
+               '`claude mcp get`; its output can include a server\'s environment and headers. Credentials '
+               'live in `env` blocks of `.mcp.json`. Run `claude mcp list` to review servers.')
+        self.assertEqual(len(mcp_credential_sentences(old)), 3)
 
     def test_no_shipped_file_offers_a_salt_file(self):
         for path, text in shipped_text_files():
