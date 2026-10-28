@@ -50,7 +50,7 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
   | `config_files` | settings, instruction and managed config file paths, previous audit file names, the drift log path and the /insights report path |
   | `plugin_paths` | plugin install roots, plugin component files and hook scripts that decide permissions |
-  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`), MCP executables |
+  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`) |
   | `other_paths` | fail-closed counter: path-like kept strings and dict keys (whitespace-free, not a URL or `name/N` basis string) that no family above names, hashed after the families so a new field is hashed, not leaked |
   | `free_text_scrubbed` | counter: strings and dict keys in which a known home, config or project directory was replaced by its tag (full-mode free text such as hook commands) |
 

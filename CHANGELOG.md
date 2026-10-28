@@ -14,9 +14,12 @@ credentials, even though it kept only shape facts. It no longer reads them at al
 
 ### Removed
 
-- The MCP inventory: project `.mcp.json`, managed MCP files and installed plugins' MCP
-  definitions are not opened. `extensions.mcp_servers`, `projects[].mcp_servers`,
+- The MCP inventory: project `.mcp.json`, managed MCP files and installed plugins' MCP files are
+  not opened; inline definitions in a plugin manifest or managed settings are parsed with that
+  file but never kept. `extensions.mcp_servers`, `projects[].mcp_servers`,
   `transcripts.mcp_configured_but_unused` and the `configured` flag on MCP failure rows are gone.
+- The `HYG-mcp-config` config notes (`url_without_type`, `sdk_type_skipped`, `reserved_name`,
+  `sse_deprecated`, `empty_url_placeholder`), which needed the server definitions.
 - `SEC-mcp` and `SEC-mcp-exposure`. `SEC-mcp-review` replaces them with guidance: run
   `claude mcp list` and review project `.mcp.json` files yourself.
 

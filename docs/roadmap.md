@@ -153,6 +153,9 @@ Hosted validation passed all eight jobs at `1167473`:
   `transcripts.mcp_configured_but_unused` are gone; the directory still flagged MCP files as a
   credential source. `SEC-mcp-review` tells the user to run `claude mcp list` themselves. The
   earlier MCP inventory items below are history. Tool-call and connection-failure counts stay.
+  Follow-up (0.14.5 review): a hostile plugin manifest can still point `hooks`, `agents` or
+  `commands` at its own MCP file, which would then be read as a component; refusing it needs a
+  file-name rule in extensions.py, which the bundle guard currently forbids by name.
 
 - **No-credential-reads follow-ups** (deferred from the 0.14.0 review): in the collector-failure
   fallback a whole-file Read of `settings.json` or `.mcp.json` still brings `env`/`headers`

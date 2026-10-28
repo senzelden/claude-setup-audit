@@ -216,9 +216,7 @@ the rest). `tokens` is volume including `cache_read_tokens` (billed at a fractio
 not spend. `api-request` records (`querySource`, `params.model`, `params.output_config.effort`,
 `params.thinking.type`, `cacheControl[].value.ttl`) are counted per source class, deduplicated by
 project (the transcript directory's project, also for subagent files), sessionId and request id; a
-breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25). `configured`
-is an exact name match to collected project, plugin and managed server names; user and local servers
-(in `~/.claude.json`) are not read, so they are never `configured`. A shape change in a later Claude
+breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25). A shape change in a later Claude
 Code release shows up as zero rows or `meta_unusable`, not as an error.
 
 Limit messages (`subscription.limit_events`, 0.13.0): the message texts are documented (errors, "Usage
@@ -307,7 +305,8 @@ Plugin candidates come from `installed_plugins.json` records, not newest cache d
 User/managed installs and matching project/local installs are inspected. Enablement settings
 are reported as per-source observations, with active state unknown. Only paths within plugin
 storage and components within their install are read. Default/custom skills, agents, commands,
-hooks are inspected; MCP definitions are not read; other manifest keys are inventoried, not implemented.
+hooks are inspected; MCP config files are not opened, and inline `mcpServers` in a manifest is parsed
+with the manifest but never kept; other manifest keys are inventoried, not implemented.
 Limits: 1 MiB/JSON; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 

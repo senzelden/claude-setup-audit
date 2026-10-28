@@ -247,6 +247,8 @@ class FakeHomeCanary(FakeHome):
             ('.claude.json', '.envrc', 'mise.toml', 'devcontainer.json', 'docker-compose.yml',
              '.mcp.json', 'managed-mcp.json'))])
         self.assertTrue(any(p.endswith('settings.json') for p in opened))  # not vacuous: other configs are read
+        self.assertTrue(any(p.endswith(os.path.join('.claude-plugin', 'plugin.json')) for p in opened))
+        self.assertIn('collected', [p['status'] for p in json.loads(snap)['extensions']['plugins']])
         for text in (CANARY, CANARY_NAME, 'CANARY_PASS', 'usersrv', 'localsrv', 'projectsrv', 'inlinesrv',
                      'pluginsrv', 'managedsrv', 'managedkeysrv'):
             self.assertNotIn(text, snap)

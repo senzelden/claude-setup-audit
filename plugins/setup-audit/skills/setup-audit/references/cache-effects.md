@@ -56,7 +56,8 @@ effect setting <key>` classifies one key): `sandbox`, `sandbox.*` -> `settings.s
 `mcpServers`, `enabledMcpjsonServers`, `disabledMcpjsonServers`, `enableAllProjectMcpServers` ->
 `mcp.config`; anything else -> `file.other` (`unknown`).
 Files (`classify_file`): `CLAUDE.md`, `CLAUDE.local.md` -> `memory.claude_md`; `MEMORY.md` and
-memory-directory files -> `memory.auto_memory`; `.claude.json` -> `mcp.config`.
+memory-directory files -> `memory.auto_memory`; `.mcp.json`, `.claude.json` -> `mcp.config` (the
+name comes from the transcript's edit record; the file is never opened).
 Permission rules (`classify_rule`): allow and ask keep; a deny that is a bare tool name, `Tool(*)`
 or a tool-name glob (`*`, `mcp__*`) is the bare-tool family (the docs state `Tool(*)` equals the bare
 name for Bash and PowerShell only, so other tools are classified conservatively, and the row says
