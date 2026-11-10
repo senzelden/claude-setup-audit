@@ -384,9 +384,7 @@ Table, effects and estimate: `references/cache-effects.md`.
    `settings.local.json` for personal changes.
 4. **Permissions.** Use `python3 ${CLAUDE_SKILL_DIR}/scripts/prune_permissions.py --remove <categories>`
    (dry-run) first, then add `--apply --backup-dir <dir>` with only the approved categories. Prefer adding `deny`/`ask` rules and removing specific broad allows
-   over wiping allowlists; a flood of prompts pushes people toward bypass mode. Re-verify
-   "secret" findings on the real permission rule or hook command (never an `env` or helper value) before telling anyone to rotate a key: command
-   substitutions and empty values are not secrets. The script only removes
+   over wiping allowlists; a flood of prompts pushes people toward bypass mode. The script only removes
    allow rules and stale directories and never touches deny rules, so a deny rule a plugin wrote
    (`plugin_written_rules`, TokenEconomizer) is never proposed; it flags files with a plugin
    auto-approve marker (`plugin_note`), whose allow rules may be machine-written and return;

@@ -215,6 +215,29 @@ class ShippedBundleTests(unittest.TestCase):
                         self.assertNotIn(name, node.value, '%s: %s' % (path.relative_to(ROOT), name))
 
 
+class NoSecretHuntingFlags(unittest.TestCase):
+    # 0.14.7: the two flags that searched allow rules for credentials (a literal token, a key pulled
+    # out of .env) are gone. Redaction of every snapshot string stays (test_collect covers it).
+    SECRET_FLAGS = re.compile(r'secret-literal-in-rule|secret-via-env-file|SEC-secret-(?:literal|env)'
+                              r'|contextual_search')
+
+    def test_collector_has_no_secret_hunting_flag(self):
+        sys.path.insert(0, str(PLUGIN / 'skills/setup-audit/scripts'))
+        try:
+            import collect
+            import privacy
+        finally:
+            sys.path.pop(0)
+        names = {flag for flag, _ in collect.RISKY_RULES}
+        self.assertFalse(names & {'secret-literal-in-rule', 'secret-via-env-file'}, names)
+        self.assertFalse(hasattr(privacy, 'contextual_search'))
+
+    def test_no_shipped_file_names_a_secret_hunting_flag(self):
+        for path, text in shipped_text_files():
+            match = self.SECRET_FLAGS.search(text)
+            self.assertIsNone(match, '%s: %s' % (path.relative_to(ROOT), match and match.group()))
+
+
 class RiskyRulePatterns(unittest.TestCase):
     # collect.py builds these two patterns from named command lists (a regex that inlines download
     # and interpreter commands reads to the scan as download-and-run); the regexes are unchanged.

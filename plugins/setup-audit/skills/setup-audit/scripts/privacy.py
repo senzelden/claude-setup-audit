@@ -101,10 +101,6 @@ def contextual_redact(text):
     return ''.join(out) + text[pos:]
 
 
-def contextual_search(text):
-    return contextual_redact(text) != text
-
-
 MARKER_FORMAT = '[metadata-only: N chars]'
 MARKER_RE = re.compile(r'\[metadata-only: \d+ chars\]\Z')
 FRONTMATTER_KEEP = frozenset({'name', 'model', 'context', 'agent', 'disable-model-invocation',

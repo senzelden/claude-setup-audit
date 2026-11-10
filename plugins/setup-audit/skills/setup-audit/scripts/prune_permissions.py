@@ -19,12 +19,12 @@ part this can't close.
 Categories (pass with --remove, comma-separated):
   risky flags from collect.py: wildcard-all, sudo, rm-recursive, network-wildcard, git-destructive,
     gh-api, interpreter-wildcard, package-install, docker, read-outside-project,
-    secret-literal-in-rule, secret-via-env-file, file-append-wildcard
+    file-append-wildcard
   one-off        exact commands with arguments, PIDs, /tmp paths or URLs (old single approvals)
   stale-dirs     additionalDirectories entries that no longer exist, plus /tmp
 
 Usage:
-  prune_permissions.py --remove sudo,secret-via-env-file,stale-dirs            # plan
+  prune_permissions.py --remove sudo,file-append-wildcard,stale-dirs           # plan
   prune_permissions.py --remove one-off --apply --backup-dir ~/.claude/backups/x
   prune_permissions.py --remove one-off --files path/to/settings.json           # limit files
 """

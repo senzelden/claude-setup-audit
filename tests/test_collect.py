@@ -56,11 +56,6 @@ class ReadOnlyDiagnostics(FakeHome):
 
 
 class RiskClassification(unittest.TestCase):
-    def test_contextual_literal_secret_flags_secret_literal_in_rule(self):
-        self.assertIn("secret-literal-in-rule",
-                      flags("Bash(export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY && aws s3 ls)"))
-        self.assertNotIn("secret-literal-in-rule", flags("Bash(export AWS_PROFILE=dev)"))
-
     def test_broad_rules_are_flagged(self):
         self.assertIn("network-wildcard", flags("Bash(curl:*)"))
         self.assertIn("interpreter-wildcard", flags("Bash(python3:*)"))
@@ -74,21 +69,16 @@ class RiskClassification(unittest.TestCase):
         self.assertEqual(flags("Bash(uv run pytest tests/test_ids.py)"), set())
         self.assertEqual(flags("Bash(git status)"), set())
 
-    def test_literal_secret_vs_env_reference(self):
-        self.assertIn("secret-literal-in-rule", flags("Bash(curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuv' x)"))
-        env_ref = "Bash(curl -H \"Authorization: Token $(grep COURTLISTENER_TOKEN .env)\" x)"
-        self.assertIn("secret-via-env-file", flags(env_ref))
-        self.assertNotIn("secret-literal-in-rule", flags(env_ref))
-        # Masking a .env file is not a secret leak.
-        self.assertNotIn("secret-via-env-file", flags("Bash(sed 's/=.*/=<set>/' .env)"))
-
-    def test_literal_secret_catches_opaque_bearer_without_a_recognizable_prefix(self):
-        # Regression: LITERAL_SECRET_RE didn't know "authorization" as a keyword and consumed only
-        # "Bearer" out of "Bearer <token>", so an opaque token with no sk-/ghp_/... prefix survived.
-        self.assertIn("secret-literal-in-rule",
-                      flags("Bash(curl -H 'Authorization: Bearer opaqueTokenNoRecognizablePrefix1234' x)"))
-        self.assertIn("secret-literal-in-rule",
-                      flags("Bash(curl -H 'Bearer opaqueTokenWithNoLabelAtAll1234567' x)"))
+    def test_flagged_rule_text_is_redacted(self):
+        # 0.14.7: no flag hunts for secrets in rules, but rule text that other flags list is redacted.
+        for secret in ("Authorization: Bearer sk-abcdefghijklmnopqrstuv",
+                       "Authorization: Bearer opaqueTokenNoRecognizablePrefix1234",
+                       "Bearer opaqueTokenWithNoLabelAtAll1234567"):
+            listed = collect.analyze_permissions({"allow": [f"Bash(sudo curl -H '{secret}' x)"]})["risky"]["sudo"]
+            self.assertNotIn(secret.split()[-1], listed[0])
+        listed = collect.analyze_permissions(
+            {"allow": ["Bash(sudo env AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY aws s3 ls)"]})
+        self.assertNotIn("wJalrXUtnFEMI", listed["risky"]["sudo"][0])
 
     def test_redaction_hides_values(self):
         out = collect.redact("api_key=sk-THISISASECRETVALUE123456")

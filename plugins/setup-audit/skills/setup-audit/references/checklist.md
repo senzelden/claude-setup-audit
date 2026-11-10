@@ -7,7 +7,7 @@ the collector snapshot.
 
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
 caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed
-on `permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys
+on `permissions.risky` flags), SEC-sandbox (keys
 and booleans only), SEC-hooks (type, matcher, origin, on_failure, background; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
@@ -67,11 +67,6 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   verified against the permissions docs: reads of `.env` files, `~/.ssh`, `~/.aws`, credential
   files and `/proc/*/environ`, and force-push. Anchor paths with `//` or `~/` so they apply in
   every project; a single leading `/` anchors at the settings file's location.
-- **SEC-secret-literal** (`secret-literal-in-rule`): a real token was baked into an allow rule
-  when a command was approved. Confirm on the file (never copy the value), then rotate, delete the
-  rule, and move the secret into env or a secrets manager.
-- **SEC-secret-env** (`secret-via-env-file`): the rule pulls a key out of `.env` onto the command
-  line, so it lands in transcripts. Lower severity. Fix: wrap the call in a script that reads env.
 - **SEC-settings-in-git** (`projects[].git`): a `settings.local.json` that is `tracked`, or
   `untracked` rather than `ignored`, can leak approvals when pushed. `not-a-git-repo` isn't a finding.
 - **SEC-auto-mode**: if `auto_mode_configured` is set, or sessions run unattended, raise the weight

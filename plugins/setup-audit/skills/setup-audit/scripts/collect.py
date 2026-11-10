@@ -67,14 +67,6 @@ SECRET_RE = re.compile(
     r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)\s*[:=]\s*"
     r"(?:(?i:bearer|basic|digest)\s+)?(?![$<_{(])\S+)"
 )
-# A value that looks like an actual credential (not a variable/placeholder reference).
-LITERAL_SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
-    rf"|{JWT_PATTERN}|{PEM_PATTERN}|{URL_USERINFO_PATTERN}"
-    r"|(?i:bearer)\s+[A-Za-z0-9._\-]{16,}"
-    r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)[\"' ]*[:=]\s*[\"']?"
-    r"(?:(?i:bearer|basic|digest)[\"' ]+)?(?![$<_{(])[A-Za-z0-9._\-]{16,})"
-)
 # Key names (normalized: lowercased, non-alnum stripped) whose value sanitize() redacts outright,
 # regardless of quoting/spacing — the structural backstop for the regexes above, which only catch
 # a labeled value inside a single string and never match JSON's own '"key": "value"' shape at all.
@@ -83,15 +75,6 @@ SECRET_KEY_NAMES = {
     "bearertoken", "idtoken", "sessiontoken", "token", "password", "passwd", "secret",
     "secretkey", "clientsecret", "credential", "credentials", "privatekey",
 }
-
-class _AnyOf:
-    """`.search` over several matchers, so RISKY_RULES keeps its (name, rx) shape for callers."""
-    def __init__(self, *searches):
-        self._searches = searches
-
-    def search(self, text):
-        return any(s(text) for s in self._searches)
-
 
 # Command heads behind two RISKY_RULES flags, as regex alternatives. The flags match allow rules
 # that let Claude run these commands with any arguments.
@@ -118,9 +101,6 @@ RISKY_RULES = [
     ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
     ("docker", re.compile(r"\bdocker\b")),
     ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),
-    ("secret-literal-in-rule", _AnyOf(LITERAL_SECRET_RE.search, privacy.contextual_search)),
-    # A secret pulled out of .env onto the command line (not masking like sed 's/=.*/=<set>/' .env).
-    ("secret-via-env-file", re.compile(r"\$\\?\(.*\.env\b|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\S*\s+\S*\.env\b")),
     ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
 ]
 # permissions.md "Wildcard patterns" / "Match by input parameter" and errors.md "Has a wildcard before
@@ -255,7 +235,7 @@ def _normalized_key(k):
 
 
 def _looks_like_reference(v):
-    # Same convention SECRET_RE/LITERAL_SECRET_RE use: a value starting with one of these is a
+    # Same convention SECRET_RE uses: a value starting with one of these is a
     # variable/placeholder reference ('$FOO', '<set>', '{{VAR}}', '$(pass show x)'), not a literal
     # secret, and is exactly the "which env var is wired in" signal reports are meant to show.
     return bool(v) and v[0] in "$<_{("

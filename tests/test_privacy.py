@@ -133,10 +133,6 @@ class ContextualDetection(unittest.TestCase):
         self.assertEqual(privacy.label_segments('AWS_SECRET_ACCESS_KEY'),
                          ['aws', 'secret', 'access', 'key'])
 
-    def test_contextual_search(self):
-        self.assertTrue(privacy.contextual_search(f'AWS_SECRET_ACCESS_KEY={AWS}'))
-        self.assertFalse(privacy.contextual_search('AWS_PROFILE=dev'))
-
     def test_sanitize_leaves_references_and_spaced_values_alone(self):
         env = {'POSTGRES_PASSWORD': '${POSTGRES_PASSWORD}', 'PGPASSWORD': '$(pass show pg)',
                'DB_PASSWORD': '<set in vault>', 'API_KEY': '{{secrets.API_KEY_V2}}',
@@ -412,7 +408,7 @@ class EndToEnd(PatchedHome):
                    'permissions': {'deny': ['Bash(zcdenyruleg)', 'Bash(zcoverlapby:*)'],
                                    'allow': ['Bash(sudo zcriskyruleg)', 'Bash(git:* zcshapepush)',
                                              'Bash(zcoverlapby zcoverlapallow)',
-                                             f'Bash(export AWS_SECRET_ACCESS_KEY={AWS} && aws s3 ls)']}})
+                                             f'Bash(sudo env AWS_SECRET_ACCESS_KEY={AWS} aws s3 ls)']}})
         self.write('code/app/.mcp.json', {'mcpServers': {
             'pgsrv': {'type': 'http', 'url': 'https://mcp.example.com/${MCP_HOST}/zcmcpurlpath',
                       'headers': {'X-Key': '${MCP_KEY}', 'X-Lit': 'zcmcpheader'},
@@ -698,8 +694,7 @@ class Docs(unittest.TestCase):
         for bucket, ids in ((partial, ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
                                        'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
                                        'HYG-missing-hook-script', 'SEC-wildcard-placement',
-                                       'SEC-ineffective-deny', 'HYG-shadowed-allow', 'SEC-secret-literal',
-                                       'SEC-secret-env')),
+                                       'SEC-ineffective-deny', 'HYG-shadowed-allow')),
                             (not_checked, ('SEC-docs-only-constraint', 'LRN-contradiction', 'LRN-enforce'))):
             for check in ids:
                 self.assertIn(check, bucket)

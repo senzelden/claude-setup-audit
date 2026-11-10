@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-11-10
+
+The directory's credential rule now also holds the already-published 0.10.0. Its remaining
+summary line says that removing every part that reads a credential clears the hold. Two
+permission flags did exactly that: they searched allow rules for credentials.
+
+### Removed
+
+- The `secret-literal-in-rule` and `secret-via-env-file` permission flags, and with them the
+  `SEC-secret-literal` and `SEC-secret-env` checks and the two `prune_permissions.py` categories.
+  The unused `LITERAL_SECRET_RE` and `privacy.contextual_search` went with them.
+
+### Unchanged
+
+- Redaction: every string in the snapshot, flagged rule text included, still passes through
+  the redaction pass before it is written.
+
+### Changed
+
+- A bundle test keeps the two flags and check ids out of shipped files. A collector test shows
+  that a token in a flagged allow rule is still redacted.
+
 ## [0.14.6] - 2026-10-28
 
 Two remaining MCP-related matches for the directory's MCP credential rule.
