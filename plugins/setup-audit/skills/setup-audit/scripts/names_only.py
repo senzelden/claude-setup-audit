@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Names-only view of Claude Code settings and MCP config files, for when collect.py cannot run.
+
+Prints JSON per file: key paths, value types, array lengths, env/headers key names and permission
+rule strings (redacted with privacy.redact). Values of any other key are never printed; a string
+is reported as a type only. ~/.claude.json goes through config_names (names, counts, labels).
+Nothing is executed, followed through a symlink, or written. Needs only config_names, inventory
+and privacy, so it still works when collect.py fails.
+
+Status per file: ok, missing, not_json, symlink_refused, too_large, unreadable.
+"""
+import argparse
+import json
+import os
+import sys
+import config_names
+import inventory
+import privacy
+
+HOME = os.path.expanduser('~')
+MAX_BYTES = 1024 * 1024
+MAX_DEPTH = 8          # nesting levels walked; deeper values are reported as a type only
+MAX_KEYS = 400         # distinct key paths kept per file
+MAX_NAMES = 200        # env/header key names kept per path
+MAX_RULES = 200        # permission rule strings kept per list
+MAX_ELEMENTS = 50      # array elements walked per array
+TEXT_CAP = 200         # characters kept of any name or rule
+MAX_PLUGINS = 50
+MAX_MANAGED_FILES = 100
+# Mappings whose keys are names of secrets: only the keys are printed.
+NAME_ONLY = frozenset({'env', 'headers'})
+RULE_LISTS = frozenset({'permissions.allow', 'permissions.deny', 'permissions.ask',
+                        'permissions.additionalDirectories'})
+STATUSES = ('ok', 'missing', 'not_json', 'symlink_refused', 'too_large', 'unreadable')
+
+
+def managed_directory():
+    if sys.platform == 'darwin':
+        return '/Library/Application Support/ClaudeCode'
+    return '/etc/claude-code' if sys.platform.startswith('linux') else None
+
+
+def text(value):
+    """A name or rule, redacted and capped."""
+    return privacy.redact(str(value))[:TEXT_CAP]
+
+
+def key_names(mapping):
+    """Sorted, redacted key names of a mapping; values are not looked at."""
+    return sorted({text(k) for k in mapping if isinstance(k, str)})[:MAX_NAMES]
+
+
+def kind_of(value):
+    if isinstance(value, dict):
+        return 'object'
+    if isinstance(value, list):
+        return 'array'
+    if isinstance(value, bool):
+        return 'boolean'
+    if value is None:
+        return 'null'
+    return 'number' if isinstance(value, (int, float)) else 'string'
+
+
+class Walk:
+    def __init__(self):
+        self.keys, self.names, self.rules, self.truncated = {}, {}, {}, False
+
+    def note(self, path, value):
+        row = self.keys.get(path)
+        if row is None:
+            if len(self.keys) >= MAX_KEYS:
+                self.truncated = True
+                return
+            row = self.keys[path] = {'path': path, 'types': set(), 'count': 0, 'max_length': None}
+        row['types'].add(kind_of(value))
+        row['count'] += 1
+        if isinstance(value, (dict, list)):
+            row['max_length'] = max(row['max_length'] or 0, len(value))
+
+    def visit(self, value, path, depth):
+        self.note(path, value)
+        if path in RULE_LISTS and isinstance(value, list):
+            rules = self.rules.setdefault(path, [])
+            for item in value:
+                if isinstance(item, str) and len(rules) < MAX_RULES:
+                    rules.append(text(item))
+                elif isinstance(item, str):
+                    self.truncated = True
+            return
+        if depth >= MAX_DEPTH:
+            self.truncated = self.truncated or bool(value) and isinstance(value, (dict, list))
+            return
+        if isinstance(value, dict):
+            for key, child in list(value.items())[:MAX_KEYS]:
+                label = text(key)
+                child_path = f'{path}.{label}' if path else label
+                if key in NAME_ONLY and isinstance(child, dict):
+                    self.note(child_path, child)
+                    names = self.names.setdefault(child_path, set())
+                    names.update(key_names(child))
+                    continue
+                self.visit(child, child_path, depth + 1)
+            if len(value) > MAX_KEYS:
+                self.truncated = True
+        elif isinstance(value, list):
+            for child in value[:MAX_ELEMENTS]:
+                self.visit(child, path + '[]', depth + 1)
+            if len(value) > MAX_ELEMENTS:
+                self.truncated = True
+
+    def result(self):
+        rows = [dict(r, types=sorted(r['types'])) for r in self.keys.values()]
+        out = {'keys': sorted(rows, key=lambda r: r['path']), 'truncated': self.truncated}
+        if self.names:
+            out['names'] = {p: sorted(n)[:MAX_NAMES] for p, n in sorted(self.names.items())}
+        if self.rules:
+            out['rules'] = dict(sorted(self.rules.items()))
+        return out
+
+
+def load(path):
+    """(parsed object or None, status, reason). Symlinks are never followed; reads are bounded."""
+    raw, info = inventory.read_text(path, MAX_BYTES)
+    if raw is None:
+        reason = info.get('reason')
+        if info['status'] == 'absent':
+            return None, 'missing', None
+        if reason == 'symlink_not_followed':
+            return None, 'symlink_refused', reason
+        return None, 'unreadable', reason
+    if info.get('truncated'):
+        return None, 'too_large', 'byte_limit'
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None, 'not_json', 'invalid_json'
+    if not isinstance(data, dict):
+        return None, 'not_json', 'not_an_object'
+    return data, 'ok', None
+
+
+def file_entry(path, scope, kind, mcp=None):
+    """One file's names-only entry. ``mcp``: None, 'wrapped' (mcpServers key) or 'bare' (plugin shape)."""
+    data, status, reason = load(path)
+    entry = {'path': path, 'scope': scope, 'kind': kind, 'status': status}
+    if reason:
+        entry['reason'] = reason
+    if data is None:
+        return entry
+    walk = Walk()
+    try:
+        walk.visit(data, '', 0)
+    except RecursionError:  # unreachable under MAX_DEPTH; kept so a bug never aborts the fallback
+        entry.update(status='not_json', reason='too_deep')
+        return entry
+    entry.update(walk.result())
+    if mcp:
+        servers = config_names.server_map(data, bare=mcp == 'bare')
+        if servers is not None:
+            entry['servers'] = {text(n): f for n, f in servers.items()}
+    return entry
+
+
+def user_state_entry(home):
+    """~/.claude.json through config_names: server facts and per-project server-name lists only."""
+    view = config_names.user_mcp_state(home)
+    status = view['source'].get('status')
+    mapped = {'collected': 'ok', 'absent': 'missing'}.get(status)
+    reason = view['source'].get('reason')
+    if mapped is None:
+        mapped = ('symlink_refused' if reason == 'symlink_not_followed' else 'not_json'
+                  if reason == 'invalid_json_object' else 'too_large' if view['source'].get('truncated')
+                  else 'unreadable')
+    entry = {'path': view['path'], 'scope': 'user', 'kind': 'user_state', 'status': mapped}
+    if mapped == 'ok':
+        entry['servers'] = {text(n): f for n, f in (view.get('mcpServers') or {}).items()}
+        entry['projects'] = {text(root): {k: (v if not isinstance(v, dict) else {text(n): f for n, f in v.items()})
+                                          for k, v in row.items()} for root, row in sorted(view['projects'].items())}
+    elif reason:
+        entry['reason'] = reason
+    return entry
+
+
+def plugin_entries(claude_dir):
+    """Default <installPath>/.mcp.json of registered plugin installs inside the plugin cache."""
+    data, status, _ = load(os.path.join(claude_dir, 'plugins', 'installed_plugins.json'))
+    registry = data.get('plugins') if status == 'ok' else None
+    if not isinstance(registry, dict):
+        return []
+    cache = os.path.realpath(os.path.join(claude_dir, 'plugins'))
+    entries, seen = [], set()
+    for name in sorted(registry):
+        for row in registry[name] if isinstance(registry[name], list) else []:
+            root = row.get('installPath') if isinstance(row, dict) else None
+            if (not isinstance(root, str) or not os.path.isabs(root) or root in seen
+                    or not os.path.realpath(root).startswith(cache + os.sep) or len(seen) >= MAX_PLUGINS):
+                continue
+            seen.add(root)
+            entries.append(file_entry(os.path.join(root, '.mcp.json'), 'plugin', 'mcp', 'bare'))
+    return entries
+
+
+def run(home=None, claude_dir=None, roots=(), managed_dir=None):
+    home = HOME if home is None else home
+    claude_dir = claude_dir or os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(home, '.claude')
+    files = [file_entry(os.path.join(claude_dir, n), 'user', 'settings') for n in ('settings.json', 'settings.local.json')]
+    files.append(user_state_entry(home))
+    for root in roots:
+        for rel in ('settings.json', 'settings.local.json'):
+            files.append(file_entry(os.path.join(root, '.claude', rel), 'project', 'settings'))
+        files.append(file_entry(os.path.join(root, '.mcp.json'), 'project', 'mcp', 'wrapped'))
+    if managed_dir:
+        files.append(file_entry(os.path.join(managed_dir, 'managed-settings.json'), 'managed', 'settings'))
+        directory = os.path.join(managed_dir, 'managed-settings.d')
+        try:
+            names = sorted(n for n in os.listdir(directory) if n.endswith('.json') and not n.startswith('.'))
+        except OSError:
+            names = []
+        files += [file_entry(os.path.join(directory, n), 'managed', 'settings') for n in names[:MAX_MANAGED_FILES]]
+        files.append(file_entry(os.path.join(managed_dir, 'managed-mcp.json'), 'managed', 'mcp', 'wrapped'))
+    files += plugin_entries(claude_dir)
+    return {'names_only_version': 1,
+            'note': 'Names, types, counts and labels only; no env, header, OAuth or argument value is printed.',
+            'files': files}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('--claude-dir', help='Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)')
+    ap.add_argument('--project', action='append', default=[], help='project root to include (repeatable)')
+    ap.add_argument('--roots', nargs='*', default=[], help='more project roots')
+    a = ap.parse_args()
+    roots = [os.path.abspath(os.path.expanduser(r)) for r in [*a.project, *a.roots]]
+    claude = os.path.abspath(os.path.expanduser(a.claude_dir)) if a.claude_dir else None
+    json.dump(run(claude_dir=claude, roots=roots, managed_dir=managed_directory()), sys.stdout, indent=1,
+              allow_nan=False)
+    print()
+
+
+if __name__ == '__main__':
+    main()

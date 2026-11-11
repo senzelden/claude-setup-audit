@@ -1,7 +1,7 @@
 ---
 name: setup-audit
 description: Audit the user's Claude Code configuration and usage (user and per-project settings, permissions, hooks, MCP servers, skills, plugins, CLAUDE.md files, memory, and usage and transcript data) against the current official docs. Produce ranked, evidence-backed proposals for security, cost/context efficiency, and learning from repeated mistakes, plus an agent-readiness check of a repo (one-command setup, env variables Claude's shell can't see, e.g. from direnv/.envrc, test loop, guardrails). Then apply the approved ones with backups and verification. Use this whenever the user wants to review, audit, harden, tune, clean up or optimize their Claude Code configuration, asks whether a repo is ready for Claude Code to work in, asks why Claude Code is expensive or keeps repeating a mistake, wants to know which new Claude Code features they're missing, or follows up on /insights or /doctor, even if they don't say "audit".
-allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *)
+allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/collect.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/query_snapshot.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/split_coverage.py *) Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/names_only.py *)
 ---
 
 # Claude Code setup audit
@@ -117,10 +117,16 @@ recorded as status `invalid`) and the audit never writes it.
 error, or any other failure before the collector produces output), tell the user up front, once,
 that the collector couldn't run (quote the error after redacting secret values) and that findings below come from reading
 files directly instead of the collector's redacted, pre-classified snapshot. Don't retry the same
-failing command in a loop. Then keep going with Read/Glob against the same files the collector
-would have read (settings files, CLAUDE.md, memory, permission rules), subject to the never-open
-rule in Boundaries. A degraded audit is much
-more useful than none, and the checklist findings still apply. With `privacy=metadata-only`, do not
+failing command in a loop. Then run `python3 ${CLAUDE_SKILL_DIR}/scripts/names_only.py --claude-dir
+"<claude config dir>" --project "<project root>"` (add `--project` per extra root). It prints, per
+settings and MCP config file, key paths, value types, array lengths, `env` and `headers` key names
+and redacted permission rules, with a status (`ok`, `missing`, `not_json`, `symlink_refused`,
+`too_large`, `unreadable`), and never a value. Use it instead of Read on `settings.json`,
+`settings.local.json`, `.mcp.json`, managed and plugin MCP files and `~/.claude.json`: **do not
+Read those files whole, even in this fallback.** If it fails too, report those files as not
+assessed. CLAUDE.md, memory and rules files may still be read with Read/Glob, subject to the
+never-open rule in Boundaries. A degraded audit is much more useful than none, and the checklist
+findings still apply. With `privacy=metadata-only`, do not
 fall back to reading files: tell the user the collector couldn't run and ask whether to continue with
 full-text reads or stop.
 

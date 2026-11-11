@@ -7,6 +7,27 @@ import re
 import secrets
 from collections import Counter
 
+# JWT-shaped: three dot-separated base64url segments, header segment starts with the base64 of '{"'.
+JWT_PATTERN = r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"
+# PEM private-key block. Scoped (?s:...) so '.' crosses the newlines inside just this alternative.
+PEM_PATTERN = r"(?s:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----)"
+# user:pass@ inside a URL (database URLs, git remotes, ...). Matches only the credential span.
+URL_USERINFO_PATTERN = r"(?<=://)[^\s/:@]{1,64}:[^\s/@]{1,128}@"
+
+SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
+    rf"|{JWT_PATTERN}|{PEM_PATTERN}|{URL_USERINFO_PATTERN}"
+    # Bare "Bearer <token>" with no colon/equals before it at all (e.g. no "Authorization:" prefix).
+    r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{16,}"
+    # (?!...) so 'token=$FOO' / 'password=<set>' / 'secret={{VAR}}' (references, not values) survive:
+    # they're exactly the "which env vars are wired in" signal reports are meant to show. The
+    # optional scheme group lets this branch also consume "Bearer "/"Basic "/"Digest " between the
+    # label's [:=] and the actual value (plain \S+ used to stop at the scheme word itself, leaving
+    # the real token right after it unredacted).
+    r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)\s*[:=]\s*"
+    r"(?:(?i:bearer|basic|digest)\s+)?(?![$<_{(])\S+)"
+)
+
 CONTEXT_TOKEN = '[REDACTED:context]'
 CONTEXT_MIN_LEN, CONTEXT_MAX_LEN, PASSWORD_MIN_LEN, ENTROPY_MIN = 16, 512, 6, 3.5
 PASSWORD_WORDS = {'password', 'passwd', 'pwd', 'passphrase', 'pass'}
@@ -651,3 +672,8 @@ def _hash_strays(snap, hasher):
     for key in list(snap):
         snap[key] = walk(snap[key], (key,))
     return n[0]
+
+
+def redact(text):
+    """Best-effort redaction of known token shapes, then of labelled literals (collect.py's redact)."""
+    return contextual_redact(SECRET_RE.sub('[REDACTED]', text))

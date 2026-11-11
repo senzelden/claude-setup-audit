@@ -149,7 +149,8 @@ class OnlyModuleReadsSensitiveSources(unittest.TestCase):
 OPENERS = {'open', 'read_json_object', 'json_object', 'load_json', 'read_text', 'read_bytes', '_read', 'load'}
 # file name -> the only scripts allowed to open it (empty: none may)
 OPEN_ALLOWED = {'.claude.json': {'config_names.py'}, '.envrc': {'config_names.py'}, '.credentials.json': set(),
-                '.mcp.json': {'extensions.py', 'collect.py'}, 'managed-mcp.json': {'extensions.py'}}
+                '.mcp.json': {'extensions.py', 'collect.py', 'names_only.py'},
+                'managed-mcp.json': {'extensions.py', 'names_only.py'}}
 KEYCHAIN_SHAPES = ('security find-generic-password', 'find-generic-password', 'find-internet-password',
                    'secret-tool', 'keyring', 'libsecret', 'gnome-keyring', 'kwallet')
 
@@ -231,6 +232,14 @@ class OnlyNamedModulesOpenCredentialFiles(unittest.TestCase):
         self.assertTrue(file_opens(trees['config_names.py'], ('.claude.json',)))
         self.assertTrue(file_opens(trees['config_names.py'], ('.envrc',)))
         self.assertTrue(file_opens(trees['extensions.py'], ('.mcp.json',)))
+
+    def test_names_only_fallback_does_not_open_user_state_or_envrc(self):
+        # It reaches ~/.claude.json only through config_names.user_mcp_state.
+        # The path-building scopes never contain an opener call, so file_opens cannot see it; pin that the
+        # module names none of these files at all.
+        tree = dict(shipped_trees())['names_only.py']
+        docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
+        self.assertEqual(_named(tree, ('.claude.json', '.envrc', '.credentials.json'), docs), [])
 
     def test_open_guard_catches_known_shapes(self):
         names = tuple(OPEN_ALLOWED)

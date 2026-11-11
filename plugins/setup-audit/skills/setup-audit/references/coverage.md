@@ -347,6 +347,21 @@ on that date; no private values were used as fixtures. Unknown registry shapes a
 Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime
 activation. Frontmatter folding and enablement can change the actual listing size.
 
+## Names-only fallback
+
+When `collect.py` cannot run, `scripts/names_only.py` (`--claude-dir`, `--project`, `--roots`) prints
+JSON for user, project and local settings, managed settings and `managed-settings.d`, project and
+managed `.mcp.json`, installed plugins' default `.mcp.json`, and `~/.claude.json`. Per file:
+`status` (`ok`, `missing`, `not_json`, `symlink_refused`, `too_large`, `unreadable`), `keys` (path,
+types, count, max length), `names` (the keys of `env` and `headers` objects, never values), `rules`
+(permission rule strings, redacted with `privacy.redact`) and, for MCP files, `servers` (the
+`config_names` facts). `~/.claude.json` is reduced by `config_names.user_mcp_state` to server facts
+and per-project server-name lists. Strings are reported as a type only. Symlinks are not followed,
+files over 1 MB are not read, and the walk is capped (8 levels, 400 key paths, 50 array elements,
+200 rules); `truncated: true` marks a cut. It does not discover projects (pass the roots) and covers
+no `.envrc`, transcripts, memory or CLAUDE.md. Claude does not Read settings or MCP files whole in
+that fallback.
+
 ## Privacy
 
 `coverage.privacy` is always present: `mode` (`full` or `metadata-only`), `free_text`

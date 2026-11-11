@@ -47,26 +47,9 @@ HOME = os.path.expanduser("~")
 # Claude Code's documented override; --claude-dir takes precedence (see main()).
 CLAUDE = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
 
-# JWT-shaped: three dot-separated base64url segments, header segment starts with the base64 of '{"'.
-JWT_PATTERN = r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"
-# PEM private-key block. Scoped (?s:...) so '.' crosses the newlines inside just this alternative.
-PEM_PATTERN = r"(?s:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----)"
-# user:pass@ inside a URL (database URLs, git remotes, ...). Matches only the credential span.
-URL_USERINFO_PATTERN = r"(?<=://)[^\s/:@]{1,64}:[^\s/@]{1,128}@"
-
-SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
-    rf"|{JWT_PATTERN}|{PEM_PATTERN}|{URL_USERINFO_PATTERN}"
-    # Bare "Bearer <token>" with no colon/equals before it at all (e.g. no "Authorization:" prefix).
-    r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{16,}"
-    # (?!...) so 'token=$FOO' / 'password=<set>' / 'secret={{VAR}}' (references, not values) survive:
-    # they're exactly the "which env vars are wired in" signal reports are meant to show. The
-    # optional scheme group lets this branch also consume "Bearer "/"Basic "/"Digest " between the
-    # label's [:=] and the actual value (plain \S+ used to stop at the scheme word itself, leaving
-    # the real token right after it unredacted).
-    r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)\s*[:=]\s*"
-    r"(?:(?i:bearer|basic|digest)\s+)?(?![$<_{(])\S+)"
-)
+# The shared secret patterns live in privacy.py so the names-only fallback redacts the same way.
+JWT_PATTERN, PEM_PATTERN = privacy.JWT_PATTERN, privacy.PEM_PATTERN
+URL_USERINFO_PATTERN, SECRET_RE = privacy.URL_USERINFO_PATTERN, privacy.SECRET_RE
 # A value that looks like an actual credential (not a variable/placeholder reference).
 LITERAL_SECRET_RE = re.compile(
     r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
@@ -247,7 +230,7 @@ def load_json(path):
 
 
 def redact(text):
-    return privacy.contextual_redact(SECRET_RE.sub("[REDACTED]", text))
+    return privacy.redact(text)
 
 
 def _normalized_key(k):

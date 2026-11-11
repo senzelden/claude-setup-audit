@@ -157,10 +157,9 @@ Hosted validation passed all eight jobs at `1167473`:
   `commands` at its own MCP file, which would then be read as a component; refusing it needs a
   file-name rule in extensions.py, which the bundle guard currently forbids by name.
 
-- **No-credential-reads follow-ups** (deferred from the 0.14.0 review): in the collector-failure
-  fallback a whole-file Read of `settings.json` or `.mcp.json` still brings `env`/`headers`
-  values into context although SKILL.md forbids reading them (a names-only fallback script would
-  close it); about 12 prose lines added in 0.14.0 exceed 100 columns; the docs-side test checks
+- **No-credential-reads follow-ups** (deferred from the 0.14.0 review): the whole-file Read in the
+  collector-failure fallback is closed by `scripts/names_only.py` (0.15.0); about 12
+  prose lines added in 0.14.0 exceed 100 columns; the docs-side test checks
   the never-open rule exists, not that no passage instructs opening such a file.
 
 - **Directory-scan follow-ups** (deferred from the 0.13.1 review): `handler_fingerprint` still
@@ -226,9 +225,8 @@ first three are the recommended next bundle.
 
 Directory policy and listing:
 
-- **Names-only fallback (recommended, 1):** when the collector fails, Claude reads `settings.json`
-  whole, which brings `env` values into context against SKILL.md's never-open rule. A fallback
-  script that reports key names only closes it (see the no-credential-reads follow-ups above).
+- **Names-only fallback (done in 0.15.0):** `scripts/names_only.py` replaces the whole-file Read
+  of settings and MCP files in the collector-failure fallback.
 - **Fewer, bundled releases:** every version now waits for a reviewer. Bundle changes and send a
   short reviewer note with each version.
 - **New-text diff against the live version:** a pre-release check listing shipped text added since

@@ -15,6 +15,7 @@ ICON = PLUGIN / '.claude-plugin/icon.png'
 
 from test_collect import FakeHome, collect  # noqa: E402  (puts the scripts on sys.path)
 import config_names  # noqa: E402
+import names_only  # noqa: E402
 from unittest import mock  # noqa: E402
 
 # Plugin directory rule (claude.com/docs/plugins/pre-submission-checklist, fetched 2026-10-27): a
@@ -269,6 +270,22 @@ class NoCredentialValueReachesTheSnapshot(FakeHome):
             if not flags:  # not vacuous: every source was read, names-only
                 for name in self.NAMES:
                     self.assertIn(name, text)
+
+    def names_only_text(self):
+        root = self.seed()
+        return json.dumps(names_only.run(home=self.home, claude_dir=self.claude, roots=[root],
+                                         managed_dir=os.path.join(self.home, 'managed')))
+
+    def test_names_only_fallback_holds_names_but_no_value(self):
+        text = self.names_only_text()
+        self.assertEqual(self.leaks(text), [])
+        for name in ('ZQ_SETTINGS_ENV', 'X-Zq-Hook', 'ZQ_PROJ_ENV', 'X-Zq-Proj', 'zqusersrv', 'zqprojsrv',
+                     'zqmanagedsrv', 'zqpluginsrv'):  # not vacuous
+            self.assertIn(name, text)
+
+    def test_canary_catches_a_leaking_names_only_fallback(self):
+        with mock.patch.object(names_only, 'key_names', lambda m: sorted(f'{k}={v}' for k, v in m.items())):
+            self.assertTrue(self.leaks(self.names_only_text()))
 
     def test_canary_catches_a_bypassed_names_only_reader(self):
         real = config_names.mapping_names
