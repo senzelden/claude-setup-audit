@@ -671,9 +671,10 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   credentials" / "Mask credentials" in the sandboxing docs) before proposing option 3.
 - **RDY-env-secret-backend** (pointers resolve empty inside Claude's shell, e.g. the gpg or
   1Password agent is unreachable from the sandbox): opt-in on every run. Ask the user in this run
-  before probing, even if an earlier audit had their OK. Probe variable names only, reporting each
-  as set or unset (`[ -n "${NAME+x}" ]`), never a value, and tell the user rather than working
-  around the sandbox.
+  before probing, even if an earlier audit had their OK. Probe variable names only and report one of
+  three states, never a value: unset (`[ -z "${NAME+x}" ]`), set but empty (`[ -z "${NAME:-}" ]`:
+  the pointer resolved to nothing, the case this check exists for) or set and non-empty. Tell the
+  user rather than working around the sandbox.
 - **RDY-format-guardrails** (`precommit`, `formatter_config`): a formatter is configured but not
   enforced. Evidence: edit rounds that only change formatting. Propose both a git pre-commit
   hook (humans) and a Claude PostToolUse format-on-edit hook (agent), in the repo's existing tool.

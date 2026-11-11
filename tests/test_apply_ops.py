@@ -610,7 +610,9 @@ class Run(FakeHome):
         self.assertEqual(reasons(out), ['inject_host_not_allowed'])   # a wildcard is not an exact listing
         _, out = self.cred(['api.github.com'], {'sandbox': {'network': {'allowedDomains': ['api.github.com']}}},
                            op('sandbox.network.allowedDomains', ['x.example.com'], {'value': ['api.github.com']}))
-        self.assertEqual(reasons(out)[0], 'inject_host_not_allowed')  # checked after the ops, not before
+        self.assertTrue(out['ok'], out)  # judged before the batch: the host was listed, the batch may narrow
+        _, out = self.cred(['api.github.com'], None, op('sandbox.network.allowedDomains', ['api.github.com']))
+        self.assertEqual((out['ok'], reasons(out)), (False, ['inject_host_not_allowed', '']))  # same batch: refused
         self.write('.claude/settings.json', apply_ops.dump({}))
         _, out = self.cred(['::1'], {'sandbox': {'network': {'allowedDomains': ['::1']}}})
         self.assertEqual(reasons(out), ['inject_host_not_allowed'])   # IPv6 is bracketed in allowedDomains
@@ -630,10 +632,10 @@ class Run(FakeHome):
 
     def test_output_is_sanitized_and_has_no_internal_fields(self):
         canary = 'ghp_' + 'a' * 36
+        self.write('.claude/settings.json', apply_ops.dump({'sandbox': {'network': {'allowedDomains': ['api.github.com']}}}))
         out = apply_ops.run(self.ops(self.target('~/.claude/settings.json', op(
             'sandbox.credentials.envVars', [{'name': 'GH_TOKEN', 'mode': 'mask', 'extract': canary + '(x)',
-                                             'injectHosts': ['api.github.com']}]),
-            op('sandbox.network.allowedDomains', ['api.github.com']))))
+                                             'injectHosts': ['api.github.com']}]))))
         text = json.dumps(out)
         self.assertTrue(out['ok'], text)
         self.assertNotIn(canary, text)

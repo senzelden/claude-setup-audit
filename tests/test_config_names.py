@@ -280,8 +280,17 @@ class DocsBoundaryRule(unittest.TestCase):
 
     def test_secret_backend_probe_asks_every_run_and_prints_no_value(self):
         bullet = self.bullets('`RDY-env-secret-backend`')
-        for item in ('every run', 'ask the user in that run', 'set or unset', 'never prints'):
+        for item in ('every run', 'ask the user in that run', 'unset', 'set but empty', 'set and non-empty',
+                     '${NAME+x}', '${NAME:-}', 'never prints'):
             self.assertIn(item, bullet)
+        self.assertNotRegex(bullet, r'echo[^;`]*\$\{?NAME\b(?![+:])')  # the probe never echoes the value
+
+    def test_checklist_probe_distinguishes_empty_from_unset(self):
+        with open(os.path.join(os.path.dirname(SCRIPTS), 'references', 'checklist.md'), encoding='utf-8') as f:
+            text = ' '.join(f.read().split())
+        entry = text[text.index('**RDY-env-secret-backend**'):][:700]
+        for item in ('${NAME+x}', '${NAME:-}', 'set but empty', 'unset', 'never a value'):
+            self.assertIn(item, entry)
 
     def test_docs_never_tell_claude_to_run_mcp_get(self):
         refs = os.path.join(os.path.dirname(SCRIPTS), 'references')

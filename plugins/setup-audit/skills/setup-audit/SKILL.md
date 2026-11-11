@@ -470,9 +470,12 @@ review and never edit them. Statuses and reasons are in `references/ledger.md`.
   collector. For MCP servers the snapshot does not cover (remote connectors, projects outside the
   scanned roots), the user can run `claude mcp list` themselves; never run `claude mcp get`.
 - `RDY-env-secret-backend` is opt-in on every run: before probing, ask the user in that run
-  whether you may check, even if they agreed in an earlier audit. The probe reports each variable
-  name as set or unset in Claude's shell (for example `[ -n "${NAME+x}" ] && echo NAME set`) and
-  never prints, echoes or compares a value.
+  whether you may check, even if they agreed in an earlier audit. The probe reports one of three
+  states per variable name in Claude's shell: unset, set but empty (a pointer such as
+  `$(pass show …)` that resolved to nothing, the failure this check looks for), or set and
+  non-empty. For example `if [ -z "${NAME+x}" ]; then echo "NAME unset"; elif [ -z "${NAME:-}" ];
+  then echo "NAME set but empty"; else echo "NAME set and non-empty"; fi`. It never prints,
+  echoes or compares a value.
 - Never print or copy secret values, even when flagging them; name the file and key instead.
   Redaction is best-effort, not a guarantee: don't tell the user a value is safe to share because
   the collector didn't flag it.

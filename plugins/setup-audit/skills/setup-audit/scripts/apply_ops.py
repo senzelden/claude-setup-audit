@@ -100,7 +100,7 @@ ENV_MASK_FIELDS = FILE_MASK_FIELDS - {'maskDuplicates'}
 # A mask entry lets the sandbox proxy send the real credential to its injectHosts, so the restored
 # writes fail closed (0.15.0): every mask entry names its hosts, each an exact lowercase DNS name,
 # IPv4 address or canonical bare IPv6 address (no wildcard, scheme, path, port or userinfo), and each
-# must be listed verbatim in sandbox.network.allowedDomains of the same file after the ops
+# must already be listed verbatim in sandbox.network.allowedDomains of the same file before the ops
 # (IPv6 bracketed there, as sandboxing "Mask credentials" says; fetched 2026-11-11).
 HOST_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
 
@@ -376,7 +376,9 @@ def plan_ops(doc, ops, scope):
                 _remove(new, parts)
         except OpsError as exc:
             row.update(status='rejected', reason=exc.reason)
-    allowed = _get(new, ['sandbox', 'network', 'allowedDomains'])
+    # Judged against the file as it was before this batch: adding a host to allowedDomains is a
+    # separate apply the user approves on its own, never part of the batch that masks a credential.
+    allowed = _get(doc, ['sandbox', 'network', 'allowedDomains'])
     allowed = set(allowed) if isinstance(allowed, list) else set()
     for o, row in zip(ops, rows):
         if row['status'] == 'planned' and o['op'] == 'set' and any(

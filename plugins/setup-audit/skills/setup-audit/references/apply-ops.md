@@ -83,10 +83,11 @@ Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same,
 - Every `mask` entry must list `injectHosts` (`inject_hosts_required`): without it the sandbox proxy
   would send the real value to every host in `sandbox.network.allowedDomains`. Each host is an exact
   lowercase DNS name, an IPv4 address or a canonical bare IPv6 address, with no wildcard, scheme,
-  path, port or userinfo (`inject_host_invalid`), and must appear verbatim in
-  `sandbox.network.allowedDomains` of the same target file after all its ops (IPv6 in brackets
-  there, as in sandboxing "Mask credentials"; `inject_host_not_allowed`). A wildcard allowed-domain
-  entry does not count. Raw docs checked 2026-11-11 (settings-reference
+  path, port or userinfo (`inject_host_invalid`), and must already appear verbatim in
+  `sandbox.network.allowedDomains` of the same target file before the batch's ops (IPv6 in
+  brackets there, as in sandboxing "Mask credentials"; `inject_host_not_allowed`). Adding the host
+  is a separate apply the user approves on its own, so a batch that adds the host and the masked
+  credential together is refused. A wildcard allowed-domain entry does not count. Raw docs checked 2026-11-11 (settings-reference
   `sandbox.credentials.envVars`/`files`, sandboxing "Mask credentials").
 - `credential_env`: the same with `name` instead of `path` and no `maskDuplicates`. `extract`
   together with `decode` is `invalid_value`, as is `decode` with an `onExtractNoMatch` other than
@@ -167,7 +168,7 @@ a target's `status` is `applied` and `verified` is `true`; never claim success f
 - `unknown_credential_field`: a credential entry has a field outside the documented mask fields.
 - `inject_hosts_required`: a `mask` credential entry has no (or an empty) `injectHosts`.
 - `inject_host_invalid`: an `injectHosts` entry is not an exact host (wildcard, scheme, path, port, userinfo, upper case, non-canonical IPv6).
-- `inject_host_not_allowed`: an `injectHosts` host is not listed verbatim in `sandbox.network.allowedDomains` of the same file after the ops.
+- `inject_host_not_allowed`: an `injectHosts` host is not already listed verbatim in `sandbox.network.allowedDomains` of the same file before the batch's ops.
 - `precondition_mismatch`: the `expect` precondition does not hold; the row shows the redacted current value and `current_sha256` so the change can be re-planned.
 - `absent`: `remove` of a key that does not exist.
 - `type_conflict`: an intermediate path element exists but is not an object.

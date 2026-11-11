@@ -280,6 +280,16 @@ class SnapshotContract(FakeHome):
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
 
+    def test_a_fresh_collect_always_emits_the_mcp_inventory(self):
+        # The schema leaves extensions.mcp_servers optional only so 0.14.x snapshots stay readable;
+        # the collector itself always writes it, even with nothing configured.
+        for scope in ('global', 'project'):
+            snap = self.snapshot(scope)
+            self.assertIsInstance(snap['extensions']['mcp_servers'], list, scope)
+            self.assertIsInstance(snap['extensions']['mcp_project_state'], list, scope)
+            self.assertIsInstance(snap['extensions']['mcp_name_collisions'], list, scope)
+            self.assertIsInstance(snap['global']['mcp_user'], list, scope)
+
     def test_a_014_snapshot_without_restored_fields_still_validates(self):
         # 0.14.x wrote snapshot v1 without the MCP inventory, env names and scope/mod fields; 0.15.0
         # restores them as additive optional fields, so those snapshots stay readable as v1.

@@ -51,6 +51,53 @@ def network_modules(tree):
                   if any(m == n or m.startswith(n + '.') for n in NETWORK_MODULES))
 
 
+SPAWNERS = {'subprocess': {'run', 'Popen', 'call', 'check_call', 'check_output', 'getoutput', 'getstatusoutput'},
+            'os': {'system', 'popen', 'execl', 'execle', 'execlp', 'execlpe', 'execv', 'execve', 'execvp',
+                   'execvpe', 'spawnl', 'spawnle', 'spawnlp', 'spawnlpe', 'spawnv', 'spawnve', 'spawnvp',
+                   'spawnvpe', 'posix_spawn', 'posix_spawnp', 'startfile'},
+            'asyncio': {'create_subprocess_exec', 'create_subprocess_shell'},
+            'pty': {'spawn'}}
+# The one documented exception: rate_limit_log.py runs the status-line command the user wrote after
+# `--` in their own statusLine setting (plugin README "Runs"), passed through as an argv list.
+SPAWN_ALLOWANCES = {('rate_limit_log.py', 'command')}
+
+
+def spawn_problems(name, tree):
+    """Process launches in a script that do not run a literal `git` argv (empty when all do)."""
+    aliases = {}  # local name -> module, for `from subprocess import run` and `import subprocess as sp`
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module in SPAWNERS:
+            aliases.update({(a.asname or a.name): n.module for a in n.names if a.name in SPAWNERS[n.module]})
+        elif isinstance(n, ast.Import):
+            aliases.update({(a.asname or a.name): a.name for a in n.names if a.name in SPAWNERS})
+    problems = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and aliases.get(f.value.id, f.value.id) in SPAWNERS \
+                and f.attr in SPAWNERS[aliases.get(f.value.id, f.value.id)]:
+            module, func = aliases.get(f.value.id, f.value.id), f.attr
+        elif isinstance(f, ast.Name) and f.id in aliases and aliases[f.id] in SPAWNERS and f.id in SPAWNERS[aliases[f.id]]:
+            module, func = aliases[f.id], f.id
+        else:
+            continue
+        where = f'line {n.lineno}: {module}.{func}'
+        if module != 'subprocess' or func not in ('run', 'Popen', 'call', 'check_call', 'check_output'):
+            problems.append(where + ' is never allowed')
+            continue
+        if any(k.arg == 'shell' for k in n.keywords):
+            problems.append(where + ' passes shell=')
+            continue
+        argv = n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == 'args'), None)
+        if isinstance(argv, ast.Name) and (name, argv.id) in SPAWN_ALLOWANCES:
+            continue
+        if not (isinstance(argv, (ast.List, ast.Tuple)) and argv.elts and isinstance(argv.elts[0], ast.Constant)
+                and argv.elts[0].value == 'git'):
+            problems.append(where + ' does not run a literal git argv')
+    return problems
+
+
 def host_problems(tree):
     """Why fetch_doc.py could reach a host other than DOCS_HOST (empty when it can't)."""
     problems = []
@@ -115,6 +162,32 @@ class ShippedBundleTests(unittest.TestCase):
                          'from urllib.parse import urlsplit\nimport xmlrpc.client\n')
         self.assertEqual(network_modules(tree),
                          ['asyncio', 'http', 'importlib', 'socket', 'ssl', 'urllib.request', 'xmlrpc.client'])
+
+    def test_only_git_is_spawned(self):
+        launches = 0
+        for path in sorted(SCRIPTS.glob('*.py')):
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+            self.assertEqual(spawn_problems(path.name, tree), [], path.name)
+            launches += sum(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'run'
+                            and isinstance(n.func.value, ast.Name) and n.func.value.id == 'subprocess'
+                            for n in ast.walk(tree))
+        self.assertGreaterEqual(launches, 5)  # not vacuous: the git queries and the status-line command
+
+    def test_spawn_check_catches_other_commands(self):
+        for code in ("import subprocess\nsubprocess.run(['curl', 'https://x.example'])",
+                     "import subprocess\nsubprocess.Popen(('curl', '-s', u))",
+                     "from subprocess import check_output\ncheck_output(['sh', '-c', 'curl x'])",
+                     "import subprocess as sp\nsp.run(['curl', 'x'])",
+                     "import subprocess\ncmd = ['curl']\nsubprocess.run(cmd)",
+                     "import subprocess\nsubprocess.run('git status', shell=True)",
+                     "import subprocess\nsubprocess.run(['git', 'x'], shell=True)",
+                     "import os\nos.system('curl x')",
+                     "import os\nos.execvp('curl', ['curl'])",
+                     "import subprocess\nsubprocess.getoutput('curl x')"):
+            self.assertTrue(spawn_problems('collect.py', ast.parse(code)), code)
+        self.assertTrue(spawn_problems('collect.py', ast.parse('import subprocess\nsubprocess.run(command)')))
+        self.assertFalse(spawn_problems('rate_limit_log.py', ast.parse('import subprocess\nsubprocess.run(command)')))
+        self.assertFalse(spawn_problems('collect.py', ast.parse("import subprocess\nsubprocess.run(['git', '-C', r])")))
 
     def test_fetch_doc_host_is_the_fixed_docs_host(self):
         self.assertEqual(host_problems(ast.parse((SCRIPTS / NETWORK_SCRIPT).read_text(encoding='utf-8'))), [])
