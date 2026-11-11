@@ -14,6 +14,7 @@ Usage:
 import argparse
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -84,6 +85,7 @@ REASONS = (
     'precondition_mismatch', 'absent', 'type_conflict', 'op_rejected',
     'expect_file_missing', 'not_applied_other_target_failed', 'changed_since_plan', 'backup_failed',
     'write_failed', 'verify_failed', 'backup_dir_symlink', 'backup_dir_unusable',
+    'unknown_credential_field', 'inject_hosts_required', 'inject_host_invalid', 'inject_host_not_allowed',
 )
 MAX_OPS_BYTES = 1024 * 1024
 MAX_TARGET_BYTES = 8 * 1024 * 1024
@@ -94,6 +96,12 @@ PATH_RE = re.compile(r'[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*\Z')
 FILE_MASK_FIELDS = frozenset({'extract', 'onExtractNoMatch', 'decode', 'maskClaims', 'maskDuplicates',
                               'injectHosts'})
 ENV_MASK_FIELDS = FILE_MASK_FIELDS - {'maskDuplicates'}
+# A mask entry lets the sandbox proxy send the real credential to its injectHosts, so the restored
+# writes fail closed (0.15.0): every mask entry names its hosts, each an exact lowercase DNS name,
+# IPv4 address or canonical bare IPv6 address (no wildcard, scheme, path, port or userinfo), and each
+# must be listed verbatim in sandbox.network.allowedDomains of the same file after the ops
+# (IPv6 bracketed there, as sandboxing "Mask credentials" says; fetched 2026-11-11).
+HOST_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
 
 
 class OpsError(ValueError):
@@ -138,6 +146,25 @@ def _mask_field_ok(name, v):
     return _str_list(v)  # injectHosts
 
 
+def inject_host_ok(host):
+    if not isinstance(host, str) or not host or len(host) > 253:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        labels = host.split('.')
+        return all(HOST_LABEL.match(label) for label in labels) and not labels[-1].isdigit()
+    return addr.compressed == host
+
+
+def allowed_domains_form(host):
+    """The spelling a host must have in sandbox.network.allowedDomains."""
+    try:
+        return f'[{host}]' if ipaddress.ip_address(host).version == 6 else host
+    except ValueError:
+        return host
+
+
 def _credential_entries(value, ident, mask_fields, scope):
     if not isinstance(value, list):
         raise OpsError('invalid_value')
@@ -146,7 +173,9 @@ def _credential_entries(value, ident, mask_fields, scope):
                 and e.get('mode') in ('deny', 'mask')):
             raise OpsError('invalid_value')
         extra = set(e) - {ident, 'mode'}
-        if (e['mode'] == 'deny' and extra) or extra - mask_fields \
+        if extra - mask_fields:  # fields outside the documented schema fail closed
+            raise OpsError('unknown_credential_field')
+        if (e['mode'] == 'deny' and extra) \
                 or not all(_mask_field_ok(k, e[k]) for k in extra) \
                 or ('maskClaims' in e and 'decode' not in e):
             raise OpsError('invalid_value')
@@ -154,6 +183,18 @@ def _credential_entries(value, ident, mask_fields, scope):
             raise OpsError('invalid_value')
         if e['mode'] == 'mask' and scope != 'user':
             raise OpsError('scope_not_honored')
+        if e['mode'] == 'mask':
+            if not e.get('injectHosts'):  # without it the proxy injects on every allowed domain
+                raise OpsError('inject_hosts_required')
+            if not all(inject_host_ok(h) for h in e['injectHosts']):
+                raise OpsError('inject_host_invalid')
+
+
+def inject_hosts(path, value):
+    """injectHosts of every mask entry in a credential files/envVars value (already validated)."""
+    if path not in ('sandbox.credentials.files', 'sandbox.credentials.envVars'):
+        return []
+    return [h for e in value if e.get('mode') == 'mask' for h in e.get('injectHosts', ())]
 
 
 def validate_value(path, value, scope):
@@ -334,6 +375,12 @@ def plan_ops(doc, ops, scope):
                 _remove(new, parts)
         except OpsError as exc:
             row.update(status='rejected', reason=exc.reason)
+    allowed = _get(new, ['sandbox', 'network', 'allowedDomains'])
+    allowed = set(allowed) if isinstance(allowed, list) else set()
+    for o, row in zip(ops, rows):
+        if row['status'] == 'planned' and o['op'] == 'set' and any(
+                allowed_domains_form(h) not in allowed for h in inject_hosts(o['path'], o['value'])):
+            row.update(status='rejected', reason='inject_host_not_allowed')
     return new, rows, warnings
 
 

@@ -74,15 +74,31 @@ class Values(unittest.TestCase):
                          'scope_not_honored')
         for bad in ([{'path': '~/x', 'mode': 'deny', 'extract': 'a(b)'}],   # mask field on deny
                     [{'path': '~/x', 'mode': 'hide'}],
-                    [{'path': '~/x', 'mode': 'mask', 'colour': 'red'}],
                     [{'path': '~/x', 'mode': 'mask', 'maskClaims': ['sub']}],  # maskClaims needs decode
                     [{'mode': 'deny'}], {'path': '~/x', 'mode': 'deny'}):
             self.assertEqual(reason(apply_ops.validate_value, files, bad, 'user'), 'invalid_value', bad)
-        for bad in ([{'name': 'TOKEN', 'mode': 'mask', 'maskDuplicates': True}],
-                    [{'name': 'TOKEN', 'mode': 'mask', 'extract': 'x(y)', 'decode': 'jwt'}],
+        for bad in ([{'name': 'TOKEN', 'mode': 'mask', 'extract': 'x(y)', 'decode': 'jwt'}],
                     [{'name': 'TOKEN', 'mode': 'mask', 'decode': 'jwt', 'onExtractNoMatch': 'deny'}]):
             self.assertEqual(reason(apply_ops.validate_value, env, bad, 'user'), 'invalid_value', bad)
         self.assertEqual(apply_ops.validate_value(env, [{'name': 'AWS_SECRET_ACCESS_KEY', 'mode': 'deny'}], 'local'), [])
+
+    def test_credential_entries_fail_closed(self):
+        # 0.15.0: a mask entry lets the proxy send the real credential to its injectHosts.
+        files, env = 'sandbox.credentials.files', 'sandbox.credentials.envVars'
+        def mask(**extra):
+            return [{'name': 'GH_TOKEN', 'mode': 'mask', **extra}]
+        self.assertEqual(apply_ops.validate_value(env, mask(injectHosts=['api.github.com', '10.0.0.5', '::1']), 'user'), [])
+        for bad in ('*.github.com', '*', 'https://api.github.com', 'api.github.com/x', 'api.github.com:443',
+                    'user@api.github.com', 'API.github.com', '[::1]', '0:0:0:0:0:0:0:1', 'github.com.', 'a..b', '1.2.3'):
+            self.assertEqual(reason(apply_ops.validate_value, env, mask(injectHosts=[bad]), 'user'),
+                             'inject_host_invalid', bad)
+        for hosts in (None, []):
+            extra = {} if hosts is None else {'injectHosts': hosts}
+            self.assertEqual(reason(apply_ops.validate_value, env, mask(**extra), 'user'), 'inject_hosts_required')
+        for bad, kind in (([{'path': '~/x', 'mode': 'mask', 'colour': 'red', 'injectHosts': ['a.b']}], files),
+                          (mask(maskDuplicates=True, injectHosts=['a.b']), env),
+                          (mask(injectHost=['a.b']), env)):
+            self.assertEqual(reason(apply_ops.validate_value, kind, bad, 'user'), 'unknown_credential_field', bad)
 
     def test_key_classes(self):
         self.assertEqual(reason(apply_ops.check_key, 'permissions.allow', 'user'), 'not_allowlisted')
@@ -579,10 +595,45 @@ class Run(FakeHome):
         self.assertEqual(apply_ops.run(b'{'), {'applied': False, 'ok': False, 'docs_fetched': '2026-09-29',
                                                'targets': [], 'error': 'invalid_ops_file'})
 
+    def cred(self, hosts, domains_doc=None, *extra):
+        user = self.write('.claude/settings.json', apply_ops.dump(domains_doc or {}))
+        mask = [{'name': 'GH_TOKEN', 'mode': 'mask', 'injectHosts': hosts}]
+        return user, apply_ops.run(self.ops(self.target('~/.claude/settings.json',
+                                                        op('sandbox.credentials.envVars', mask), *extra)))
+
+    def test_inject_hosts_must_be_listed_in_allowed_domains_of_the_same_file(self):
+        def reasons(out):
+            return [r['reason'] for r in out['targets'][0]['ops']]
+        _, out = self.cred(['api.github.com'])
+        self.assertEqual((out['ok'], reasons(out)), (False, ['inject_host_not_allowed']))
+        _, out = self.cred(['api.github.com'], {'sandbox': {'network': {'allowedDomains': ['*.github.com']}}})
+        self.assertEqual(reasons(out), ['inject_host_not_allowed'])   # a wildcard is not an exact listing
+        _, out = self.cred(['api.github.com'], {'sandbox': {'network': {'allowedDomains': ['api.github.com']}}},
+                           op('sandbox.network.allowedDomains', ['x.example.com'], {'value': ['api.github.com']}))
+        self.assertEqual(reasons(out)[0], 'inject_host_not_allowed')  # checked after the ops, not before
+        self.write('.claude/settings.json', apply_ops.dump({}))
+        _, out = self.cred(['::1'], {'sandbox': {'network': {'allowedDomains': ['::1']}}})
+        self.assertEqual(reasons(out), ['inject_host_not_allowed'])   # IPv6 is bracketed in allowedDomains
+
+    def test_masked_credential_with_listed_host_applies_and_verifies(self):
+        user, out = self.cred(['api.github.com'], {'sandbox': {'network': {'allowedDomains': ['api.github.com']}}})
+        self.assertTrue(out['ok'], out)
+        t = out['targets'][0]
+        target = self.target('~/.claude/settings.json', op('sandbox.credentials.envVars', [
+            {'name': 'GH_TOKEN', 'mode': 'mask', 'injectHosts': ['api.github.com']}]), expect_file=t['file_sha256'])
+        out = apply_ops.run(self.ops(target), apply=True, backup_dir=self.backups)
+        t = out['targets'][0]
+        self.assertEqual((out['ok'], t['status'], t['verified']), (True, 'applied', True), out)
+        self.assertTrue(t['backup'])
+        doc = json.loads(Path(user).read_text())
+        self.assertEqual(doc['sandbox']['credentials']['envVars'][0]['injectHosts'], ['api.github.com'])
+
     def test_output_is_sanitized_and_has_no_internal_fields(self):
         canary = 'ghp_' + 'a' * 36
         out = apply_ops.run(self.ops(self.target('~/.claude/settings.json', op(
-            'sandbox.credentials.envVars', [{'name': 'GH_TOKEN', 'mode': 'mask', 'extract': canary + '(x)'}]))))
+            'sandbox.credentials.envVars', [{'name': 'GH_TOKEN', 'mode': 'mask', 'extract': canary + '(x)',
+                                             'injectHosts': ['api.github.com']}]),
+            op('sandbox.network.allowedDomains', ['api.github.com']))))
         text = json.dumps(out)
         self.assertTrue(out['ok'], text)
         self.assertNotIn(canary, text)
