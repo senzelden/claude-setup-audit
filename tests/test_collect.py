@@ -56,6 +56,11 @@ class ReadOnlyDiagnostics(FakeHome):
 
 
 class RiskClassification(unittest.TestCase):
+    def test_contextual_literal_secret_flags_secret_literal_in_rule(self):
+        self.assertIn("secret-literal-in-rule",
+                      flags("Bash(export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY && aws s3 ls)"))
+        self.assertNotIn("secret-literal-in-rule", flags("Bash(export AWS_PROFILE=dev)"))
+
     def test_broad_rules_are_flagged(self):
         self.assertIn("network-wildcard", flags("Bash(curl:*)"))
         self.assertIn("interpreter-wildcard", flags("Bash(python3:*)"))
@@ -69,16 +74,21 @@ class RiskClassification(unittest.TestCase):
         self.assertEqual(flags("Bash(uv run pytest tests/test_ids.py)"), set())
         self.assertEqual(flags("Bash(git status)"), set())
 
-    def test_flagged_rule_text_is_redacted(self):
-        # 0.14.7: no flag hunts for secrets in rules, but rule text that other flags list is redacted.
-        for secret in ("Authorization: Bearer sk-abcdefghijklmnopqrstuv",
-                       "Authorization: Bearer opaqueTokenNoRecognizablePrefix1234",
-                       "Bearer opaqueTokenWithNoLabelAtAll1234567"):
-            listed = collect.analyze_permissions({"allow": [f"Bash(sudo curl -H '{secret}' x)"]})["risky"]["sudo"]
-            self.assertNotIn(secret.split()[-1], listed[0])
-        listed = collect.analyze_permissions(
-            {"allow": ["Bash(sudo env AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY aws s3 ls)"]})
-        self.assertNotIn("wJalrXUtnFEMI", listed["risky"]["sudo"][0])
+    def test_literal_secret_vs_env_reference(self):
+        self.assertIn("secret-literal-in-rule", flags("Bash(curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuv' x)"))
+        env_ref = "Bash(curl -H \"Authorization: Token $(grep COURTLISTENER_TOKEN .env)\" x)"
+        self.assertIn("secret-via-env-file", flags(env_ref))
+        self.assertNotIn("secret-literal-in-rule", flags(env_ref))
+        # Masking a .env file is not a secret leak.
+        self.assertNotIn("secret-via-env-file", flags("Bash(sed 's/=.*/=<set>/' .env)"))
+
+    def test_literal_secret_catches_opaque_bearer_without_a_recognizable_prefix(self):
+        # Regression: LITERAL_SECRET_RE didn't know "authorization" as a keyword and consumed only
+        # "Bearer" out of "Bearer <token>", so an opaque token with no sk-/ghp_/... prefix survived.
+        self.assertIn("secret-literal-in-rule",
+                      flags("Bash(curl -H 'Authorization: Bearer opaqueTokenNoRecognizablePrefix1234' x)"))
+        self.assertIn("secret-literal-in-rule",
+                      flags("Bash(curl -H 'Bearer opaqueTokenWithNoLabelAtAll1234567' x)"))
 
     def test_redaction_hides_values(self):
         out = collect.redact("api_key=sk-THISISASECRETVALUE123456")
@@ -209,11 +219,8 @@ class HookClassification(FakeHome):
         self.assertEqual(types, {"command", "http", "mcp_tool", "prompt", "agent"})
         http = next(h for h in s["hook_handlers"] if h["type"] == "http")
         self.assertEqual(http["target"], "http://localhost:8080/hooks/pre-tool-use")
-        self.assertEqual(http["target_origin"], "http://localhost")
-        self.assertNotIn("header_keys", http)  # headers and allowedEnvVars are not read at all
-        self.assertNotIn("allowed_env_vars", http)
-        self.assertNotIn("Authorization", json.dumps(http))
-        self.assertNotIn("MY_TOKEN", json.dumps(http))
+        self.assertEqual(http["header_keys"], ["Authorization"])  # names only, never header values
+        self.assertEqual(http["allowed_env_vars"], ["MY_TOKEN"])
         mcp = next(h for h in s["hook_handlers"] if h["type"] == "mcp_tool")
         self.assertEqual(mcp["target"], "my_server:security_scan")
         agent = next(h for h in s["hook_handlers"] if h["type"] == "agent")
@@ -528,57 +535,32 @@ class AtomicWrite(FakeHome):
 
 
 class EnvContract(FakeHome):
-    def test_envrc_is_not_read_so_it_declares_nothing(self):
+    def test_envrc_pointers_count_as_declarations(self):
         self.write("repo/.envrc", "use_pass ANTHROPIC_API_KEY api/anthropic; use_pass_optional HF_TOKEN api/hf\nexport LOG_LEVEL=info\n")
         self.write("repo/src/app.py", "import os\nkey = os.environ['ANTHROPIC_API_KEY']\nhf = os.getenv('HF_TOKEN')\n"
                                       "lvl = os.getenv('LOG_LEVEL')\nurl = os.environ['DATABASE_URL']\nh = os.getenv('HOME')\n"
                                       "cache = os.getenv('CACHE_DIR', '/tmp/c')\nregion = os.getenv('REGION')\n")
         self.write("repo/tests/browser/run.mjs", "const base = process.env.BASE\n")
         c = collect.env_contract(os.path.join(self.home, "repo"))
-        self.assertEqual(c["declared_via"], [])
-        self.assertIs(c["envrc_not_read"], True)
-        kinds = {u["name"]: u["kind"] for u in c["undeclared"]}  # HOME ignored; .envrc names are not known
-        self.assertEqual(kinds, {"ANTHROPIC_API_KEY": "required", "DATABASE_URL": "required", "HF_TOKEN": "read",
-                                 "LOG_LEVEL": "read", "REGION": "read", "CACHE_DIR": "optional", "BASE": "test-only"})
+        self.assertEqual(c["declared_via"], [".envrc"])
+        kinds = {u["name"]: u["kind"] for u in c["undeclared"]}  # HOME ignored; both use_pass calls on one line declared
+        self.assertEqual(kinds, {"DATABASE_URL": "required", "REGION": "read", "CACHE_DIR": "optional", "BASE": "test-only"})
+        self.assertEqual(c["undeclared"][0]["name"], "DATABASE_URL")
 
     def test_other_mechanisms_and_validation(self):
         self.write("repo/.env.example", "API_URL=\n")
+        self.write("repo/mise.toml", "[tools]\nnode = '22'\n[env]\nFEATURE_X = '1'\n")
         self.write("repo/settings.py", "from pydantic_settings import BaseSettings\nclass S(BaseSettings):\n    redis_url: str\n")
         self.write("repo/web/env.ts", "import { z } from 'zod'\nconst s = z.object({})\nprocess.env.API_URL; process.env.FEATURE_X; process.env.REDIS_URL\n")
         c = collect.env_contract(os.path.join(self.home, "repo"))
-        self.assertEqual([u["name"] for u in c["undeclared"]], ["FEATURE_X"])
+        self.assertEqual(c["undeclared"], [])
         self.assertEqual(c["validation"], ["pydantic-settings", "zod"])
-        self.assertNotIn("env_files_not_read", c)
 
-    def test_env_store_files_are_presence_only(self):
-        self.write("repo/mise.toml", "[env]\nFEATURE_X = 'canary-mise-value'\n")
-        self.write("repo/.devcontainer/devcontainer.json", '{"containerEnv": {"FEATURE_Y": "canary-dev-value"}}')
-        self.write("repo/docker-compose.yml", "services:\n  a:\n    environment:\n      - FEATURE_Z=canary-compose\n")
-        self.write("repo/src/app.py", "import os\nx = os.environ['FEATURE_X']\ny = os.environ['FEATURE_Y']\nz = os.environ['FEATURE_Z']\n")
-        root = os.path.join(self.home, "repo")
-        opened = []
-        real_open = open
-
-        def spy(file, *a, **k):
-            opened.append(str(file))
-            return real_open(file, *a, **k)
-
-        with mock.patch("builtins.open", spy):
-            c = collect.env_contract(root)
-        self.assertFalse([p for p in opened if p.endswith(("mise.toml", "devcontainer.json", "compose.yml"))])
-        self.assertEqual(c["declared_via"], [])
-        self.assertEqual(c["env_files_not_read"], ["mise.toml", ".devcontainer/devcontainer.json", "docker-compose.yml"])
-        self.assertEqual(sorted(u["name"] for u in c["undeclared"]), ["FEATURE_X", "FEATURE_Y", "FEATURE_Z"])
-        self.assertNotIn("canary", json.dumps(c))
-
-    def test_envrc_info_is_presence_only(self):
-        root = os.path.join(self.home, "repo")
-        self.assertIsNone(collect.envrc_info(root))
-        self.write("repo/.envrc", "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstu\n")
-        info = collect.envrc_info(root)
-        self.assertEqual(set(info), {"present", "git"})
-        self.assertIs(info["present"], True)
-        self.assertNotIn("OPENAI", json.dumps(info))
+    def test_envrc_literal_secret_reports_names_only(self):
+        self.write("repo/.envrc", "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstu\nexport HF_TOKEN=$(pass show api/hf)\n")
+        info = collect.envrc_info(os.path.join(self.home, "repo"))
+        self.assertEqual(info["literal_secret_names"], ["OPENAI_API_KEY"])
+        self.assertNotIn("sk-abc", json.dumps(info))
 
 
 class ReadinessSignals(FakeHome):
@@ -756,11 +738,9 @@ class MalformedSettings(unittest.TestCase):
 
     def test_valid_entries_survive(self):
         s = collect.summarize_settings('/tmp/x/settings.json', data={
-            'permissions': {'deny': [None, 'Bash(rm *)'], 'allow': ['Read']},
-            'env': {'A': '1', 'CLAUDE_CODE_SUBAGENT_MODEL': 'haiku'}})
+            'permissions': {'deny': [None, 'Bash(rm *)'], 'allow': ['Read']}, 'env': {'A': '1'}})
         self.assertEqual(s['permissions']['deny_count'], 1)
-        self.assertEqual(s['env_documented_set'], ['CLAUDE_CODE_SUBAGENT_MODEL'])
-        self.assertNotIn('env_keys', s)
+        self.assertEqual(s['env_keys'], ['A'])
         clean = collect.summarize_settings('/tmp/x/settings.json', data={'permissions': {'allow': ['Read']}})
         self.assertNotIn('shape_issues', clean)
 
@@ -816,10 +796,12 @@ class ScopeCLI(unittest.TestCase):
         os.makedirs(cfg)
         repo_a = os.path.join(tmp.name, "repo-a")
         repo_b = os.path.join(tmp.name, "repo-b")
-        # Skill directory names are listed verbatim in a project's entry, unlike CLAUDE.md
+        # .mcp.json server names are embedded verbatim in a project's entry, unlike CLAUDE.md
         # (which only contributes a token/line count) -- a reliable marker for "was this read".
         for repo, marker in ((repo_a, "marker-a-only"), (repo_b, "marker-b-only")):
-            os.makedirs(os.path.join(repo, ".claude", "skills", marker))
+            os.makedirs(repo)
+            with open(os.path.join(repo, ".mcp.json"), "w") as f:
+                json.dump({"mcpServers": {marker: {}}}, f)
         return tmp, cfg, repo_a, repo_b
 
     def test_scope_project_never_reads_the_other_project(self):

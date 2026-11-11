@@ -1,12 +1,29 @@
-"""Bounded plugin provenance (MCP config files are not read). Never connects, installs, or runs discovered components."""
+"""Bounded MCP/plugin provenance. Never connects, installs, or runs discovered components."""
+from collections import defaultdict
 import os
 from pathlib import Path
+import re
+import stat
+import config_names
+import harness
 import inventory
 import plugin_footprint
 
 MAX_ENTRIES = 100
 MAX_PLUGINS = 50
 NAME_CAP = 120
+OBS_LIMIT = 20
+
+# mcp.md, fetched 2026-09-29: reserved built-in names ("including"; not exhaustive), remote types
+# (streamable-http is an alias of http), and the tool-name normalization for plugin servers.
+RESERVED_NAMES = frozenset({'workspace', 'claude-in-chrome', 'computer-use', 'Claude Preview', 'Claude Browser'})
+REMOTE_TYPES = frozenset({'http', 'streamable-http', 'sse', 'ws'})
+
+
+def tool_prefix(name, plugin=None):
+    """Server segment of mcp__<segment>__<tool>: chars outside [A-Za-z0-9_-] become '_'."""
+    norm = lambda s: re.sub(r'[^A-Za-z0-9_-]', '_', s)  # noqa: E731
+    return f'plugin_{norm(plugin)}_{norm(name)}' if plugin else norm(name)
 
 
 def json_object(path, scope, sources):
@@ -15,9 +32,195 @@ def json_object(path, scope, sources):
     return data
 
 
-def collect_extensions(home, claude, roots, contexts, settings, redact, hook_summary):
-    sources, plugins = [], []
+def mcp_summary(name, facts, path, scope, redact, project=None, plugin=None):
+    """One server row from config_names.server_facts (None: the config was not an object)."""
+    item = inventory.source(path, scope, 'collected', name=redact(name), project=project,
+                            active_state='unknown', representation='selected_fields')
+    if facts is None:
+        return dict(item, status='unavailable', reason='invalid_server')
+    item['transport'] = facts['transport']
+    # Arguments and URL paths may hold unlabeled credentials; config_names reduces them to counts and labels.
+    item['executable'] = redact(facts['executable']) if facts['executable'] is not None else 'unknown_or_complex'
+    item['argument_count'] = facts['argument_count']
+    item['package_version_evidence'] = facts['package_version_evidence']
+    if facts['endpoint_origin'] is not None:
+        item['endpoint_origin'] = facts['endpoint_origin']
+        item['endpoint_detail'] = 'path, query, fragment, port and userinfo omitted'
+    mechanisms = []
+    mappings = (('env', facts['env_names']), ('headers', facts['headers_names']))
+    for prefix, names in mappings:
+        item[prefix + '_keys'] = names['keys'] if names else []
+        if names and names['keys']:
+            refs = names['variable_references']
+            item[prefix + '_variable_references'] = refs
+            mechanisms.append(prefix + ('_references_or_literals' if refs else '_configured_values_omitted'))
+    mechanisms.extend(key + '_configured' for key in facts['configured_mechanisms'])
+    item['credential_mechanisms'] = mechanisms or ['not_observed_in_selected_fields']
+    declared, has_url = facts['declared_type'], facts['has_url']
+    notes = []
+    if declared is None and has_url:
+        notes.append('url_without_type')
+    if declared == 'sdk':
+        notes.append('sdk_type_skipped')
+    if declared == 'sse':
+        notes.append('sse_deprecated')
+    if name in RESERVED_NAMES:
+        notes.append('reserved_name')
+    if declared in REMOTE_TYPES and facts['url_is_empty']:
+        notes.append('empty_url_placeholder')
+    item['config_notes'] = notes
+    item['transport_class'] = ('skipped' if declared == 'sdk' or (declared is None and has_url) else
+                               'remote' if declared in REMOTE_TYPES else
+                               'local_process' if declared in (None, 'stdio') else 'unknown')
+    url = facts['url_facts']
+    if url is not None:
+        item['endpoint_locality'] = url['endpoint_locality']
+        item['url_has_userinfo'], item['url_has_query'] = url['url_has_userinfo'], url['url_has_query']
+        item['plaintext_transport'] = url['plaintext_transport']
+        item['url_variable_references'] = sorted({redact(n)[:NAME_CAP] for n in url['url_variable_names']})[:MAX_ENTRIES]
+    for prefix, names in mappings:
+        if names is not None:
+            item[prefix + '_literal_keys'] = names['literal_keys'][:MAX_ENTRIES]
+    oauth = facts['oauth']
+    if oauth is not None:
+        item['oauth_keys'] = sorted(redact(k)[:NAME_CAP] for k in oauth['keys'])[:MAX_ENTRIES]
+        item['oauth_scopes'] = (sorted({redact(t) for t in oauth['scopes']})[:20]
+                                if oauth['scopes'] is not None else None)
+    item['tool_prefix'] = tool_prefix(redact(name), redact(plugin) if plugin else None)[:NAME_CAP]
+    if plugin:
+        item['plugin'] = redact(plugin)[:NAME_CAP]
+    return item
+
+
+def name_collisions(servers):
+    """Same name in local/project/user scope for one project (mcp.md: matched by name there)."""
+    rows = [s for s in servers if s.get('status') == 'collected' and s.get('scope') in ('user', 'local', 'project')]
+    shared = [s for s in rows if s['scope'] == 'user']
+    out = []
+    for project in sorted({s['project'] for s in rows if s.get('project')}):
+        group = defaultdict(list)
+        for s in shared + [s for s in rows if s['scope'] != 'user' and s.get('project') == project]:
+            group[s['name']].append(s)
+        for name in sorted(group):
+            scopes = sorted({s['scope'] for s in group[name]})
+            if len(scopes) > 1:
+                ends = {(s.get('transport'), s.get('endpoint_origin') or s.get('executable')) for s in group[name]}
+                out.append(dict(name=name, project=project, scopes=scopes, endpoint_origins_differ=len(ends) > 1))
+    return out[:MAX_ENTRIES]
+
+
+def mcp_observations(servers, layers, project_state, display):
+    """Per-source observations for each collected server; never an effective state.
+
+    layers: (user|project|managed, project display path or None, settings summary). A project layer
+    applies to servers of that project, or to servers without a project (then its source names it).
+    Past OBS_LIMIT, managed-policy observations are kept first, then the rest in collection order.
+    """
+    for s in servers:
+        if s.get('status') != 'collected':
+            continue
+        project = display(s['project']) if s.get('project') else None
+        obs = []  # (is_managed, observation)
+        for layer, where, summary in layers:
+            if layer == 'project' and project is not None and where != project:
+                continue
+            managed = layer == 'managed'
+            src = summary.get('path', '?')
+            policy = summary.get('mcp_policy') or {}
+
+            def add(kind, value, src=src, managed=managed):
+                obs.append((managed, dict(source=src, kind=kind, value=value)))
+
+            if s['scope'] == 'project':
+                for key, kind in (('enabledMcpjsonServers', 'approval_enabled'),
+                                  ('disabledMcpjsonServers', 'approval_rejected')):
+                    if isinstance(policy.get(key), list) and s['name'] in policy[key]:
+                        add(kind, True)
+                if isinstance(policy.get('enableAllProjectMcpServers'), bool):
+                    add('approval_enable_all', policy['enableAllProjectMcpServers'])
+            for key, kind in (('allowedMcpServers', 'policy_allowed_by_name'),
+                              ('deniedMcpServers', 'policy_denied_by_name')):
+                shape = policy.get(key)
+                if isinstance(shape, dict) and s['name'] in shape.get('server_names', []):
+                    add(kind, True)
+            rules = summary.get('mcp_permission_rules') or {}
+            for kind in ('allow', 'ask', 'deny'):
+                counts = rules.get(kind) or {}
+                if counts.get(s.get('tool_prefix')):
+                    add(f'permission_{kind}', counts[s['tool_prefix']])
+                if counts.get('*'):
+                    add(f'permission_{kind}_any_server', counts['*'])
+        names = {s['name']} | ({f"plugin:{s['plugin']}:{s['name']}"} if s.get('plugin') else set())
+        for state in project_state:
+            where = display(state['project'])
+            if project is not None and where != project:
+                continue
+            src = f"{display(state['source'])}#projects[{where}]"
+            if s['scope'] == 'project':
+                for key, kind in (('enabledMcpjsonServers', 'approval_enabled'),
+                                  ('disabledMcpjsonServers', 'approval_rejected')):
+                    if s['name'] in state.get(key, []):
+                        obs.append((False, dict(source=src, kind=kind, value=True)))
+                s['project_trust_accepted'] = state.get('trust_accepted')
+            for key, kind in (('disabledMcpServers', 'toggle_disabled'), ('enabledMcpServers', 'toggle_enabled')):
+                if names & set(state.get(key, [])):
+                    obs.append((False, dict(source=src, kind=kind, value=True)))
+        if s['scope'] == 'project':
+            s.setdefault('project_trust_accepted', None)
+        keep = sorted(sorted(range(len(obs)), key=lambda i: (not obs[i][0], i))[:OBS_LIMIT])
+        s['policy_observations'] = [obs[i][1] for i in keep]
+        if len(obs) > OBS_LIMIT:
+            s['policy_observations_omitted'] = len(obs) - OBS_LIMIT
+
+
+def collect_extensions(home, claude, roots, contexts, managed_dir, managed_sources, settings, redact, hook_summary,
+                       git_status=None):
+    sources, servers, plugins = [], [], []
+
+    def servers_from(data, path, scope, project=None, key='mcpServers', bare=False, plugin=None):
+        add_servers(config_names.server_map(data, key, bare), path, scope, project, plugin)
+
+    def add_servers(values, path, scope, project=None, plugin=None):
+        """values: {name: config_names.server_facts} or None for a server map that is not an object."""
+        if values is None:
+            sources.append(inventory.source(path, scope, 'unavailable', reason='invalid_server_map'))
+            return
+        remaining = max(0, MAX_ENTRIES - len(servers))
+        names = sorted(values)
+        if len(names) > remaining:
+            sources.append(inventory.source(path, scope, 'partial', reason='server_limit', omitted=len(names)-remaining))
+        servers.extend(mcp_summary(n, values[n], path, scope, redact, project, plugin) for n in names[:remaining])
+
+    user = config_names.user_mcp_state(home)
+    user_path = user['path']
+    sources.append(user['source'])
+    add_servers(user.get('mcpServers', {}), user_path, 'user')
     project_paths = sorted(set(roots) | {c['session_cwd'] for c in contexts})
+    project_state = []
+    for root in project_paths:
+        entry = user['projects'].get(root)
+        if entry is not None:
+            add_servers(entry.get('mcpServers', {}), user_path, 'local', root)
+            state = {'project': root, 'source': user_path}
+            for key in config_names.PROJECT_STATE_LISTS:
+                if key in entry:
+                    state[key] = sorted({redact(x)[:NAME_CAP] for x in entry[key]})[:MAX_ENTRIES]
+            state['trust_accepted'] = entry['hasTrustDialogAccepted']
+            project_state.append(state)
+        path = os.path.join(root, '.mcp.json')
+        before = len(servers)
+        servers_from(json_object(path, 'project', sources), path, 'project', root)
+        if git_status and len(servers) > before:
+            state = git_status(root, '.mcp.json')
+            for server in servers[before:]:
+                server['file_git_status'] = state
+    if managed_dir:
+        path = os.path.join(managed_dir, 'managed-mcp.json')
+        servers_from(json_object(path, 'managed', sources), path, 'managed')
+    for src in managed_sources:
+        path = src['source']
+        if src['status'] == 'collected' and path.endswith('.json'):
+            servers_from(json_object(path, 'managed', sources), path, 'managed', key='managedMcpServers')
 
     registry_path = os.path.join(claude, 'plugins', 'installed_plugins.json')
     registry_data = json_object(registry_path, 'plugin_registry', sources)
@@ -64,7 +267,10 @@ def collect_extensions(home, claude, roots, contexts, settings, redact, hook_sum
         manifest_path = os.path.join(root, '.claude-plugin', 'plugin.json')
         manifest = json_object(manifest_path, 'plugin', sources)
         plugin['manifest_keys'] = sorted(manifest)
-        for kind, default in (('hooks', 'hooks/hooks.json'), ('skills', 'skills'), ('agents', 'agents'), ('commands', 'commands')):
+        plugin_name = (manifest['name'] if isinstance(manifest.get('name'), str) and manifest['name']
+                       else name.split('@')[0])
+        for kind, default in (('hooks', 'hooks/hooks.json'), ('mcpServers', '.mcp.json'),
+                              ('skills', 'skills'), ('agents', 'agents'), ('commands', 'commands')):
             field = manifest.get(kind)
             paths = [default] if kind not in ('agents', 'commands') or field is None else []
             inline = []
@@ -74,8 +280,10 @@ def collect_extensions(home, claude, roots, contexts, settings, redact, hook_sum
                 elif isinstance(value, dict):
                     inline.append(value)
             for data in inline:
-                if kind == 'hooks':
-                    add_hooks(plugin, data, manifest_path, hook_summary, root)
+                if kind == 'mcpServers':
+                    servers_from(data, manifest_path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
+                elif kind == 'hooks':
+                    add_hooks(plugin, data, manifest_path, hook_summary, root, redact)
             if len(set(paths)) > MAX_ENTRIES:
                 sources.append(inventory.source(manifest_path, 'plugin', 'partial', reason='component_path_limit',
                                                 omitted=len(set(paths))-MAX_ENTRIES))
@@ -84,21 +292,83 @@ def collect_extensions(home, claude, roots, contexts, settings, redact, hook_sum
                 if not path.startswith(os.path.abspath(root) + os.sep) or not os.path.realpath(path).startswith(os.path.realpath(root) + os.sep):
                     sources.append(inventory.source(manifest_path, 'plugin', 'not_checked', reason='external_component_path'))
                     continue
-                if kind == 'hooks':
-                    add_hooks(plugin, json_object(path, 'plugin', sources), path, hook_summary, root)
+                if kind in ('hooks', 'mcpServers'):
+                    data = json_object(path, 'plugin', sources)
+                    if kind == 'mcpServers':
+                        servers_from(data, path, 'plugin', plugin['project'], bare=True, plugin=plugin_name)
+                    else:
+                        add_hooks(plugin, data, path, hook_summary, root, redact)
                 else:
                     component_files(plugin, path, kind, sources, redact)
+    sources.extend(inventory.source(s['source'], s['scope'], s['status'], name=s['name']) for s in servers)
     sources.extend(inventory.source(p.get('source', registry_path), 'plugin', p['status']) for p in plugins)
-    return dict(plugins=plugins, sources=sources,
-                limitations=['Effective activation, runtime overrides and remote connectors remain unknown.',
-                             'MCP config files are not read, so there is no MCP server inventory; the user reviews servers with `claude mcp list`.',
-                             'Registry-selected installs only; no newest-cache guess. External component paths are not followed.'])
+    return dict(mcp_servers=servers, plugins=plugins, sources=sources,
+                mcp_name_collisions=name_collisions(servers), mcp_project_state=project_state[:MAX_ENTRIES],
+                limitations=['Effective activation, runtime overrides and remote connectors remain unknown; approvals, toggles, server policy and permission rules are per-source observations, not effective state.',
+                             'Registry-selected installs only; no newest-cache guess. External component paths are not followed.',
+                             'Selected fields omit argument values, URL paths and credentials. Package pinning is a syntax signal.']
+                + ([MOD_SETTINGS_LIMITATION] if any(
+                    'settings.read' in (c.get('mod') or {}).get(k, ()) for p in plugins
+                    for c in p['components'] for k in ('events', 'calls')) else []))
 
 
-def add_hooks(plugin, data, path, hook_summary, root=None):
-    # JS hook `modules` are not read; any events beside them still are, and the component says partial.
-    modules = isinstance(data, dict) and 'modules' in data
-    hooks = data.get('hooks', {k: v for k, v in data.items() if k != 'modules'} if modules else data)
+MOD_EXTENSIONS = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx')
+MOD_MAX_BYTES = 512 * 1024
+MOD_MAX_NAMES = 50
+MOD_NAME_CAP = 64
+MOD_NAME = re.compile(r'[A-Za-z][\w.]*')
+# Heuristic text patterns (mods reference "The hook function", mods-admin "Review what a mod can do",
+# fetched 2026-10-25): on('<event>' and $.<namespace>.<method>. Comments and strings can add names.
+MOD_EVENT = re.compile(r"""(?<![\w.$])on\s*\(\s*(['"`])([^'"`\n]{1,%d})\1""" % MOD_NAME_CAP)
+MOD_CALL = re.compile(r'\$\.([A-Za-z]\w*(?:\.[A-Za-z]\w*)+)')
+MOD_SETTINGS_LIMITATION = ('A mod that registers settings.read can rewrite merged settings, so the collected settings '
+                           'files are not the effective settings.')
+
+
+def _names(found):
+    """(sorted unique valid names up to MOD_MAX_NAMES, whether names were dropped for the cap)."""
+    names = sorted({n for n in found if len(n) <= MOD_NAME_CAP and MOD_NAME.fullmatch(n)})
+    return names[:MOD_MAX_NAMES], len(names) > MOD_MAX_NAMES
+
+
+def scan_mod(hooks_path, root, modules, redact):
+    """Static scan of the one module a hooks.json `modules` array names; never imports or runs it.
+
+    Returns the plugin component's `mod` record: names only, no source text, comments or literals.
+    """
+    rel = modules[0] if isinstance(modules, list) and len(modules) >= 1 and isinstance(modules[0], str) else None
+    if rel is None:
+        return dict(module=None, exists=False, bytes=0, events=[], calls=[], truncated=False,
+                    reason='invalid_modules')
+    mod = dict(module=redact(rel)[:200], exists=False, bytes=0, events=[], calls=[], truncated=False)
+    path = os.path.abspath(os.path.join(os.path.dirname(hooks_path), rel))
+    if not harness._inside(path, root):
+        return dict(mod, reason='outside_plugin_root')
+    if not path.lower().endswith(MOD_EXTENSIONS):
+        return dict(mod, reason='unsupported_extension')
+    try:
+        # Nonblocking, no-follow open: a FIFO or a link swapped in at the path must not stall or redirect the read.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(fd, 'rb') as f:
+            info = os.fstat(f.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                return dict(mod, reason='not_regular_file')
+            raw = f.read(MOD_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return dict(mod, reason='absent')
+    except OSError:
+        return dict(mod, reason='unreadable')
+    over = len(raw) > MOD_MAX_BYTES
+    text = raw[:MOD_MAX_BYTES].decode('utf-8', errors='replace')
+    events, more_events = _names(m.group(2) for m in MOD_EVENT.finditer(text))
+    calls, more_calls = _names(m.group(1) for m in MOD_CALL.finditer(text))
+    return dict(mod, exists=True, bytes=info.st_size, events=events, calls=calls,
+                truncated=over or more_events or more_calls)
+
+
+def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
+    is_mod = isinstance(data, dict) and 'modules' in data
+    hooks = data.get('hooks', {} if is_mod else data)
     if not isinstance(hooks, dict):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
@@ -106,9 +376,9 @@ def add_hooks(plugin, data, path, hook_summary, root=None):
         handlers = [dict(hook_summary(ev, group.get('matcher'), h), **plugin_footprint.hook_effects(ev, h, root))
                     for ev, groups in hooks.items() for group in groups for h in group.get('hooks', [])]
         component = dict(source=path, kind='hooks', handlers=handlers[:MAX_ENTRIES],
-                         status='partial' if modules or len(handlers) > MAX_ENTRIES else 'collected')
-        if modules:
-            component['reason'] = 'js_modules_not_scanned'
+                         status='partial' if len(handlers) > MAX_ENTRIES else 'collected')
+        if is_mod and root:
+            component['mod'] = scan_mod(path, root, data['modules'], redact or str)
         plugin['components'].append(component)
     except (TypeError, AttributeError, KeyError):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))

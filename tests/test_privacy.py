@@ -133,6 +133,10 @@ class ContextualDetection(unittest.TestCase):
         self.assertEqual(privacy.label_segments('AWS_SECRET_ACCESS_KEY'),
                          ['aws', 'secret', 'access', 'key'])
 
+    def test_contextual_search(self):
+        self.assertTrue(privacy.contextual_search(f'AWS_SECRET_ACCESS_KEY={AWS}'))
+        self.assertFalse(privacy.contextual_search('AWS_PROFILE=dev'))
+
     def test_sanitize_leaves_references_and_spaced_values_alone(self):
         env = {'POSTGRES_PASSWORD': '${POSTGRES_PASSWORD}', 'PGPASSWORD': '$(pass show pg)',
                'DB_PASSWORD': '<set in vault>', 'API_KEY': '{{secrets.API_KEY_V2}}',
@@ -154,8 +158,7 @@ class ContextualDetection(unittest.TestCase):
 
 
 SETTINGS = {
-    'model': 'opus', 'env': {'CLAUDE_CODE_SUBAGENT_MODEL': 'haiku', 'OTHER_NAME': '1'},
-    'modelSettings': {'opus': {'note': 'free text', 'budget': 3}},
+    'model': 'opus', 'modelSettings': {'opus': {'note': 'free text', 'budget': 3}},
     'statusLine': {'type': 'command', 'command': 'print-status --verbose'},
     'sandbox': {'enabled': True, 'network': {'allowedDomains': ['a.example.com', 'b.example.com']}},
     'permissions': {'allow': ['Bash(sudo ls)', 'Bash(curl:*)'], 'deny': ['Bash(rm -rf /)', 'Read(.env)'],
@@ -184,7 +187,7 @@ class MaskingUnits(unittest.TestCase):
                          ('block', True))
         for h, b in zip(s['hook_handlers'], before['hook_handlers']):
             self.assertTrue(privacy.MARKER_RE.match(h['target']))
-            for k in ('event', 'matcher', 'type', 'server', 'tool', 'target_origin', 'on_failure', 'background'):
+            for k in ('event', 'matcher', 'type', 'server', 'tool', 'target_origin', 'header_keys', 'on_failure', 'background'):
                 self.assertEqual(h.get(k), b.get(k))
         self.assertEqual(sorted(s['permissions']['risky']), sorted(before['permissions']['risky']))
         for flag, rules in s['permissions']['risky'].items():
@@ -197,7 +200,7 @@ class MaskingUnits(unittest.TestCase):
         self.assertEqual(s['model_settings']['opus']['budget'], 3)
         self.assertTrue(privacy.MARKER_RE.match(s['model_settings']['opus']['note']))
         self.assertTrue(privacy.MARKER_RE.match(s['other']['statusLine']['command']))
-        for k in ('path', 'keys', 'env_documented_set', 'model', 'hooks'):
+        for k in ('path', 'keys', 'env_keys', 'model', 'hooks'):
             self.assertEqual(s[k], before[k])
         self.assertEqual(s['permissions']['default_mode'], 'acceptEdits')
         self.assertEqual(s['permissions']['additional_dirs'], ['~/shared'])
@@ -408,7 +411,7 @@ class EndToEnd(PatchedHome):
                    'permissions': {'deny': ['Bash(zcdenyruleg)', 'Bash(zcoverlapby:*)'],
                                    'allow': ['Bash(sudo zcriskyruleg)', 'Bash(git:* zcshapepush)',
                                              'Bash(zcoverlapby zcoverlapallow)',
-                                             f'Bash(sudo env AWS_SECRET_ACCESS_KEY={AWS} aws s3 ls)']}})
+                                             f'Bash(export AWS_SECRET_ACCESS_KEY={AWS} && aws s3 ls)']}})
         self.write('code/app/.mcp.json', {'mcpServers': {
             'pgsrv': {'type': 'http', 'url': 'https://mcp.example.com/${MCP_HOST}/zcmcpurlpath',
                       'headers': {'X-Key': '${MCP_KEY}', 'X-Lit': 'zcmcpheader'},
@@ -536,7 +539,9 @@ class FailClosed(PatchedHome):
     PLANTED = {
         'enabledPlugins': {'zcbadplugin@m': 'zcplantedenabled'},
         'permissions': {'additionalDirectories': 'zcplanteddirs'},
-        'cleanupPeriodDays': 'zcplantedcleanup', 'includeCoAuthoredBy': 'zcplantedcoauth'}
+        'cleanupPeriodDays': 'zcplantedcleanup', 'includeCoAuthoredBy': 'zcplantedcoauth',
+        'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'http', 'url': 'https://h.example.com/x', 'allowedEnvVars': 'zcplantedenv'}]}]}}
 
     def test_malformed_values_are_masked_and_counted(self):
         self.write('.claude/settings.json', self.PLANTED)
@@ -544,28 +549,19 @@ class FailClosed(PatchedHome):
         meta = collect.build_snapshot(args(metadata_only=True))
         self.assertIn('zcplantedenabled', json.dumps(full))  # the fixture reaches the snapshot
         text = json.dumps(meta)
-        self.assertEqual([c for c in ('zcplantedenabled', 'zcplanteddirs', 'zcplantedcleanup', 'zcplantedcoauth')
-                          if c in text], [])
-        self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields']['unclassified'], 3)
+        self.assertEqual([c for c in ('zcplantedenabled', 'zcplanteddirs', 'zcplantedcleanup', 'zcplantedcoauth',
+                                      'zcplantedenv') if c in text], [])
+        self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields']['unclassified'], 4)
         self.assertEqual(full['coverage']['privacy']['replaced_fields'], {})
 
     def test_each_malformed_value_alone_is_masked(self):
         for key, value in (('cleanupPeriodDays', 'zcalone'), ('includeCoAuthoredBy', 'zcalone'),
-                           ('enabledPlugins', {'x@m': 'zcalone'})):
+                           ('enabledPlugins', {'x@m': 'zcalone'}), ('hooks', self.PLANTED['hooks'])):
             with self.subTest(key=key):
                 self.write('.claude/settings.json', {key: value})
                 meta = collect.build_snapshot(args(metadata_only=True))
                 self.assertNotIn('zcalone', json.dumps(meta))
                 self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields'].get('unclassified', 0), 1)
-
-    def test_planted_hook_credential_fields_reach_neither_snapshot(self):
-        self.write('.claude/settings.json', {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
-            {'type': 'http', 'url': 'https://h.example.com/x', 'allowedEnvVars': 'zcplantedenv',
-             'headers': {'X-Planted': 'zcplantedheader'}}]}]}})
-        for metadata_only in (False, True):
-            text = json.dumps(collect.build_snapshot(args(metadata_only=metadata_only)))
-            for planted in ('zcplantedenv', 'zcplantedheader', 'X-Planted'):
-                self.assertNotIn(planted, text)
 
     def test_wrongly_typed_value_is_dropped_not_leaked(self):
         self.write('.claude/settings.json', {'permissions': {'additionalDirectories': 'zcalone'}})
@@ -694,7 +690,8 @@ class Docs(unittest.TestCase):
         for bucket, ids in ((partial, ('SEC-risky-allow', 'SEC-sandbox', 'SEC-hooks', 'COST-model-default',
                                        'LRN-friction', 'LRN-corrections', 'LRN-duplicate-memory',
                                        'HYG-missing-hook-script', 'SEC-wildcard-placement',
-                                       'SEC-ineffective-deny', 'HYG-shadowed-allow')),
+                                       'SEC-ineffective-deny', 'HYG-shadowed-allow', 'SEC-secret-literal',
+                                       'SEC-secret-env')),
                             (not_checked, ('SEC-docs-only-constraint', 'LRN-contradiction', 'LRN-enforce'))):
             for check in ids:
                 self.assertIn(check, bucket)

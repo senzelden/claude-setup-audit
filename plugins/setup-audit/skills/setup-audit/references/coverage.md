@@ -34,7 +34,7 @@ Verified 2026-09-15 against official documentation:
 
 Managed files are inspected for every requested scope because their reach includes projects.
 Requested scope still controls existing project and usage collection. Other effective-coverage
-work beyond the instruction/worktree and plugin inventories below (including runtime
+work beyond the instruction/worktree and MCP/plugin inventories below (including runtime
 overrides) stays explicitly unchecked. A negative usage observation is bounded by that family's recorded omissions and
 window; zero omissions is not a guarantee of complete historical or configuration coverage.
 
@@ -96,10 +96,13 @@ plugin names, relative script paths and pattern ids.
 `config_conflicts` is coverage source `config_conflicts` (`collected`, or `partial` when the caps
 omitted entries; `basis: static`). It reads settings text only.
 
-- `settings[].env_documented_set` lists the documented `SUBAGENT_ENV` names
-  present in `env`. `settings[].sandbox` omits `credentials`, and
-  nothing records whether it is set. Not read either: `.envrc`, mise `[env]`, devcontainer env and
-  compose `environment` (existence only: `env.envrc_not_read`, `env.env_files_not_read`).
+- Scope-ignored settings (`settings[].scope_ignored_keys`, `ignored_env_keys`, `basis: static`): the
+  table is the settings reference's Scope column and its "Variables Claude Code ignores in `env`" list
+  (plus env-vars `CLAUDE_CODE_ENABLE_CFC`), fetched 2026-10-24; it must be refreshed when the docs
+  change and judges only the file's own location. Not seen: `--settings` files, the launch environment,
+  `~/.claude.json` contents, env values (so the telemetry group and `CLAUDE_CODE_ENABLE_CFC` are
+  conditional), and a managed file never being flagged even where the key would be ignored.
+  Metadata-only keeps the key names, scope classes, env names and reasons (fixed vocabulary).
 - Stacks: `global` is managed + user + home-local settings; each collected project directory is
   managed + user `settings.json` + its own project files. Plugin enablement comes from the
   highest-precedence file in the stack (managed > local > project > user).
@@ -173,13 +176,26 @@ grants; never execute a skill or its dynamic context to inspect it.
 
 ## MCP and plugins
 
-`extensions` inventories installed plugins and their components. The audit does not open MCP
-config files (project `.mcp.json`, managed MCP files, plugin MCP files) or `~/.claude.json`.
-It builds no MCP server inventory; the user reviews every MCP server with `claude mcp list`
-(`coverage.limitations` says so), and checklist `SEC-mcp-review` says what to look for. It runs no
-MCP server and no helper command. Remote connectors and runtime overrides remain
-unverified. Observed MCP tool calls (`transcripts.mcp_calls_by_server`) come from transcript tool
-names only; "not observed in these transcripts" is not "unused" or grounds alone for removal.
+`extensions` inventories selected MCP transport, executable, origin, argument count, package
+version shape, credential mechanisms and source scope. Argument values and URL paths are
+omitted; environment/header keys and variable names are retained without their values.
+Neither MCP servers nor authentication helpers are run. Same names across scopes are separate
+observations; `mcp_name_collisions` flags a name present in more than one scope for a project,
+comparing origins only, and is not a computed effective merge. Remote connectors and runtime
+overrides remain unverified. "Not observed in these transcripts" is not "unused" or grounds
+alone for removal.
+
+MCP exposure fields (`transport_class`, `endpoint_locality`, `plaintext_transport`, URL flags,
+literal-key lists, OAuth fields, `tool_prefix`, `file_git_status`) come from configuration text
+only. Locality needs no DNS, and nothing is connected, authenticated or executed. URL path,
+query, userinfo, argument, env, header, `clientId` and `headersHelper` values are never copied.
+Approvals, toggles, allow and deny policy, and permission rules are per-source observations
+(`policy_observations`), not effective state; `serverUrl`/`serverCommand` entries are counted,
+not evaluated. The `~/.claude.json` `projects[...]` approval lists (`enabledMcpjsonServers`,
+`disabledMcpjsonServers`) are an undocumented location observed on 2026-09-29; the
+`disabledMcpServers`/`enabledMcpServers` toggles and `hasTrustDialogAccepted` are documented
+there. `tool_prefix` uses the documented plugin normalization for every server. Documentation
+checked 2026-09-29: `mcp.md`, `managed-mcp.md`, `settings-reference.md`, `permissions.md`.
 
 Tool errors (`transcripts.tool_errors`): pairing of results to calls is within a file, and only
 `is_error: true` counts. Categories are heuristic text patterns observed 2026-09-29; the error
@@ -203,20 +219,22 @@ Subagent models and request parameters (`transcripts.subagent_models`, `transcri
 observed, undocumented, Claude Code 2.1.310, 2026-10-25): Claude Code documents neither shape.
 `<agent>.meta.json` beside each subagent transcript supplies `agentType` and `model`; only those two
 keys are read (never `description` or `toolUseId`), at most 64 KiB, regular files only. Absent files
-are counted in `meta_absent`; malformed, oversized, non-object, symlinked or non-regular (FIFO,
-opened nonblocking) ones in `meta_unusable`. The meta `model` is usually the model Claude passed for
-that call, but is `inherit` for forks (which run on the main model, even under
-`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`; sub-agents, fetched 2026-10-25); its absence means the
-definition, `CLAUDE_CODE_SUBAGENT_MODEL` or the main model applied (order documented in sub-agents
-"Choose a model", fetched 2026-10-25), so the row cannot say which; `actual_model` is what the
-transcript shows. A subagent counts when it has an in-window record; its tokens are the in-window
-assistant usage, deduplicated by message id, and rows are capped at 30 by tokens (`omitted` counts
-the rest). `tokens` is volume including `cache_read_tokens` (billed at a fraction of base input),
-not spend. `api-request` records (`querySource`, `params.model`, `params.output_config.effort`,
-`params.thinking.type`, `cacheControl[].value.ttl`) are counted per source class, deduplicated by
-project (the transcript directory's project, also for subagent files), sessionId and request id; a
-breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25). A shape change in a later Claude
-Code release shows up as zero rows or `meta_unusable`, not as an error.
+are counted in `meta_absent`; malformed, oversized, non-object, symlinked or non-regular (FIFO, opened nonblocking) ones in
+`meta_unusable`.
+The meta `model` is usually the model Claude passed for that call, but is `inherit` for forks (which
+run on the main model, even under `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`; sub-agents, fetched 2026-10-25);
+its absence means the definition,
+`CLAUDE_CODE_SUBAGENT_MODEL` or the main model applied (order documented in sub-agents "Choose a model",
+fetched 2026-10-25), so the row cannot say which; `actual_model` is what the transcript shows. A subagent
+counts when it has an in-window record; its tokens are the in-window assistant usage, deduplicated by
+message id, and rows are capped at 30 by tokens (`omitted` counts the rest). `tokens` is volume
+including `cache_read_tokens` (billed at a fraction of base input), not spend. `api-request` records
+(`querySource`, `params.model`, `params.output_config.effort`, `params.thinking.type`,
+`cacheControl[].value.ttl`) are counted per source class, deduplicated by project (the transcript directory's project, also for subagent files), sessionId and
+request id; a breakpoint without `ttl` counts as 5m (default per prompt-caching, fetched 2026-10-25).
+`configured` reads env key names only, never values, and cannot see shell or managed environment
+variables. A shape change in a later Claude Code release shows up as zero rows or `meta_unusable`, not
+as an error.
 
 Limit messages (`subscription.limit_events`, 0.13.0): the message texts are documented (errors, "Usage
 limits", and interactive-mode, "Wait for a usage limit to reset"; fetched 2026-10-26); the record wrapper is
@@ -304,12 +322,26 @@ Plugin candidates come from `installed_plugins.json` records, not newest cache d
 User/managed installs and matching project/local installs are inspected. Enablement settings
 are reported as per-source observations, with active state unknown. Only paths within plugin
 storage and components within their install are read. Default/custom skills, agents, commands,
-hooks are inspected; MCP config files are not opened, and inline `mcpServers` in a manifest is parsed
-with the manifest but never kept; other manifest keys are inventoried, not implemented.
-Limits: 1 MiB/JSON; 50 installs; 100 paths per component kind;
+hooks and MCP definitions are inspected; other manifest keys are inventoried, not implemented.
+Mods: when a plugin's `hooks/hooks.json` has `modules`, the first module path (inside the plugin
+root, no symlinks, regular file, `.js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx`) is text-scanned, never
+imported or run, for `on('<event>'` and `$.<ns>.<method>` names: a heuristic (comments and strings
+can add names; indirect or dynamic use is missed), capped at 512 KB and 50 names per list
+(`mod.truncated`). Only identifier-shaped names are kept, never source text; metadata-only keeps
+them as API vocabulary. A mod that registers `settings.read` can rewrite merged settings, so the
+collected files are not the effective settings (reported as an extensions limitation). The
+authoritative list is `claude plugin validate <dir>`, which collection never runs. Mods docs
+fetched 2026-10-25. `settings[].mods` records, as booleans, the guard options
+`allowManagedModsOnly` and `allowModsToOverrideDenyRules` (read only from
+`pluginConfigs["cc-plugin-sec-default@builtin"].options` in managed settings; a non-managed entry
+is only flagged as ignored), whether a managed `prependPlugins` names the guard, and the presence
+of `prependPlugins`/`appendPlugins`.
+Limits: 1 MiB/JSON; 100 MCP entries total; 50 installs; 100 paths per component kind;
 100 directories/files per component path; 32 KiB/Markdown. Omissions are coverage limitations.
 
-Verified 2026-09-15 against plugin reference (docs page `plugins-reference`) (inline/custom component
+Verified 2026-09-15 against MCP (docs page `mcp`) (user and per-project
+local definitions in `.claude.json`, project `.mcp.json`) and
+plugin reference (docs page `plugins-reference`) (inline/custom component
 locations). Installed-registry list records and field types were separately observed locally
 on that date; no private values were used as fixtures. Unknown registry shapes are unsupported.
 Skill listing totals now use observed excerpts without claiming a fixed cap, budget, or runtime
@@ -338,8 +370,10 @@ sensitive information; review it before sharing.
 
 `--hash-paths` (with or without `--metadata-only`) additionally replaces path-like kept strings with
 `h:<12 hex>` tags (HMAC-SHA256 truncated; families listed in `snapshot-format.md`) after every
-collection join, and records `hashed_paths` and `hashed_path_families` in `coverage.privacy`, plus a
-limitation. Each run uses a new random salt that is never written. This hides usernames, project names and file names that live in paths;
+collection join, and records `hashed_paths`, `hashed_path_families` and `hash_salt` (`per_run`, or
+`file` for `--hash-salt-file`; the salt itself is never written) in `coverage.privacy`, plus a
+limitation. The salt file must already exist, hold at least 16 bytes after trimming whitespace, and is
+never created by the collector. This hides usernames, project names and file names that live in paths;
 it does not hide names the collector keeps by design (plugin, skill, agent and MCP server names) and
 does not mask full-mode free text beyond replacing known home and project directories inside it (what
 follows a tag stays, e.g. `h:<12 hex>/run.sh` in a hook command; the count is `free_text_scrubbed`).
@@ -347,7 +381,7 @@ Equal strings get equal tags, so a relative file name is the same tag in every r
 strings that no family names are hashed too and counted as `other_paths`; hook script names under
 `projects/*/hooks` are names and stay.
 What degrades: the report cannot name a project or file (cite the tag), and tags cannot be opened,
-compared with another audit's tags or fed to
+compared with another audit's tags (unless the same salt file is reused) or fed to
 `prune_permissions.py --snapshot` or a project-scoped ledger entry.
 
 The contextual detector runs in both modes. A high-entropy value next to a key-like name
@@ -365,7 +399,9 @@ can be "listed but never called". Counts are per transcript file in the window, 
 session can count twice; sessions without these records (older versions, no tool search) contribute to
 `sessions` but not to listing or failure evidence. Observed (not documented): `addedLines` carries one line per added tool, so a deferred tool costs about one
 listing line until used. Calls in the user's own subagent files count as use for "never called" (plugin-spawned
-sessions do not); `used[].sessions` stays main-thread. Which servers need authentication is not read
-(from 0.14.6). `sessions_present` counts sessions where a server appears in either list or has `mcp__<server>__*` tools listed or used (names normalized with `_`). `tool_search_observed`
+sessions do not); `used[].sessions` stays main-thread. `needsAuthMcpServers` is read as names (strings, or objects
+with `name`) into `sessions_needs_auth`; in the author's data the key is present in most records but was never
+non-empty, so its shape is unconfirmed. `sessions_present` counts sessions where a server appears in any of the
+three lists or has `mcp__<server>__*` tools listed or used (names normalized with `_`). `tool_search_observed`
 uses the same per-file pass and exclusions: any main-thread, non-spawned delta record in the window.
 A shape change shows up as zero `sessions_with_deferred_records`, not as an error.

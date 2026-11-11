@@ -139,15 +139,14 @@ class Failures(Base):
         self.assertNotIn(SECRET, json.dumps(f))
         self.assertNotIn("bad code!", json.dumps(f))
 
-    def test_mcp_auth_state_is_not_read(self):
-        # 0.14.6: which servers need authentication is not collected; failed and pending still are.
-        rec = delta(pending=["slow"])
-        rec["attachment"]["needsAuthMcpServers"] = ["zcauthsrv", {"name": "zcauthdocs"}]
+    def test_needs_auth_servers_are_counted_by_name(self):
+        rec = delta()
+        rec["attachment"]["needsAuthMcpServers"] = ["claude.ai Gmail", {"name": "docs"}, 7]
         self.put("-a", "s1", [rec])
-        f = self.scan()["mcp_failures"]
-        self.assertEqual([r["server"] for r in f["servers"]], ["slow"])
-        self.assertNotIn("sessions_needs_auth", f["servers"][0])
-        self.assertNotIn("zcauth", json.dumps(f))
+        self.put("-a", "s2", [rec])
+        rows = {r["server"]: r for r in self.scan()["mcp_failures"]["servers"]}
+        self.assertEqual({k: v["sessions_needs_auth"] for k, v in rows.items()}, {"claude.ai Gmail": 2, "docs": 2})
+        self.assertEqual(rows["docs"]["sessions_failed"], 0)
 
     def test_sessions_present_counts_sessions_where_the_server_appears_or_has_tools(self):
         self.put("-a", "s1", [delta(failed=[failure("plugin:data:definite")])])
@@ -162,21 +161,13 @@ class Failures(Base):
                                     pending=["../etc"])])
         self.assertEqual(self.scan()["mcp_failures"]["servers"], [])
 
-    def test_snapshot_attributes_servers_from_transcript_names_only(self):
+    def test_snapshot_joins_configured_names(self):
         self.write(".claude/settings.json", {})
-        root = os.path.join(self.home, "repo")
-        self.write("repo/.mcp.json", {"mcpServers": {"projsrv": {"command": "x"}}})  # never read
-        self.put("-a", "s1", [delta(failed=[failure("github"), failure("ghost")]),
-                              calls("mcp__github__q", "mcp__usedsrv__q")])
-        snap = collect.build_snapshot(args(roots=[root]))
-        t = snap["transcripts"]
-        self.assertEqual({r["server"] for r in t["mcp_failures"]["servers"]}, {"github", "ghost"})
-        for row in t["mcp_failures"]["servers"]:
-            self.assertNotIn("configured", row)
-        self.assertEqual(dict(t["mcp_calls_by_server"]), {"github": 1, "usedsrv": 1})
-        self.assertNotIn("mcp_configured_but_unused", t)
-        self.assertNotIn("mcp_configured_but_unused_note", t)
-        self.assertNotIn("projsrv", json.dumps(snap))
+        self.write(".claude.json", {"mcpServers": {"github": {"command": "x"}}})
+        self.put("-a", "s1", [delta(failed=[failure("github"), failure("ghost")])])
+        snap = collect.build_snapshot(args())
+        rows = {r["server"]: r for r in snap["transcripts"]["mcp_failures"]["servers"]}
+        self.assertEqual((rows["github"]["configured"], rows["ghost"]["configured"]), (True, False))
 
 
 class Privacy(Base):

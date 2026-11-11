@@ -67,6 +67,14 @@ SECRET_RE = re.compile(
     r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)\s*[:=]\s*"
     r"(?:(?i:bearer|basic|digest)\s+)?(?![$<_{(])\S+)"
 )
+# A value that looks like an actual credential (not a variable/placeholder reference).
+LITERAL_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bpa]-[A-Za-z0-9-]+|AKIA[0-9A-Z]{16}"
+    rf"|{JWT_PATTERN}|{PEM_PATTERN}|{URL_USERINFO_PATTERN}"
+    r"|(?i:bearer)\s+[A-Za-z0-9._\-]{16,}"
+    r"|(?i:authorization|bearer|token|api[_-]?key|password|secret|credential)[\"' ]*[:=]\s*[\"']?"
+    r"(?:(?i:bearer|basic|digest)[\"' ]+)?(?![$<_{(])[A-Za-z0-9._\-]{16,})"
+)
 # Key names (normalized: lowercased, non-alnum stripped) whose value sanitize() redacts outright,
 # regardless of quoting/spacing — the structural backstop for the regexes above, which only catch
 # a labeled value inside a single string and never match JSON's own '"key": "value"' shape at all.
@@ -75,6 +83,15 @@ SECRET_KEY_NAMES = {
     "bearertoken", "idtoken", "sessiontoken", "token", "password", "passwd", "secret",
     "secretkey", "clientsecret", "credential", "credentials", "privatekey",
 }
+
+class _AnyOf:
+    """`.search` over several matchers, so RISKY_RULES keeps its (name, rx) shape for callers."""
+    def __init__(self, *searches):
+        self._searches = searches
+
+    def search(self, text):
+        return any(s(text) for s in self._searches)
+
 
 # Command heads behind two RISKY_RULES flags, as regex alternatives. The flags match allow rules
 # that let Claude run these commands with any arguments.
@@ -101,6 +118,9 @@ RISKY_RULES = [
     ("package-install", re.compile(r"(pip install|npm install|apt(-get)? install|uv add|cargo install)")),
     ("docker", re.compile(r"\bdocker\b")),
     ("read-outside-project", re.compile(r"Read\(//(proc|etc|home|usr|mnt)")),
+    ("secret-literal-in-rule", _AnyOf(LITERAL_SECRET_RE.search, privacy.contextual_search)),
+    # A secret pulled out of .env onto the command line (not masking like sed 's/=.*/=<set>/' .env).
+    ("secret-via-env-file", re.compile(r"\$\\?\(.*\.env\b|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Z_]*\S*\s+\S*\.env\b")),
     ("file-append-wildcard", re.compile(r"Bash\((cat|tee|echo) >>? ?\*")),
 ]
 # permissions.md "Wildcard patterns" / "Match by input parameter" and errors.md "Has a wildcard before
@@ -235,7 +255,7 @@ def _normalized_key(k):
 
 
 def _looks_like_reference(v):
-    # Same convention SECRET_RE uses: a value starting with one of these is a
+    # Same convention SECRET_RE/LITERAL_SECRET_RE use: a value starting with one of these is a
     # variable/placeholder reference ('$FOO', '<set>', '{{VAR}}', '$(pass show x)'), not a literal
     # secret, and is exactly the "which env var is wired in" signal reports are meant to show.
     return bool(v) and v[0] in "$<_{("
@@ -244,8 +264,9 @@ def _looks_like_reference(v):
 def sanitize(obj):
     """Recursively redact every string in a JSON-shaped structure.
 
-    Backstop for fields copied through structurally (modelSettings, statusLine, ...) that never
-    pass through a field-specific redactor. Run this on the whole snapshot immediately before json.dumps, not on
+    Backstop for fields copied through structurally (modelSettings, sandbox, subprocess output
+    like `claude doctor`, an MCP server's own config block, ...) that never pass through a
+    field-specific redactor. Run this on the whole snapshot immediately before json.dumps, not on
     individual fields, so a new field can't silently skip it.
 
     Key-aware first: a value under a key that normalizes to one of SECRET_KEY_NAMES (regardless of
@@ -394,14 +415,17 @@ def analyze_permissions(perms):
 def hook_handler_entry(event, matcher, x):
     """Summarize one hook handler dict. Types: command, http, mcp_tool, prompt, agent (hooks docs).
 
-    An http hook reports only its target origin: its headers and allowedEnvVars are not read.
+    header_keys/allowed_env_vars (http only) are the fields that decide whether a secret can leak
+    into the request: names only, matching the env_keys/envrc_info convention elsewhere.
     Every entry also carries a fingerprint; on_failure, background, issues, unknown_fields and
     plugin_relative appear only when set.
     """
     kind = x.get("type", "command")  # older configs omit type; it means command
     if kind == "http":
         target = x.get("url", "")
-        extra = {"target_origin": config_names.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
+        extra = {"header_keys": config_names.hook_header_names(x),
+                 "allowed_env_vars": x.get("allowedEnvVars"),
+                 "target_origin": config_names.url_origin(target) if isinstance(target, str) else "dynamic_or_unknown"}
     elif kind == "mcp_tool":
         target = f"{x.get('server', '?')}:{x.get('tool', '?')}"
         extra = {k: _mcp_name(x[k]) if isinstance(x.get(k), str) else None for k in ("server", "tool")}
@@ -421,7 +445,7 @@ def hook_handler_entry(event, matcher, x):
         entry["issues"] = issues
     if unknown:
         entry["unknown_fields"] = unknown
-    if "CLAUDE_PLUGIN_" in json.dumps(config_names.hook_handler_view(x), default=str):  # not headers/allowedEnvVars
+    if "CLAUDE_PLUGIN_" in json.dumps(x, default=str):
         entry["plugin_relative"] = True
     return entry
 
@@ -476,6 +500,44 @@ def settings_shape(d):
     return d, sorted(issues)
 
 
+def _settings_layer(path):
+    """user, project or local, from where a non-managed settings file lives (settings.md "Settings files")."""
+    if os.path.basename(path) == "settings.local.json":
+        return "local"
+    def norm(p):  # CLAUDE_CONFIG_DIR may be spelled with a trailing slash, `..` or a leading `~`
+        return os.path.normpath(os.path.abspath(HOME + p[1:] if p == "~" or p.startswith("~/") else p))
+    return "user" if norm(os.path.dirname(path)) == norm(CLAUDE) else "project"
+
+
+GUARD_ID = "cc-plugin-sec-default@builtin"
+GUARD_OPTIONS = (("allowManagedModsOnly", "allow_managed_mods_only"),
+                 ("allowModsToOverrideDenyRules", "allow_mods_override_deny_rules"))
+GUARD_PREPEND_NAMES = ("sec-default@builtin", GUARD_ID)
+
+
+def mods_policy(d, managed):
+    """Mods policy booleans (mods-admin "Set options on the built-in guard", fetched 2026-10-25).
+
+    The guard options live only at pluginConfigs["cc-plugin-sec-default@builtin"].options and count
+    only in managed settings; elsewhere they neither set nor loosen anything, so a non-managed file
+    only gets `guard_options_ignored`. Booleans only: plugin ids are never kept.
+    """
+    pc = d.get("pluginConfigs")
+    entry = pc.get(GUARD_ID) if isinstance(pc, dict) else None
+    options = entry.get("options") if isinstance(entry, dict) else None
+    options = options if isinstance(options, dict) else {}
+    prepend = d.get("prependPlugins")
+    mods = {"prepend_plugins": bool(prepend), "append_plugins": bool(d.get("appendPlugins"))}
+    for key, name in GUARD_OPTIONS:
+        value = options.get(key)
+        mods[name] = value if managed and isinstance(value, bool) else None
+    # Only a managed prependPlugins list replaces the default load order, so only it can drop the guard.
+    mods["prepend_names_guard"] = (any(x in GUARD_PREPEND_NAMES for x in prepend if isinstance(x, str))
+                                   if managed and isinstance(prepend, list) and prepend else None)
+    mods["guard_options_ignored"] = (not managed) and any(k in options for k, _ in GUARD_OPTIONS)
+    return mods
+
+
 _LEDGER_CACHE = {}
 
 
@@ -484,13 +546,6 @@ def plugin_ledger():
     if HOME not in _LEDGER_CACHE:
         _LEDGER_CACHE[HOME] = plugin_footprint.read_ledger(HOME)
     return _LEDGER_CACHE[HOME]
-
-
-def sandbox_summary(sb):
-    """The sandbox object without its `credentials` subtree (env var names, file paths)."""
-    if not isinstance(sb, dict):
-        return sb
-    return {k: v for k, v in sb.items() if k != "credentials"}
 
 
 def summarize_settings(path, data=None, managed=False):
@@ -514,7 +569,7 @@ def summarize_settings(path, data=None, managed=False):
         "keys": sorted(raw.keys()),
         "model": d.get("model"),
         "model_settings": d.get("modelSettings"),
-        "env_documented_set": config_names.documented_env_set(d, SUBAGENT_ENV.values()),
+        "env_keys": config_names.settings_env_names(d),
         "enabled_plugins": d.get("enabledPlugins"),
         "hooks": {ev: [h.get("matcher") for h in lst] for ev, lst in hooks.items()},
         "hook_commands": [redact(c)[:200] for c in raw_commands],
@@ -523,7 +578,8 @@ def summarize_settings(path, data=None, managed=False):
         "hook_handlers": hook_handlers,
         "missing_hook_scripts": missing_hook_scripts(raw_commands, project_dir),
         "allow_managed_hooks_only": bool(d.get("allowManagedHooksOnly")),
-        "sandbox": sandbox_summary(d.get("sandbox")),
+        "mods": mods_policy(d, managed),
+        "sandbox": d.get("sandbox"),
         "auto_mode_configured": bool(d.get("autoMode")),
         "permissions": analyze_permissions(perms),
         "mcp_policy": mcp_policy(d),
@@ -542,6 +598,11 @@ def summarize_settings(path, data=None, managed=False):
         found = plugin_footprint.markers(raw)
         if found:
             summary["plugin_markers"] = found
+        ignored_keys, ignored_env = config_checks.scope_ignored(_settings_layer(path), d)
+        if ignored_keys:
+            summary["scope_ignored_keys"] = ignored_keys
+        if ignored_env:
+            summary["ignored_env_keys"] = ignored_env
     # Raw rules for config_stacks(); never part of a summary, which is serialized.
     _RAW_PERMISSIONS[summary["path"]] = {k: [r for r in (perms.get(k) if isinstance(perms.get(k), list) else [])
                                             if isinstance(r, str)] for k in ("allow", "ask", "deny")}
@@ -630,7 +691,7 @@ def collect_managed_settings():
 
 HASH_PATHS_LIMITATION = (
     "Hashed paths: project roots, config file paths, transcript keys and file names are salted hash tags "
-    "(h:<12 hex>); tags join within this snapshot only (each run uses a new salt). "
+    "(h:<12 hex>); tags join within this snapshot only, and across snapshots only with the same salt file. "
     "Equal strings get equal tags, so a relative file name has the same tag in every repo. Full-mode free text "
     "(hook commands, excerpts) only has known home and project directories replaced; what follows a tag stays. "
     "Tools that open a path or compare projects between audits need a snapshot with real paths.")
@@ -681,7 +742,6 @@ def snapshot_coverage(snap, roots):
                 "Server, OS, helper and embedding-host policy need runtime verification; helpers are never executed.",
                 "Instruction imports, symlink targets, runtime loading and remote connector coverage remain unverified.",
                 "Usage and transcript counts retain their family-specific window and omission semantics; collected does not mean all historical activity.",
-                "MCP config files and ~/.claude.json are not read, so no MCP server inventory exists; the user can review all MCP servers with `claude mcp list`.",
                 *snap.get("instructions", {}).get("limitations", []),
                 *snap.get("extensions", {}).get("limitations", []),
                 *snap.get("instruction_clarity", {}).get("limitations", [])]}
@@ -703,6 +763,7 @@ def collect_global():
     state = plugin_footprint.state_files(CLAUDE, "global")
     if state:
         out["plugin_state"] = state
+    out["mcp_user"] = config_names.user_mcp_server_names(HOME)
     installed = load_json(os.path.join(CLAUDE, "plugins", "installed_plugins.json")) or {}
     out["installed_plugins"] = sorted((installed.get("plugins") or installed).keys()) if isinstance(installed, dict) else []
     out["last_update"] = load_json(os.path.join(CLAUDE, ".last-update-result.json"))
@@ -843,6 +904,8 @@ def collect_projects(roots):
                     entry["claude_md_dead_refs"] = dead_references(os.path.join(dirpath, "CLAUDE.md"), root)
                 if "/.worktrees/" in dirpath or "/worktrees/" in dirpath:
                     entry["is_worktree_copy"] = True
+            if ".mcp.json" in filenames:
+                entry["mcp_servers"] = sorted((load_json(os.path.join(dirpath, ".mcp.json")) or {}).get("mcpServers", {}).keys())
             cdir = os.path.join(dirpath, ".claude")
             if os.path.isdir(cdir):
                 entry["settings"] = [s for s in (summarize_settings(os.path.join(cdir, n))
@@ -1278,7 +1341,7 @@ def subagent_summary(rows, files, absent, unusable):
                   "description and toolUseId are never read into the snapshot. requested_model is the model "
                   "Claude passed for the call (null when none; inherit for forks, which run on the main model); actual_model is the majority model of the "
                   "file's assistant messages; tokens are input + cache creation + cache read + output "
-                  "(volume, not spend), cache_read_tokens the cache-read part, deduplicated by message id. configured reports whether the two subagent-model variable names appear in the env of collected settings (no other name or value is read)."),
+                  "(volume, not spend), cache_read_tokens the cache-read part, deduplicated by message id. configured reports env key names in collected settings only."),
     }
 
 
@@ -1522,7 +1585,7 @@ def collect_transcripts(days, max_files=400, project_filter=None):
                                 baselines.append(total)
                                 per_project[os.path.basename(os.path.dirname(path))].append(total)
                                 need_baseline = False
-                    # MCP call counts are usage evidence for the user's own sessions only; they are compared with `claude mcp list` by the user.
+                    # MCP call counts are usage evidence for COST-mcp-unused: the user's own sessions only.
                     if record.get("type") == "assistant" and spawn is None:
                         content = (record.get("message") or {}).get("content", record.get("content", []))
                         for item in content if isinstance(content, list) else []:
@@ -1674,23 +1737,38 @@ def _read(root, rel, limit=200_000):
 
 
 def env_declarations(root):
-    """Variables a repo declares in template files (.env.example and similar).
-
-    .envrc, mise [env], devcontainer env and compose environment can hold literal values, so they
-    are never opened: env_store_files records only that they exist."""
+    """Variables a repo declares, whatever mechanism it uses. A pointer-only .envrc counts as a template."""
     declared, sources = set(), []
     for name in (".env.example", ".env.template", ".env.sample", ".env.dist", "example.env"):
         text = _read(root, name)
         if text:
             declared |= set(re.findall(ENV_KEY_LINE, text, re.M))
             sources.append(name)
+    envrc = config_names.envrc_names(root)
+    if envrc:
+        declared |= set(envrc["declared_names"])
+        sources.append(".envrc")
+    for name in ("mise.toml", ".mise.toml"):
+        m = re.search(r"^\[env\]\s*\n(.*?)(?=^\[|\Z)", _read(root, name), re.M | re.S)
+        if m:
+            declared |= set(re.findall(ENV_KEY_LINE, m.group(1), re.M))
+            sources.append(name)
+    for name in (".devcontainer/devcontainer.json", ".devcontainer.json"):
+        for block in re.findall(r"\"(?:containerEnv|remoteEnv)\"\s*:\s*\{([^}]*)\}", _read(root, name)):
+            declared |= set(re.findall(r"\"([A-Z][A-Z0-9_]*)\"\s*:", block))
+            sources.append(name)
+    for path in glob.glob(os.path.join(root, "*compose*.y*ml")):
+        text = _read(root, os.path.basename(path))
+        found = set(re.findall(r"^\s*-\s*([A-Z][A-Z0-9_]*)=", text, re.M)) | set(re.findall(r"^\s+([A-Z][A-Z0-9_]*):\s*\$\{", text, re.M))
+        if found:
+            declared |= found
+            sources.append(os.path.basename(path))
     return declared, sorted(set(sources))
 
 
 def env_contract(root, max_files=4000):
     """Declared vs read environment variables, plus fail-fast validation libraries in use."""
     declared, sources = env_declarations(root)
-    not_read = config_names.env_store_files(root)
     reads, required, validation = defaultdict(set), set(), set()
     optional, app_reads = set(), set()
     scanned, truncated = 0, False
@@ -1743,22 +1821,19 @@ def env_contract(root, max_files=4000):
 
     order = {"required": 0, "read": 1, "optional": 2, "test-only": 3}
     undeclared = sorted((n for n in reads if n not in declared), key=lambda n: (order[kind(n)], n))
-    out = {"declared_via": sources, "declared_count": len(declared), "read_count": len(reads),
+    return {"declared_via": sources, "declared_count": len(declared), "read_count": len(reads),
             "undeclared_counts": dict(Counter(kind(n) for n in undeclared)),
             "undeclared": [{"name": n, "kind": kind(n), "files": sorted(reads[n])[:3]} for n in undeclared][:25],
             "validation": sorted(validation), "files_scanned": scanned, "truncated": truncated}
-    if config_names.envrc_present(root):
-        out["envrc_not_read"] = True  # a name read in code may be declared in .envrc, which the audit does not open
-    if not_read:
-        out["env_files_not_read"] = not_read  # may declare names; existence only, contents never opened
-    return out
 
 
 def envrc_info(root):
-    """Presence of .envrc by stat only; its contents are never read."""
-    if not config_names.envrc_present(root):
+    names = config_names.envrc_names(root)  # names only, never values
+    if not names:
         return None
-    return {"present": True, "git": git_status(root, ".envrc")}
+    return {"pointer_lines": names["pointer_lines"],
+            "literal_secret_names": names["literal_secret_names"],
+            "git": git_status(root, ".envrc")}
 
 
 def git_age(root):
@@ -2295,7 +2370,7 @@ def build_snapshot(a):
     if metadata_only and getattr(a, "clarity_pilot", False):
         raise ValueError("metadata-only excludes the clarity pilot")
     hash_paths = getattr(a, "hash_paths", False)
-    salt = privacy.new_salt() if hash_paths else None
+    salt, salt_kind = privacy.resolve_salt(getattr(a, "hash_salt_file", None)) if hash_paths else (None, None)
     _RAW_PERMISSIONS.clear()
     _LEDGER_CACHE.clear()
     audits = sorted(glob.glob(os.path.join(CLAUDE, "audits", "*.md")))
@@ -2350,11 +2425,14 @@ def build_snapshot(a):
     settings = snap['global']['settings'] + [s for p in snap['projects'].values() for s in p.get('settings', [])]
     hook_index, hook_index_reasons = harness.hook_index(CLAUDE, settings)
     snap["global"]["plugin_session_start_hooks"] = plugin_session_start_hooks(hook_index)
-    snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, settings,
-                                                       redact, hook_handler_entry)
+    snap['extensions'] = extensions.collect_extensions(HOME, CLAUDE, roots, contexts, managed_directory(),
+                                                       snap['managed_settings']['sources'], settings,
+                                                       redact, hook_handler_entry, git_status=git_status)
     layers = ([("user", None, s) for s in snap["global"]["settings"]]
               + [("project", p, s) for p, e in snap["projects"].items() for s in e.get("settings", [])]
               + [("managed", None, s) for s in snap["managed_settings"]["settings"]])
+    extensions.mcp_observations(snap["extensions"]["mcp_servers"], layers,
+                                snap["extensions"]["mcp_project_state"], lambda p: p.replace(HOME, "~"))
     snap["config_conflicts"] = config_checks.conflicts(config_stacks(snap), redact)
     snap["subscription"]["extra_usage"] = subscription_usage.extra_usage(
         [s for _, _, s in layers], snap["subscription"]["limit_events"])
@@ -2381,9 +2459,19 @@ def build_snapshot(a):
         r["context_baseline_median"] = samples[len(samples) // 2] if samples else None
         r["context_baseline_sessions"] = len(samples)
     snap["transcripts"].pop("_baseline_lists", None)
-    env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_documented_set") or []
+    env_names = {k for s in settings + snap["managed_settings"]["settings"] for k in s.get("env_keys") or []
                  if isinstance(k, str)}
     snap["transcripts"]["subagent_models"]["configured"] = {k: v in env_names for k, v in SUBAGENT_ENV.items()}
+    configured = set(snap["global"].get("mcp_user") or [])
+    for entry in snap["projects"].values():
+        configured |= set(entry.get("mcp_servers") or [])
+    used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
+    snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
+    for row in snap["transcripts"]["mcp_failures"]["servers"]:
+        row["configured"] = row["server"] in configured
+    snap["transcripts"]["mcp_configured_but_unused_note"] = (
+        "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
+        "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
     replaced = privacy.mask_snapshot(snap) if metadata_only else {}
     snap["coverage"]["privacy"] = {
@@ -2392,7 +2480,7 @@ def build_snapshot(a):
         "marker": privacy.MARKER_FORMAT, "replaced_fields": replaced, "redactions": {}}
     if hash_paths:  # after every join and after masking; the salt itself is never stored
         families = privacy.hash_paths(snap, privacy.PathHasher(salt, HOME), roots, extra_dirs=[CLAUDE])
-        snap["coverage"]["privacy"].update(hashed_paths=True, hashed_path_families=families)
+        snap["coverage"]["privacy"].update(hashed_paths=True, hashed_path_families=families, hash_salt=salt_kind)
         snap["coverage"]["limitations"].append(HASH_PATHS_LIMITATION)
     if metadata_only:
         snap["coverage"]["sources"].append(
@@ -2418,6 +2506,7 @@ def main():
                     help="replace free text with length markers (prompts, rules, hook commands, descriptions, excerpts)")
     ap.add_argument("--hash-paths", action="store_true",
                     help="replace path-like kept strings (project roots, config file paths, transcript keys) with h:<12 hex> tags")
+    ap.add_argument("--hash-salt-file", help="read the --hash-paths salt from this existing file (stable tags across runs)")
     ap.add_argument("--ledger", help="learning ledger to count active entries against (read-only)")
     ap.add_argument("--drift-log", help="drift log to summarize (read-only)")
     ap.add_argument("--rate-limit-log", help="opt-in rate-limit log to analyze (read-only)")
@@ -2425,7 +2514,12 @@ def main():
     apply_collection_args(ap, a)
     if a.metadata_only and a.clarity_pilot:
         ap.error("--metadata-only cannot be combined with --clarity-pilot (the pilot reviews excerpt text)")
-    text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
+    if a.hash_salt_file and not a.hash_paths:
+        ap.error("--hash-salt-file requires --hash-paths")
+    try:
+        text = json.dumps(build_snapshot(a), indent=1, allow_nan=False)
+    except privacy.SaltError as exc:
+        ap.error(f"--hash-salt-file: {exc}")
     if a.out:
         _write_snapshot(a.out, text)
         print(f"wrote {a.out} ({len(text)//4} est. tokens)")

@@ -8,7 +8,7 @@ The contract stabilizes the envelope: required sections, their container types, 
 source provenance and coverage statuses/counts. Family-specific analytical payloads remain
 extensible objects, not exhaustively typed records. The settings summary definition is applied to
 `global.settings` and `managed_settings.settings`; project settings and `instructions.settings_candidates`
-stay untyped objects, so their summary fields are not schema-checked. Validation establishes structure, not
+stay untyped objects, so their summary fields (`scope_ignored_keys` among them) are not schema-checked. Validation establishes structure, not
 factual correctness, redaction completeness or effective policy. The collector validates the
 serialized, sanitized snapshot before printing or writing it; invalid output is not published.
 
@@ -23,10 +23,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   Hook handler entries carry `server`, `tool` (mcp_tool) and `target_origin` (http) so masked
   targets stay identifiable. Contextual detection replaces a labelled literal secret with
   `[REDACTED:context]` in every mode. Additive within snapshot v1.
-- `coverage.privacy` also carries `hashed_paths: true` and `hashed_path_families` (family -> count
-  of hashed values and keys) when collected with `--hash-paths` (works with or without
-  `--metadata-only`); the keys are absent otherwise. Each run uses a new random salt that is never
-  stored.
+- `coverage.privacy` also carries `hashed_paths: true`, `hashed_path_families` (family -> count of
+  hashed values and keys) and `hash_salt` (`per_run` or `file`) when collected with `--hash-paths`
+  (works with or without `--metadata-only`); the keys are absent otherwise. The salt is never stored.
   Path-like kept strings become `h:<12 hex>`, the first 48 bits of HMAC-SHA256(salt, normalized value);
   `~/x` and `<home>/x` hash equal, so the same string gets the same tag everywhere in one snapshot (a
   relative value such as `src/app.py` hashes equal in every repo that has it) and
@@ -48,9 +47,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   |---|---|
   | `project_roots` | project root directories: projects/readiness keys, session and correction project paths, coverage.projects_collected, collection_scope.project, session and worktree roots |
   | `transcript_keys` | transcript directory keys (dash-encoded project paths): memory and per-project transcript maps |
-  | `config_files` | settings, instruction and managed config file paths, previous audit file names, the drift log path and the /insights report path |
-  | `plugin_paths` | plugin install roots, plugin component files and hook scripts that decide permissions |
-  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`) |
+  | `config_files` | settings, instruction, managed and MCP config file paths, previous audit file names, the drift log path and the /insights report path |
+  | `plugin_paths` | plugin install roots, plugin component files and declared mod modules (`mod.module`) |
+  | `referenced_files` | file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook scripts, additional directories, memory file names, rules and skill `paths:` frontmatter (hashed whole), SDK call-site file names, files that read undeclared env variables (`readiness.*.env.undeclared[*].files`), MCP executables |
   | `other_paths` | fail-closed counter: path-like kept strings and dict keys (whitespace-free, not a URL or `name/N` basis string) that no family above names, hashed after the families so a new field is hashed, not leaked |
   | `free_text_scrubbed` | counter: strings and dict keys in which a known home, config or project directory was replaced by its tag (full-mode free text such as hook commands) |
 
@@ -60,8 +59,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   whole file name, `a`/`b` one tag of the whole string, and `shared` (name-derived words) is emptied
   while `shared_count` keeps how many there were.
 
-  Consumers: tags join within one snapshot and never across audits (the compare-between-audits
-  check needs equal `projects_collected`, so it turns off with "Collected projects differ"). `prune_permissions.py
+  Consumers: tags join within one snapshot. Across audits they match only with the same
+  `--hash-salt-file` (the compare-between-audits check needs equal `projects_collected`, so a
+  per-run salt turns comparison off with "Collected projects differ"). `prune_permissions.py
   --snapshot` and project-scoped `ledger.py` refuse a hashed snapshot (they open or match real paths);
   `query_snapshot.py` prints a `hashed paths` line first. Additive within snapshot v1.
 - `ledger_signals` (only with `--ledger`): `status` `collected`/`invalid`, and per active non-metric entry
@@ -74,16 +74,17 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   pattern ids. Additive within snapshot v1. `global.plugin_session_start_hooks` entries gained
   `basis` (since 0.12.0: `using_skill_file_size_guess` when a `skills/using-*/SKILL.md` size is the guess, else `not_measured`
   with a null estimate; earlier snapshots say `file_size_estimate`).
-- `transcripts.tool_errors`: optional; names, counts, booleans and enums only; additive within
-  snapshot v1. 0.14.5 removed `extensions.mcp_servers`, per-project `mcp_servers`,
-  `transcripts.mcp_configured_but_unused` and its note, and the `configured` flag on
-  `mcp_failures.servers[]` (the audit no longer opens MCP config files); 0.14.6 removed the per-server count of
-  sessions that needed authentication. Fields removed in 0.14.0 are listed in the CHANGELOG: among them hook
-  `header_keys` and `allowed_env_vars`, `settings[].env_keys` (now `env_documented_set`), the
-  `envrc` names, and the contents of `settings[].sandbox.credentials` (0.14.0 kept a presence
-  boolean; 0.14.4 removed it).
-  `readiness[].env.env_files_not_read` lists existing mise, devcontainer and compose env files
-  (existence only, like `envrc_not_read`). The audit does not read credential-bearing files or values. Readers ignore the missing fields.
+- `extensions.plugins[].components[].mod` (hooks components of a plugin with `hooks.json`
+  `modules`): optional; `module` (declared relative path), `exists`, `bytes`, `events[]`, `calls[]`
+  (identifier-shaped names from a heuristic scan), `truncated`, and `reason` when unread.
+  `settings[].mods`: `prepend_plugins`, `append_plugins`, `guard_options_ignored` booleans;
+  `allow_managed_mods_only`, `allow_mods_override_deny_rules` and `prepend_names_guard`
+  true/false/null (null: unset, non-boolean or not a managed file). Guard options are read only from
+  `pluginConfigs["cc-plugin-sec-default@builtin"].options` in managed settings; no plugin ids are kept.
+  Additive within snapshot v1.
+- `extensions.mcp_servers[]` exposure fields, `extensions.mcp_project_state`,
+  `extensions.mcp_name_collisions` and `transcripts.tool_errors`: optional; names, counts,
+  booleans, enums and OAuth scope tokens only; additive within snapshot v1.
 - `transcripts.subagent_models` and `transcripts.request_params`: optional; observed, undocumented
   transcript shapes (Claude Code 2.1.310, 2026-10-25). `subagent_models.rows[]`: `agent_type`,
   `requested_model` (the meta `model`: usually the model Claude passed for the call, `inherit` for
@@ -113,8 +114,6 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     `static_scan`), `decision_file` (plugin-relative script, a hashed/masked path) and `scan_gap`
     (`script_unresolved`, `script_truncated`, `no_local_script`). The static scan is heuristic.
     Matches: `permissionDecision` allow/deny, top-level `decision` approve/block, exit code 2.
-  - A plugin hooks component whose file lists JS hook `modules` is `partial` with `reason:
-    js_modules_not_scanned`: the modules are not read (from 0.14.3); events beside them are.
   - Handler `issues` gains `timeout_suspect_ms` (`timeout` above 600; not for `async: true` or `SessionEnd`).
   - Drift's `injected_tokens` signal gains `unit: chars_text`; earlier entries lack it.
   - `harness_overhead.injected_context`: `output_cap_chars` (10000), per source `chars_max` and
@@ -134,11 +133,12 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   `sessions_with_deferred_records`, `used[]` (`tool`, `sessions`; 40 rows, `used_omitted`),
   `listed_never_called[]` (`tool`, `sessions_listed`; 40 rows, `listed_never_called_total`,
   `listed_never_called_omitted`), `basis`. `mcp_failures`: `sessions_observed`, `servers[]`
-  (`server`, `sessions_failed`, `sessions_pending`, `sessions_present`, `error_codes[]` of `code`, `sessions`), `servers_omitted`, `basis`. Names and counts
+  (`server`, `sessions_failed`, `sessions_pending`, `sessions_needs_auth`, `sessions_present`, `error_codes[]` of `code`, `sessions`, and
+  `configured`, an exact-name match to collected config names), `servers_omitted`, `basis`. Names and counts
   only; an `errorCode` outside `[A-Z][A-Z0-9_]{1,39}` becomes `other`, and the `error` text and any name that is
   not a short identifier-like string are never stored. Names stay in metadata-only mode.
-- `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC
-  dates and setting names only; never message text or plan tier; `~/.claude.json` is not opened:
+- `subscription` (0.13.0), optional and additive within snapshot v1. Kinds, counts, shares, UTC dates
+  and setting names only; never message text, plan tier or `~/.claude.json` data:
   - `limit_events`: per documented limit-message kind (`session`, `weekly`, `opus`, `sonnet`,
     `warning_85`, `auto_continue_wait`, `spend_limit`, `credits_required_1m`,
     `fable_consent_unanswered`; kinds with no event are omitted) `count`, `sessions` (distinct
@@ -178,10 +178,19 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
     (`permissions`, `permissions.allow`, `hooks`, `env`, ...); a managed file with any is `partial`
     with reason `invalid_entries`;
   - `permissions.rule_shape_issues`;
-  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler without
-    its `headers` and `allowedEnvVars`: neither names nor values enter it), and `on_failure`
+  - `scope_ignored_keys` (non-managed files, when non-empty): `{key, scope}` for each setting the file's
+    layer (user, project or local, from the file location) cannot set, matched at the nested path;
+    `scope` is `user_or_managed`, `managed`, `global_config`, `user_local_managed` or `user`. Table:
+    settings reference, fetched 2026-10-24. Static, names only; `null` values and keys absent from
+    the table are not reported;
+  - `ignored_env_keys` (same files, when non-empty): `{name, reason}` for each `env` name Claude Code
+    ignores there; `reason` is `project_local`, `every_file`, `telemetry_unless_off` or `ignored_if_1`
+    (env values are never collected, so the last two are conditional). Managed files get neither field;
+  - handler `fingerprint` (16 hex of SHA-256 over event, normalized matcher and the handler with
+    `headers` reduced to its sorted names: header values never enter it), and `on_failure`
     (`command`/`http`, a documented value only), `background` (a command hook with `async` or
-    `asyncRewake`), `issues`/`unknown_fields`/`plugin_relative` when present.
+    `asyncRewake`),
+    `issues`/`unknown_fields`/`plugin_relative` when present.
 
   Additive within snapshot v1.
 - `query_snapshot.py` validates v1 before querying. Unsupported explicit versions fail closed.

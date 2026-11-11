@@ -1,6 +1,7 @@
 """Privacy helpers: contextual secret detection (both modes) and metadata-only masking. Stdlib only."""
 import hmac
 import math
+import os
 import posixpath
 import re
 import secrets
@@ -99,6 +100,10 @@ def contextual_redact(text):
             out.append(text[pos:m.start('value')])
             pos = m.start('value')
     return ''.join(out) + text[pos:]
+
+
+def contextual_search(text):
+    return contextual_redact(text) != text
 
 
 MARKER_FORMAT = '[metadata-only: N chars]'
@@ -270,13 +275,15 @@ MCP_POLICY_KEEP = (  # collect.mcp_policy: names, or the string "invalid" in pla
     *(('mcp_policy', k, '*') for k in MCP_POLICY_LISTS),
     *(('mcp_policy', k, 'server_names', '*') for k in ('allowedMcpServers', 'deniedMcpServers')))
 HANDLER_KEEP = (('fingerprint',), ('event',), ('matcher',), ('type',), ('server',), ('tool',), ('target_origin',),
-                ('on_failure',), ('background',), ('decision_basis',), ('scan_gap',), ('issues', '*'), ('unknown_fields', '*'))
+                ('on_failure',), ('background',), ('decision_basis',), ('scan_gap',), ('header_keys', '*'), ('allowed_env_vars', '*'), ('issues', '*'), ('unknown_fields', '*'))
 SETTINGS_KEEP = (('path',), ('scope',), ('keys', '*'),
                  # plugin_markers: key paths from plugin_footprint.MARKERS; the rule names are masked (mask_settings)
-                 ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_documented_set', '*'), ('hooks', '*', '*'),
+                 ('plugin_markers', '*'), ('plugin_written_rules', '*', 'plugin'), ('plugin_written_rules', '*', 'list'), ('shape_issues', '*'), ('model',), ('env_keys', '*'), ('hooks', '*', '*'),
                  ('permissions', 'default_mode'), ('permissions', 'additional_dirs', '*'),
                  ('permissions', 'missing_additional_dirs', '*'), ('other', 'outputStyle'),
-                 ('other', 'autoUpdates')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
+                 ('other', 'autoUpdates'),  # scope_ignored_keys / ignored_env_keys: table vocabulary and env names (0.11.0)
+                 ('scope_ignored_keys', '*', 'key'), ('scope_ignored_keys', '*', 'scope'),
+                 ('ignored_env_keys', '*', 'name'), ('ignored_env_keys', '*', 'reason')) + tuple(('hook_handlers', '*') + h for h in HANDLER_KEEP)
 ENTRY_KEEP = tuple((k,) for k in ('source', 'scope', 'status', 'kind', 'relation', 'active_state',
                                   'reason', 'frontmatter_status', 'estimate_basis')) \
     + tuple(('frontmatter', k) for k in FRONTMATTER_KEEP)
@@ -293,8 +300,19 @@ CONFLICT_KEEP = (
     *(('config_conflicts', 'permission_overlaps', '*') + k for k in (('stack',), ('match',), ('by', 'list'),
                                                                       ('allow', 'layer'), ('allow', 'path'),
                                                                       ('by', 'layer'), ('by', 'path'))))
+MCP_ID_FIELDS = ('transport_class', 'endpoint_locality', 'file_git_status', 'tool_prefix', 'plugin')
+MCP_ID_LISTS = ('config_notes', 'url_variable_references', 'env_literal_keys', 'headers_literal_keys',
+                'oauth_keys', 'oauth_scopes')
 SWEEP_KEEP = (  # string fields added by plans 2A and 2B (classified 2026-09-30)
     *CONFLICT_KEEP,
+    *(('extensions', 'mcp_servers', '*', k) for k in MCP_ID_FIELDS),
+    *(('extensions', 'mcp_servers', '*', k, '*') for k in MCP_ID_LISTS),
+    *(('extensions', 'mcp_servers', '*', 'policy_observations', '*', k) for k in ('source', 'kind')),
+    *(('extensions', 'mcp_project_state', '*', k) for k in ('project', 'source')),
+    *(('extensions', 'mcp_project_state', '*', k, '*') for k in (
+          'enabledMcpServers', 'disabledMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers')),
+    ('extensions', 'mcp_name_collisions', '*', 'name'), ('extensions', 'mcp_name_collisions', '*', 'project'),
+    ('extensions', 'mcp_name_collisions', '*', 'scopes', '*'),
     ('transcripts', 'tool_errors', 'by_tool', '*', 'tool'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'server'),
     ('transcripts', 'tool_errors', 'by_mcp_server', '*', 'top_error_tools', '*', '*'))
@@ -326,8 +344,8 @@ SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, se
     *(('subscription', 'early_resets', '*', k) for k in ('window', 'at')))
 SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
-          *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'installed_plugins')),
-          *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'skills', 'agents',
+          *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
+          *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'mcp_servers', 'skills', 'agents',
                                                 'commands', 'hooks', 'git')),
           ('memory', 'by_project', '*', 'entries', '*', 'file'),
           *(('usage', k) for k in ('coverage_note', 'window_note', 'stats_scope_note', 'facets_scope_note',
@@ -337,13 +355,23 @@ SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effect
                                              'facet_friction')),
           *(('usage', s, '*', k) for s in ('heaviest_sessions', 'most_friction_sessions') for k in ('project', 'start')),
           ('corrections', 'by_project', '*', '*'), ('corrections', 'samples', '*', 'project'),
-          *(('transcripts', k) for k in ('coverage_note', 'window_note', 'quantile_method', 'mcp_count_note')),
+          *(('transcripts', k) for k in ('coverage_note', 'window_note', 'quantile_method', 'mcp_count_note',
+                                         'mcp_configured_but_unused_note')),
           *(('transcripts', k, '*', '*') for k in ('context_baseline_by_project_median', 'mcp_calls_by_server')),
+          ('transcripts', 'mcp_configured_but_unused', '*'),
           ('transcripts', 'tool_errors', 'categories_basis'), ('transcripts', 'tool_errors', 'scope_note'),
           ('instructions', 'limitations', '*'), ('extensions', 'limitations', '*'),
+          *(('extensions', 'mcp_servers', '*', k) for k in ('source', 'scope', 'status', 'name', 'project',
+                'active_state', 'representation', 'transport', 'executable', 'package_version_evidence',
+                'endpoint_origin', 'endpoint_detail', 'reason')),
+          *(('extensions', 'mcp_servers', '*', k, '*') for k in ('env_keys', 'headers_keys',
+                'env_variable_references', 'headers_variable_references', 'credential_mechanisms')),
           *(('extensions', 'plugins', '*', k) for k in ('name', 'scope', 'project', 'version', 'active_state',
                                                         'source', 'status', 'reason')),
           ('extensions', 'plugins', '*', 'manifest_keys', '*'),
+          # Mod API vocabulary (event and call names matching a strict identifier pattern); module path is masked.
+          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k) for k in ('reason',)),
+          *(('extensions', 'plugins', '*', 'components', '*', 'mod', k, '*') for k in ('events', 'calls')),
           ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'))
 KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + TOOL_USAGE_KEEP + SUBSCRIPTION_KEEP
     + SINGLE
@@ -361,11 +389,31 @@ KEPT_STRING_FIELDS = (SUBTREES + SWEEP_KEEP + SUBAGENT_KEEP + FOOTPRINT_KEEP + T
 # agent and MCP server names, and free text (hook commands, rule text), which --metadata-only masks and
 # which in full mode only has known home and project prefixes replaced (scrub_known_paths).
 TAG_RE = re.compile(r'h:[0-9a-f]{12}\Z')
+SALT_MIN_BYTES = 16
+SALT_READ_LIMIT = 1 << 20
 
 
-def new_salt():
-    """A fresh random salt for one run; it is never stored, so tags join within one snapshot only."""
-    return secrets.token_bytes(32)
+class SaltError(ValueError):
+    """The salt file is missing, unreadable, empty or too short."""
+
+
+def resolve_salt(path):
+    """(salt bytes, 'per_run' | 'file'). A salt file must already exist; this never creates one."""
+    if path is None:
+        return secrets.token_bytes(32), 'per_run'
+    path = os.path.abspath(os.path.expanduser(path))
+    try:
+        with open(path, 'rb') as f:
+            raw = f.read(SALT_READ_LIMIT)
+    except OSError as exc:
+        raise SaltError(f'cannot read salt file {path}: {exc.strerror or type(exc).__name__}; '
+                        'create it yourself (collect.py never writes it)') from None
+    salt = raw.strip()
+    if not salt:
+        raise SaltError(f'salt file {path} is empty')
+    if len(salt) < SALT_MIN_BYTES:
+        raise SaltError(f'salt file {path} holds fewer than {SALT_MIN_BYTES} bytes of salt')
+    return salt, 'file'
 
 
 class PathHasher:
@@ -396,7 +444,8 @@ _PROJECT_STRINGS = (
     ('usage', 'heaviest_sessions', '*', 'project'), ('usage', 'most_friction_sessions', '*', 'project'),
     ('usage', 'sessions_per_project', '*', '*'), ('corrections', 'by_project', '*', '*'),
     ('corrections', 'samples', '*', 'project'),
-    ('extensions', 'plugins', '*', 'project'),
+    ('extensions', 'mcp_servers', '*', 'project'), ('extensions', 'mcp_name_collisions', '*', 'project'),
+    ('extensions', 'mcp_project_state', '*', 'project'), ('extensions', 'plugins', '*', 'project'),
     *(('instructions', 'contexts', '*', k) for k in ('session_cwd', 'worktree_root', 'main_checkout')))
 _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed only when path-like
     *(p + ('path',) for p in _SETTINGS),
@@ -406,6 +455,8 @@ _FILE_SOURCES = (  # a file path, or fixed vocabulary such as `user`: hashed onl
     ('instructions', 'entries', '*', 'source'), ('instructions', 'sources', '*', 'source'),
     ('managed_settings', 'sources', '*', 'source'), ('extensions', 'sources', '*', 'source'),
     ('coverage', 'sources', '*', 'source'),
+    ('extensions', 'mcp_servers', '*', 'source'), ('extensions', 'mcp_project_state', '*', 'source'),
+    ('extensions', 'mcp_servers', '*', 'policy_observations', '*', 'source'),
     ('extensions', 'plugins', '*', 'enablement_observations', '*', 'source'),
     ('drift_signals', 'path'), ('usage', 'latest_insights_report'), ('previous_audits', '*'),
     ('subscription', 'extra_usage', 'settings', '*', 'path'), ('subscription', 'log', 'path'))
@@ -432,8 +483,9 @@ PATH_FAMILIES = {
                'drift log path and the /insights report path',
         'leaves': (), 'maybe': _FILE_SOURCES},
     'plugin_paths': {
-        'doc': 'plugin install roots, plugin component files and hook scripts that decide permissions',
-        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', 'decision_file'),), 'maybe': (('extensions', 'plugins', '*', 'source'),
+        'doc': 'plugin install roots, plugin component files, declared mod modules and hook scripts that decide permissions',
+        'leaves': (('extensions', 'plugins', '*', 'components', '*', 'mod', 'module'),
+                   ('extensions', 'plugins', '*', 'components', '*', 'handlers', '*', 'decision_file')), 'maybe': (('extensions', 'plugins', '*', 'source'),
                                 ('extensions', 'plugins', '*', 'components', '*', 'source'))},
     'referenced_files': {
         'doc': 'file and directory names taken from repos and configs: CLAUDE.md dead references, missing hook '
@@ -452,7 +504,7 @@ PATH_FAMILIES = {
                    ('memory', 'similar_across_projects', '*', 'b_file'),
                    ('readiness', '*', 'app_caching', 'uncached_files', '*'),
                    ('readiness', '*', 'app_caching', 'possible_cache_breakers', '*', '*')),
-        'maybe': ()},
+        'maybe': (('extensions', 'mcp_servers', '*', 'executable'),)},
 }
 
 # Counters that are not path patterns (recorded beside the families in hashed_path_families).

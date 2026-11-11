@@ -6,16 +6,17 @@ and don't report a check that passed unless it has been resolved since the last 
 the collector snapshot.
 
 In a metadata-only snapshot (`coverage.privacy.mode`), mark these checks as follows and add a
-caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed
-on `permissions.risky` flags), SEC-sandbox (keys
-and booleans only), SEC-hooks (type, matcher, origin, on_failure, background; no command or prompt),
+caveat. **Partial:** SEC-risky-allow (flags and counts, no rule text; this covers every check keyed on
+`permissions.risky` flags, including SEC-secret-literal and SEC-secret-env), SEC-sandbox (keys and
+booleans only), SEC-hooks (type, matcher, origin, header keys, on_failure, background; no command or prompt),
 COST-model-default (`model_settings` values masked), LRN-friction (categories, no details),
 LRN-corrections (counts, no themes), LRN-duplicate-memory (file names only), HYG-missing-hook-script
 (count only), and the rule-shape checks SEC-wildcard-placement, SEC-ineffective-deny and
 HYG-shadowed-allow (rule text masked; flags, layers, paths and match kinds remain), and
-HYG-plugin-footprint (plugin-written rule names masked; plugin names, counts, flags and enums
-remain). **Not checked:** SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity
-pilot. **Unaffected:** readiness, cost metrics and harness overhead.
+HYG-plugin-footprint (plugin-written rule names masked; plugin names, counts, flags and enums remain).
+**Not checked:**
+SEC-docs-only-constraint, LRN-contradiction, LRN-enforce and the clarity pilot. **Unaffected:**
+readiness, cost metrics and harness overhead.
 
 ## Security (`SEC-`)
 
@@ -67,6 +68,11 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   verified against the permissions docs: reads of `.env` files, `~/.ssh`, `~/.aws`, credential
   files and `/proc/*/environ`, and force-push. Anchor paths with `//` or `~/` so they apply in
   every project; a single leading `/` anchors at the settings file's location.
+- **SEC-secret-literal** (`secret-literal-in-rule`): a real token was baked into an allow rule
+  when a command was approved. Confirm on the file (never copy the value), then rotate, delete the
+  rule, and move the secret into env or a secrets manager.
+- **SEC-secret-env** (`secret-via-env-file`): the rule pulls a key out of `.env` onto the command
+  line, so it lands in transcripts. Lower severity. Fix: wrap the call in a script that reads env.
 - **SEC-settings-in-git** (`projects[].git`): a `settings.local.json` that is `tracked`, or
   `untracked` rather than `ignored`, can leak approvals when pushed. `not-a-git-repo` isn't a finding.
 - **SEC-auto-mode**: if `auto_mode_configured` is set, or sessions run unattended, raise the weight
@@ -107,24 +113,81 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
     (`background`, i.e. `async`/`asyncRewake`) or on `Stop`, `SubagentStop`, `TaskCompleted` and
     `TeammateIdle`; a `block` set there is `on_failure_no_effect` (HYG-hook-config).
   - `http`: a network egress point — every matching event's JSON is POSTed to that URL. Flag an
-    unfamiliar host, a matcher wide enough to send most tool calls, and whether the request may
-    carry a credential. The audit does not read the handler's `headers` or `allowedEnvVars`, so
-    it cannot say; ask the user to review those in the settings file.
+    unfamiliar host, a matcher wide enough to send most tool calls, and whether `header_keys` /
+    `allowed_env_vars` on the handler (names only, never values) suggest a secret is being
+    interpolated into the request.
   - `prompt` / `agent`: another LLM trust boundary. The hook's own `prompt` text is untrusted-in
     reverse — it's instructions the *hook* sends to a model, so treat a hook prompt built from
     unsanitized tool input the same way `SEC-risky-allow` treats an unsafe command: something that
     can be steered by whatever text it's fed.
-  - `mcp_tool`: only as trustworthy as the target server; cross-reference `SEC-mcp-review`.
+  - `mcp_tool`: only as trustworthy as the target server; cross-reference `SEC-mcp`.
 
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
-- **SEC-mcp-review** (no evidence; the audit does not read MCP config files): the collector opens
-  no project `.mcp.json`, managed MCP file or plugin MCP definition and never runs `claude mcp list`,
-  so it can't name or rate any server. Tell the user to run `claude mcp list` themselves and to
-  review each project `.mcp.json` for servers they don't recognise, unpinned `@latest` packages,
-  remote servers over plain HTTP and servers with write access to external systems (docs page `mcp`).
-  `settings[].mcp_policy` and permission-rule observations from settings files remain available
-  for context.
+- **SEC-mods** (`extensions.plugins[].components[].mod`, `settings[].mods`; mods overview "What a
+  mod can reach", mods-admin "Review what a mod can do", fetched 2026-10-25): a mod is a plugin
+  whose `hooks/hooks.json` has `modules`. Its module runs unsandboxed with the user's permissions,
+  so weigh `mod.calls` and `mod.events` (names from a heuristic text scan, never executed):
+  - calls: `fs.read` / `fs.write` (files), `process.run` / `process.spawn` (commands),
+    `http.fetch` (network egress), `env.get` / `env.set` (environment, possible secrets),
+    `settings.read`, `mcp.call`, `model.complete` (spends tokens), `prompt.submit` and
+    `session.send` (acts as the user). A `process.*` or `http.fetch` call next to `fs.read` or
+    `env.get` is the exfiltration shape; a read-only status panel is not.
+  - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call, past
+    `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
+    `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
+    the collected files are then not the effective settings, see coverage).
+  - Guard options (mods-admin "Set options on the built-in guard", fetched 2026-10-25) are read
+    only at `pluginConfigs["cc-plugin-sec-default@builtin"].options` and only from managed settings;
+    `settings[].mods` records them as `true`/`false`/null (unset or non-boolean) for managed files only.
+    - `allow_managed_mods_only` true stops user-installed mods from loading. When it is not true,
+      mention that once per audit, and only when a mod is installed or managed settings exist.
+    - `allow_mods_override_deny_rules` true in managed settings is a finding: a user's mod that
+      approves tool calls can approve a call a `deny` rule refuses, so deny rules no longer bind mods.
+    - `prepend_names_guard` false (a managed `prependPlugins` list without `sec-default@builtin` or
+      `cc-plugin-sec-default@builtin`): the guard does not load, so neither option applies.
+    - `guard_options_ignored` true (HYG note, not protection): a user, project or local file carries the
+      guard entry, which neither sets nor loosens an option. Its value is deliberately not recorded.
+    - `prepend_plugins` / `append_plugins` change plugin load order; report presence only.
+  - The scan is heuristic: names can include extras from comments or strings, member calls such as
+    `child.on(...)` are skipped but indirect or dynamic use is missed, and a mod with `reason`
+    (`outside_plugin_root`, `not_regular_file`, `absent`, `unsupported_extension`,
+    `unreadable`, `invalid_modules`) was not read, and `mod.truncated` means a cap cut the scan. For the authoritative list tell the user to run
+    `claude plugin validate <dir>` themselves; collection never runs it.
+- **SEC-mcp**: unknown servers, servers with write access to external systems, and unpinned
+  `@latest` packages. See `SEC-mcp-exposure` for per-server exposure fields.
+- **SEC-mcp-exposure** (`extensions.mcp_servers[]` exposure fields, `policy_observations`,
+  `settings[].mcp_policy`; static, never connected, no values stored). Weigh, citing field and
+  source:
+  - `headers_literal_keys` / `env_literal_keys` on a `project` server whose `file_git_status` is
+    `tracked`: a committed credential is likely. Confirm on the file (never copy the value), then
+    propose moving the value out of `.mcp.json`: reference an environment variable (`${VAR}` in
+    `headers`/`env`) or use `headersHelper`, and rotate the credential if it was committed. This
+    is MCP-specific; `SEC-secret-literal` covers tokens in allow rules, not this.
+  - `url_has_userinfo` or `url_has_query` on a remote server: a credential may sit in the URL.
+    Prefer headers with `${VAR}` references. Credential variables such as `ANTHROPIC_API_KEY` in a
+    remote `url`/`headers` read as empty (mcp.md), so `url_variable_references` naming one means a
+    broken server, not a leak.
+  - `plaintext_transport`: tokens and tool traffic in cleartext to a non-loopback host.
+    Recommendation-level; the docs do not rate it.
+  - A `project` server with a `policy_observations` kind `approval_enable_all` or
+    `approval_enabled`: any server a teammate adds to `.mcp.json` loads. In `claude -p`, SDK and
+    cloud sessions, project servers load without asking (mcp.md). Propose
+    `disabledMcpjsonServers` for unwanted ones. Committed approvals are ignored in an untrusted
+    folder, so cite `project_trust_accepted`.
+  - `credential_mechanisms` containing `headersHelper_configured` on a `project` server: a
+    repo-supplied shell command that runs once the folder is trusted ("arbitrary shell command",
+    mcp.md).
+  - `permission_allow` (or `permission_allow_any_server`) observations on a server that writes to
+    external systems: calls run without a prompt. `mcp__*` in allow is skipped by Claude Code;
+    rule validity is reported by the permission-rule checks, not here.
+  - Allowlist posture, once per audit and only in an organization context: `allowedMcpServers`
+    without `allowManagedMcpServersOnly` merges user allowlists, and a `serverName` entry "is not
+    a security control" (managed-mcp.md). `serverUrl`/`serverCommand` entries are not evaluated
+    here, so never claim a server is unrestricted without checking them.
+  - `oauth_scopes: null` on a sensitive remote service: suggest pinning `oauth.scopes`, the
+    documented way to restrict a server.
+  Cross-check reliability through `tool_prefix` = `transcripts.tool_errors.by_mcp_server[].server`.
 - **SEC-install**: a failed auto-update (`global.last_update`), or a version far behind the changelog.
   Version/doctor probes are not run during collection. Assess version lag only with an
   already-supplied version observation; unavailable diagnostics are not installation failures.
@@ -160,22 +223,19 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   context. Apply only with the split protocol in SKILL.md.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
-- **COST-mcp-unused** (`transcripts.mcp_calls_by_server`, bounded observation): the collector knows
-  no configured MCP server (it reads no MCP config), so it lists only servers with observed calls.
-  Ask the user to compare that list with `claude mcp list` (they run it themselves); servers in their
-  list but absent here have no observed calls in the scanned records. Check transcript coverage
-  before drawing conclusions. Empty global-scope transcript scans
-  provide no usage evidence. Propose removal only with additional evidence that the server is
-  unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools. Per-tool
-  evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
+- **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these
+  legacy user/project names have no observed calls in the scanned records. Check transcript
+  coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
+  transcript scans provide no usage evidence. Propose removal only with additional evidence that
+  the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
+  Per-tool evidence (`transcripts.tool_usage`, observed, undocumented records, plugin-spawned sessions
   excluded): `used[]` counts sessions per tool name, `listed_never_called[]` names deferred tools
   listed in some session and never called in the window (with how many sessions listed each). State
-  the cost honestly: a deferred tool costs about one listing line until it is used (observed:
-  `addedLines`, one per tool; not a documented figure), so pruning never-called tools saves little;
-  the evidence supports a note, rarely a removal. Always-loaded built-in tools are not listed in
-  transcripts, so their non-use is not observable, and this audit proposes no deny rules for
-  built-in tools from usage. Read `sessions_with_deferred_records` before concluding anything: zero
-  means no listing evidence, not zero use.
+  the cost honestly: a deferred tool costs about one listing line until it is used (observed: `addedLines`, one per tool; not a documented figure), so pruning
+  never-called tools saves little; the evidence supports a note, rarely a removal. Always-loaded
+  built-in tools are not listed in transcripts, so their non-use is not observable, and this audit
+  proposes no deny rules for built-in tools from usage. Read `sessions_with_deferred_records`
+  before concluding anything: zero means no listing evidence, not zero use.
 - **COST-skill-listing** (`skill_listing`, excerpt-size observation): verify runtime activation,
   `skillListingBudgetFraction` and `skillListingMaxDescChars` against current settings and docs
   before claiming listing overflow. Collected excerpts do not establish the effective budget or
@@ -229,7 +289,7 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   share of spend. Name how many subagent tokens ran on a top-tier model (`rows[].actual_model`) and
   why, from `requested_model` (the sibling meta file's `model` value):
   - A model name (e.g. `opus`): Claude passed it for that call. The per-invocation parameter outranks
-    the other model settings. Fix: CLAUDE.md guidance on when to pass `model`, or
+    everything except a mod's `agent.spawn` hook. Fix: CLAUDE.md guidance on when to pass `model`, or
     `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` together with `CLAUDE_CODE_SUBAGENT_MODEL` set to the wanted
     model (FORCE alone runs subagents on the main model), which makes Claude unable to pass one.
   - `inherit`, usually `agent_type: fork`: a fork, which runs on the main model. It is not a per-call
@@ -252,9 +312,8 @@ pilot. **Unaffected:** readiness, cost metrics and harness overhead.
   (permission prompts refused, rules denying, or the permission system answering: category `permission_gate`) from failures; `failure_rate` already excludes
   them and is `null` under `min_calls_for_rate` calls.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
-    fix the server's configuration (the user can run `claude mcp get <name>` themselves; Claude never
-    runs it), or
-    propose removal after the user reviews it (`SEC-mcp-review`). The thresholds are a
+    fix authentication or configuration (`claude mcp get <name>` shows an `Issue:` line), or
+    propose removal together with its `SEC-mcp-exposure` fields. The thresholds are a
     recommendation.
   - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.
   - `nonzero_exit` clusters: missing run or test commands (`RDY-test-loop`, CLAUDE.md).
@@ -414,6 +473,41 @@ metric that motivated it, so the next run can check whether it moved.
   so ask the user to check `/status` or `claude doctor`. High severity when the key is
   `permissions` or `hooks`, since the skipped part can be a deny rule or guard hook; managed files
   keep enforcing the rest (`coverage` reason `invalid_entries`).
+- **HYG-scope-ignored** (`settings[].scope_ignored_keys`, `settings[].ignored_env_keys`, static,
+  names only): a setting or `env` variable in a file where Claude Code ignores it, so it does
+  nothing there. Say so as an ineffective setting, not a security finding, and propose moving it to
+  the file that works (or removing it). Which file works comes from the key's documented scope
+  (settings reference, key table "Scope" column and each key's **Scope** line, fetched 2026-10-24):
+  - `user_or_managed` is honoured in user and managed settings only, so a project or local file
+    ignores it (`axScreenReader`, `autoMode`, `modelPicker`, `skipAutoPermissionPrompt`,
+    `forceLoginGatewayUrl`, `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
+    `sandbox.network.strictAllowlist`, ...). `user` (`worktree.location`) is user-only.
+  - `managed` is honoured in managed settings only (the page: "Claude Code ignores the key in user,
+    project, and local settings"), so even a user file ignores it. Either an admin deploys it or
+    the line is dead.
+  - `global_config` keys (`claudeInChromeDefaultEnabled`, `autoConnectIde`, ...) live in
+    `~/.claude.json`; every settings file ignores them.
+  - `user_local_managed` (`syncClaudeAiSkills`, `syncClaudeAiPlugins`, `useAutoModeDuringPlan`,
+    `skipDangerousModePermissionPrompt`) is ignored in the shared project `.claude/settings.json`
+    only, so the personal `settings.local.json` is the right place.
+  - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
+    "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
+    process wrapper and sync variables, the telemetry exporter group from Claude Code 2.1.282, the
+    dialog timer and `CLAUDE_CODE_DISABLE_ATTACHMENTS` from 2.1.290); `every_file` = ignored from every
+    settings file, user included (hosting-environment identity variables, `CLAUDE_CODE_RESTRICTED`, ...);
+    `telemetry_unless_off` = the exporter selectors and `OTEL_LOG_USER_PROMPTS`/`_TOOL_CONTENT`/`_TOOL_DETAILS`:
+    ignored in project and local settings unless the value turns telemetry off (`none`, `0`). Values
+    aren't collected, so say "ignored unless it turns telemetry off", never that it was definitely
+    dropped; `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` or `OTEL_LOG_MANAGED_SETTINGS` set to `1` is ignored there (env-vars page,
+    fetched 2026-10-24), other values apply. Claude Code logs the dropped ones in `claude --debug`
+    and lists them in `/status` or `claude doctor`; a `-p` run shows no notice.
+  - Managed files are never flagged. A key missing from the table isn't judged. Unmeasured: whether
+    `--settings` or the launch environment also sets the value.
+  - SEC note: a repository file (project or local) that sets telemetry exporters or
+    `OTEL_LOG_RAW_API_BODIES` is an attempt to export session content from whoever opens it. Claude
+    Code drops these (exporters from 2.1.282, the raw-body and beta-tracing variables from 2.1.251), so the
+    setting is harmless on current versions; still tell the user who added it, and check which
+    version ran if it is older.
 - **HYG-missing-hook-script** (`missing_hook_scripts`): a hook points at a file that doesn't exist.
   High severity for PreToolUse, because it can block every call.
 - **HYG-dead-refs** (`claude_md_dead_refs`): CLAUDE.md names paths that don't exist. Before reporting,
@@ -425,8 +519,8 @@ metric that motivated it, so the next run can check whether it moved.
   another machine or user.
 - **HYG-worktrees** (`is_worktree_copy`): many stale worktree copies of CLAUDE.md.
 - **HYG-hook-duplicates** (`config_conflicts.hook_duplicates`, static): the same handler (event,
-  matcher, whole handler object without its `headers` and `allowedEnvVars`, so two hooks differing
-  only there group together; `fingerprint` joins to `hook_handlers[].fingerprint` for the
+  matcher, whole handler object with http `headers` reduced to names, so two hooks differing only
+  in a header value group together; `fingerprint` joins to `hook_handlers[].fingerprint` for the
   redacted command) in several places of one stack. Per the hooks docs (fetched 2026-09-30), the
   same handler in more than one settings file runs once (`effect: deduplicated`: clutter, low); a
   plugin's copy stays separate (`separate_copies`: it runs twice, double cost and side effects,
@@ -516,14 +610,19 @@ metric that motivated it, so the next run can check whether it moved.
     baseline, so do not treat their absence there as clean. Plugins that spawn sessions without a
     trace in the files the collector reads (remember's nested summarizer, autoharness forks) are
     not attributed.
-- **HYG-mcp-config** (`transcripts.mcp_failures`, observed, undocumented): connection
-  failures per server name: `sessions_failed` and `sessions_pending` of `sessions_observed`,
-  `error_codes[]` as session counts (error text is never stored). A server failing in many sessions
-  (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones) is a
-  configuration or availability problem to fix or remove: an endpoint that does not exist
-  (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after the user checks
-  scope and activation with `claude mcp list`; a pending server may only be slow to start. Plugin and
-  connector servers use their own names, so a name absent from the user's list is not proof of absence.
+- **HYG-mcp-config** (`config_notes`, `extensions.mcp_name_collisions`): `url_without_type`
+  (Claude Code skips the server; add `"type": "http"`), `sdk_type_skipped`, `reserved_name`
+  (skipped at load), `sse_deprecated` (switch to `http`), and the same name in several scopes with
+  `endpoint_origins_differ: true` (OAuth sign-ins are stored per endpoint, so sign-in state differs
+  between projects). `empty_url_placeholder` is a documented placeholder, not a finding.
+  Connection failures (`transcripts.mcp_failures`, observed, undocumented): per server name,
+  `sessions_failed` and `sessions_pending` of `sessions_observed`, `error_codes[]` as session counts
+  (error text is never stored) and `configured` (exact name match to a collected config name;
+  plugin and connector servers use other names, so `false` is not proof of absence). A server failing
+  in many sessions (the drift signal `mcp_failures`, at least 3 sessions and half the observed ones)
+  is a configuration or availability problem to fix or remove: an endpoint that does not exist
+  (`ENDPOINT_NOT_FOUND`) or a stale plugin server. Propose a fix or removal only after checking
+  scope and activation in `extensions.mcp_servers`; a pending server may only be slow to start.
 
 ## Agent readiness (`RDY-`, opt-in via `focus=readiness`)
 
@@ -542,21 +641,18 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   no version pins, combined with `environment_issue` friction or repeated install failures. Fix: a
   `make setup` / `just setup` / `dev` script, plus pins in the repo's existing style.
 - **RDY-env-undeclared** (`env.undeclared`): the code reads variables that no mechanism declares.
-  Only mechanisms the audit reads count: `.env.example` and its template variants, pydantic
-  settings. It never opens `.envrc`, mise `[env]`, devcontainer `containerEnv`/`remoteEnv` or compose
-  `environment` (they may hold literal values), so when `env.envrc_not_read` is true or
-  `env.env_files_not_read` lists files, a variable listed as undeclared **may be declared in
-  `.envrc` or in one of those files (not read)**: name them, say so and ask the user, never claim
-  it is undeclared. Propose a declaration in the
-  mechanism the repo already uses; suggest `.env.example` only when there is none. Lead with `kind:
-  required` (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only`
-  only as counts (`undeclared_counts`).
+  Any mechanism counts: `.env.example`, a pointer-only `.envrc` (direnv + pass/1Password/sops),
+  mise `[env]`, devcontainer, compose, pydantic settings. Propose a declaration in the mechanism the
+  repo already uses; suggest `.env.example` only when there is none. Lead with `kind: required`
+  (crashes when missing), then `read`. Mention `optional` (has a fallback) and `test-only` only as
+  counts (`undeclared_counts`).
 - **RDY-env-failfast** (`env.validation` empty, several required reads): suggest validation in the
   stack's idiom (pydantic-settings, zod/t3-env, envalid). Parked for small scripts.
-- **RDY-env-invisible-to-claude** (`envrc.present` and `claude_env_hook` false, especially with
+- **RDY-envrc-literal-secret** (`envrc.literal_secret_names`, counted under security): a `.envrc`
+  holds values rather than pointers. Worse if `envrc.git` is `tracked`. Report names only.
+- **RDY-env-invisible-to-claude** (`envrc` present and `claude_env_hook` false, especially with
   `env_error_hits` > 0): direnv loads at an interactive prompt, which Claude's Bash tool never
-  shows, so variables that work in the user's terminal are missing for Claude. This rests on the
-  file's presence, not its contents. Offer these
+  shows, so variables that work in the user's terminal are missing for Claude. Offer these
   options, stating the trade-off:
   1. *Non-secret* variables: a `SessionStart` + `CwdChanged` hook that writes `export` lines to
      `CLAUDE_ENV_FILE` (see the hooks docs), filtered to an allowlist of non-secret names.
@@ -566,9 +662,11 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   3. Export everything through the hook: zero friction, but every key is visible to every command
      Claude runs and can end up in transcripts.
 
-  With the sandbox on, also point to credential masking ("Protect credentials" / "Mask
-  credentials" in the sandboxing docs) before proposing option 3. The audit does not check whether
-  it is set up and never writes it; the user configures it by hand.
+  With the sandbox on, also check `sandbox.credentials` (`envVars` deny/mask; see "Protect
+  credentials" / "Mask credentials" in the sandboxing docs) before proposing option 3.
+- **RDY-env-secret-backend** (pointers resolve empty inside Claude's shell, e.g. the gpg or
+  1Password agent is unreachable from the sandbox): check only with the user's OK. Probe variable
+  names, never values, and tell the user rather than working around the sandbox.
 - **RDY-format-guardrails** (`precommit`, `formatter_config`): a formatter is configured but not
   enforced. Evidence: edit rounds that only change formatting. Propose both a git pre-commit
   hook (humans) and a Claude PostToolUse format-on-edit hook (agent), in the repo's existing tool.
