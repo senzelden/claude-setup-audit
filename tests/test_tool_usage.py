@@ -5,6 +5,7 @@ import io
 import json
 import os
 import time
+from unittest import mock
 
 from test_collect import FakeHome, collect
 from test_plugin_footprint import observer_key
@@ -168,6 +169,30 @@ class Failures(Base):
         snap = collect.build_snapshot(args())
         rows = {r["server"]: r for r in snap["transcripts"]["mcp_failures"]["servers"]}
         self.assertEqual((rows["github"]["configured"], rows["ghost"]["configured"]), (True, False))
+
+    def test_unused_covers_local_managed_and_plugin_servers(self):
+        # Ported from 0.14.0 (eab498a): servers outside ~/.claude.json and .mcp.json names count too.
+        root = os.path.join(self.home, "repo")
+        self.write(".claude.json", {"projects": {root: {"mcpServers": {"localsrv": {"command": "x"}}}}})
+        self.write("repo/.mcp.json", {"mcpServers": {"projsrv": {"command": "x"}}})
+        self.write("managed/managed-mcp.json", {"mcpServers": {"orgsrv": {"command": "x"}}})
+        plugin_root = os.path.join(self.claude, "plugins/cache/m/demo/1")
+        self.write(".claude/plugins/installed_plugins.json", {"plugins": {
+            "demo@m": [{"scope": "user", "installPath": plugin_root}]}})
+        self.write(".claude/plugins/cache/m/demo/1/.claude-plugin/plugin.json",
+                   {"name": "demo", "mcpServers": {"inl": {"command": "x"}}})
+        self.put("-a", "s1", [calls("mcp__usedsrv__q", "mcp__projsrv__q")])
+        managed = os.path.join(self.home, "managed")
+        with mock.patch.object(collect, "managed_directory", return_value=managed):
+            snap = collect.build_snapshot(args(roots=[root]))
+            self.assertEqual(snap["transcripts"]["mcp_configured_but_unused"], ["localsrv", "orgsrv", "plugin_demo_inl"])
+            self.put("-a", "s1", [calls("mcp__orgsrv__q", "mcp__plugin_demo_inl__q", "mcp__projsrv__q",
+                                        "mcp__localsrv__q")])
+            snap = collect.build_snapshot(args(roots=[root]))
+        self.assertEqual(snap["transcripts"]["mcp_configured_but_unused"], [])
+        note = snap["transcripts"]["mcp_configured_but_unused_note"]
+        for word in ("managed", "plugins", "local"):
+            self.assertIn(word, note)
 
 
 class Privacy(Base):

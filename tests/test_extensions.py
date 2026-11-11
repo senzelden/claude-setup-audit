@@ -87,3 +87,35 @@ class ExtensionInventory(FakeHome):
         skills = [c for c in plugin['components'] if c['kind'] == 'skills']
         self.assertEqual([os.path.basename(c['source']) for c in skills], ['SKILL.md'])
         self.assertEqual(len([c for c in plugin['components'] if c['kind'] == 'agents']), 1)
+
+
+class HooksFileShapes(FakeHome):
+    """Ported from 0.14.3 (d5719bc, 8b7b27a): events beside `modules` are read, and only a module the
+    scanner could not read makes the component partial."""
+
+    def add(self, data, root=None):
+        plugin = {'components': []}
+        extensions.add_hooks(plugin, data, os.path.join(root or self.home, 'hooks', 'hooks.json'),
+                             lambda ev, m, h: {'event': ev}, root)
+        return plugin['components'][0]
+
+    def test_events_beside_modules_are_still_read(self):
+        root = os.path.join(self.home, 'plug')
+        self.write('plug/hooks/mod.js', "on('Stop', () => {})\n")
+        c = self.add({'modules': ['mod.js'], 'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}, root)
+        self.assertEqual([h['event'] for h in c['handlers']], ['Stop'])
+        self.assertEqual((c['status'], c['mod']['exists']), ('collected', True))
+        self.assertNotIn('reason', c)
+
+    def test_an_unreadable_module_is_partial_not_empty(self):
+        root = os.path.join(self.home, 'plug')
+        for modules in (['absent.js'], ['mod.py'], [7]):
+            c = self.add({'modules': modules}, root)
+            self.assertEqual((c['status'], c['reason'], c['handlers']), ('partial', 'js_modules_not_scanned', []),
+                             modules)
+        c = self.add({'modules': ['mod.js']})  # no plugin root: nothing can be scanned
+        self.assertEqual((c['status'], c['reason']), ('partial', 'js_modules_not_scanned'))
+
+    def test_an_event_table_without_a_hooks_key_is_still_read(self):
+        c = self.add({'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]})
+        self.assertEqual((c['status'], [h['event'] for h in c['handlers']]), ('collected', ['Stop']))

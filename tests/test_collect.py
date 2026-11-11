@@ -90,6 +90,18 @@ class RiskClassification(unittest.TestCase):
         self.assertIn("secret-literal-in-rule",
                       flags("Bash(curl -H 'Bearer opaqueTokenWithNoLabelAtAll1234567' x)"))
 
+    def test_flagged_rule_text_is_redacted(self):
+        # Ported from 0.14.7: rule text listed under any flag passes through redaction.
+        for secret in ("Authorization: Bearer sk-abcdefghijklmnopqrstuv",
+                       "Authorization: Bearer opaqueTokenNoRecognizablePrefix1234",
+                       "Bearer opaqueTokenWithNoLabelAtAll1234567"):
+            listed = collect.analyze_permissions({"allow": [f"Bash(sudo curl -H '{secret}' x)"]})["risky"]["sudo"]
+            self.assertNotIn(secret.split()[-1], listed[0])
+        listed = collect.analyze_permissions(
+            {"allow": ["Bash(sudo env AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY aws s3 ls)"]})
+        self.assertNotIn("wJalrXUtnFEMI", listed["risky"]["sudo"][0])
+        self.assertNotIn("wJalrXUtnFEMI", json.dumps(listed))
+
     def test_redaction_hides_values(self):
         out = collect.redact("api_key=sk-THISISASECRETVALUE123456")
         self.assertNotIn("THISISASECRETVALUE", out)
@@ -555,6 +567,14 @@ class EnvContract(FakeHome):
         c = collect.env_contract(os.path.join(self.home, "repo"))
         self.assertEqual(c["undeclared"], [])
         self.assertEqual(c["validation"], ["pydantic-settings", "zod"])
+
+    def test_compose_glob_treats_the_root_literally(self):
+        # Ported from 0.14.0: a root whose name holds glob characters still finds its compose file.
+        self.write("re[po]/docker-compose.yml", "services:\n  a:\n    environment:\n      - FEATURE_Z=x\n")
+        self.write("re[po]/src/app.py", "import os\nz = os.environ['FEATURE_Z']\n")
+        c = collect.env_contract(os.path.join(self.home, "re[po]"))
+        self.assertEqual(c["declared_via"], ["docker-compose.yml"])
+        self.assertEqual(c["undeclared"], [])
 
     def test_envrc_literal_secret_reports_names_only(self):
         self.write("repo/.envrc", "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstu\nexport HF_TOKEN=$(pass show api/hf)\n")

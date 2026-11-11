@@ -280,6 +280,23 @@ class SnapshotContract(FakeHome):
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
 
+    def test_a_014_snapshot_without_restored_fields_still_validates(self):
+        # 0.14.x wrote snapshot v1 without the MCP inventory, env names and scope/mod fields; 0.15.0
+        # restores them as additive optional fields, so those snapshots stay readable as v1.
+        snap = self.snapshot()
+        for key in ('mcp_servers', 'mcp_project_state', 'mcp_name_collisions'):
+            snap['extensions'].pop(key, None)
+        snap['global'].pop('mcp_user', None)
+        for s in snap['global']['settings']:
+            for key in ('env_keys', 'scope_ignored_keys', 'ignored_env_keys', 'mods'):
+                s.pop(key, None)
+        for key in ('mcp_configured_but_unused', 'mcp_configured_but_unused_note'):
+            snap['transcripts'].pop(key, None)
+        for row in snap['transcripts']['mcp_failures']['servers']:
+            row.pop('configured', None)
+            row.pop('sessions_needs_auth', None)
+        self.assertEqual(contract.validate_snapshot(snap), 'v1')
+
     def test_mcp_exposure_and_tool_errors_are_checked(self):
         snap = self.snapshot()
         snap["extensions"]["mcp_servers"] = [{

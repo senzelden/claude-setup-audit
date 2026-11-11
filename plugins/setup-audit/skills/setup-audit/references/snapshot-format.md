@@ -77,6 +77,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
 - `extensions.plugins[].components[].mod` (hooks components of a plugin with `hooks.json`
   `modules`): optional; `module` (declared relative path), `exists`, `bytes`, `events[]`, `calls[]`
   (identifier-shaped names from a heuristic scan), `truncated`, and `reason` when unread.
+  When the module could not be scanned (any `mod.reason`, or no plugin root), the hooks component
+  itself is `partial` with `reason: js_modules_not_scanned`; events listed beside `modules` are
+  still read (from 0.15.0).
   `settings[].mods`: `prepend_plugins`, `append_plugins`, `guard_options_ignored` booleans;
   `allow_managed_mods_only`, `allow_mods_override_deny_rules` and `prepend_names_guard`
   true/false/null (null: unset, non-boolean or not a managed file). Guard options are read only from

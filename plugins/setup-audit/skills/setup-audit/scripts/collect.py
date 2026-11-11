@@ -445,7 +445,8 @@ def hook_handler_entry(event, matcher, x):
         entry["issues"] = issues
     if unknown:
         entry["unknown_fields"] = unknown
-    if "CLAUDE_PLUGIN_" in json.dumps(x, default=str):
+    # The names-only view: a header value never decides plugin_relative (ported from 0.14.0).
+    if "CLAUDE_PLUGIN_" in json.dumps(config_names.hook_handler_view(x), default=str):
         entry["plugin_relative"] = True
     return entry
 
@@ -1757,7 +1758,7 @@ def env_declarations(root):
         for block in re.findall(r"\"(?:containerEnv|remoteEnv)\"\s*:\s*\{([^}]*)\}", _read(root, name)):
             declared |= set(re.findall(r"\"([A-Z][A-Z0-9_]*)\"\s*:", block))
             sources.append(name)
-    for path in glob.glob(os.path.join(root, "*compose*.y*ml")):
+    for path in glob.glob(os.path.join(glob.escape(root), "*compose*.y*ml")):
         text = _read(root, os.path.basename(path))
         found = set(re.findall(r"^\s*-\s*([A-Z][A-Z0-9_]*)=", text, re.M)) | set(re.findall(r"^\s+([A-Z][A-Z0-9_]*):\s*\$\{", text, re.M))
         if found:
@@ -2465,12 +2466,16 @@ def build_snapshot(a):
     configured = set(snap["global"].get("mcp_user") or [])
     for entry in snap["projects"].values():
         configured |= set(entry.get("mcp_servers") or [])
+    # Local, managed and plugin servers, under the label tool calls carry (mcp__<label>__tool).
+    configured |= {row["tool_prefix"] for row in snap["extensions"]["mcp_servers"]
+                   if row.get("status") == "collected" and row.get("scope") in ("local", "managed", "plugin")
+                   and row.get("tool_prefix")}
     used = {name for name, _ in snap["transcripts"]["mcp_calls_by_server"]}
     snap["transcripts"]["mcp_configured_but_unused"] = sorted(configured - used)
     for row in snap["transcripts"]["mcp_failures"]["servers"]:
         row["configured"] = row["server"] in configured
     snap["transcripts"]["mcp_configured_but_unused_note"] = (
-        "Legacy user/project candidate names without observed calls; check scope, scan coverage and extension activation. "
+        "Configured server names without observed calls: user servers (~/.claude.json), project .mcp.json files, local-scope servers of the scanned roots, managed MCP and installed plugins (plugin servers by tool-call label). Check scope, scan coverage and extension activation. "
         "No calls alone do not justify removal; an empty global-scope scan supplies no usage evidence.")
     # Mask after every derived join (claude_env_hook reads hook_commands) and before sanitize().
     replaced = privacy.mask_snapshot(snap) if metadata_only else {}

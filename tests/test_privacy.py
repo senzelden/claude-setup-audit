@@ -563,6 +563,17 @@ class FailClosed(PatchedHome):
                 self.assertNotIn('zcalone', json.dumps(meta))
                 self.assertGreaterEqual(meta['coverage']['privacy']['replaced_fields'].get('unclassified', 0), 1)
 
+    def test_planted_hook_header_values_reach_neither_snapshot(self):
+        # Ported from 0.14.0 (eab498a): header names and allowedEnvVars names may appear, values never.
+        self.write('.claude/settings.json', {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'http', 'url': 'https://h.example.com/x', 'allowedEnvVars': ['ZC_PLANTED_ENV'],
+             'headers': {'X-Planted': 'zcplantedheader', 'X-Plugin': 'Bearer ${CLAUDE_PLUGIN_TOKEN}'}}]}]}})
+        for metadata_only in (False, True):
+            text = json.dumps(collect.build_snapshot(args(metadata_only=metadata_only)))
+            self.assertNotIn('zcplantedheader', text)
+            self.assertNotIn('CLAUDE_PLUGIN_TOKEN', text)
+            self.assertIn('X-Planted', text)  # not vacuous: the names-only view did come through
+
     def test_wrongly_typed_value_is_dropped_not_leaked(self):
         self.write('.claude/settings.json', {'permissions': {'additionalDirectories': 'zcalone'}})
         for metadata_only in (True, False):

@@ -368,7 +368,8 @@ def scan_mod(hooks_path, root, modules, redact):
 
 def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
     is_mod = isinstance(data, dict) and 'modules' in data
-    hooks = data.get('hooks', {} if is_mod else data)
+    # Events listed beside `modules` (no `hooks` key) are still read; the module itself goes to scan_mod.
+    hooks = data.get('hooks', {k: v for k, v in data.items() if k != 'modules'} if is_mod else data)
     if not isinstance(hooks, dict):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))
         return
@@ -377,8 +378,12 @@ def add_hooks(plugin, data, path, hook_summary, root=None, redact=None):
                     for ev, groups in hooks.items() for group in groups for h in group.get('hooks', [])]
         component = dict(source=path, kind='hooks', handlers=handlers[:MAX_ENTRIES],
                          status='partial' if len(handlers) > MAX_ENTRIES else 'collected')
-        if is_mod and root:
-            component['mod'] = scan_mod(path, root, data['modules'], redact or str)
+        if is_mod:
+            mod = scan_mod(path, root, data['modules'], redact or str) if root else None
+            if mod is not None:
+                component['mod'] = mod
+            if mod is None or 'reason' in mod:  # the module could not be scanned: say so, don't look empty
+                component.update(status='partial', reason='js_modules_not_scanned')
         plugin['components'].append(component)
     except (TypeError, AttributeError, KeyError):
         plugin['components'].append(dict(source=path, kind='hooks', status='unavailable'))

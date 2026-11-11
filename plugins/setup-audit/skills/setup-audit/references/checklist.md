@@ -224,7 +224,8 @@ readiness, cost metrics and harness overhead.
 - **COST-memory-index** (`memory.by_project[].index_lines`): only the first 200 lines / 25KB of
   MEMORY.md load, so a larger index silently drops entries.
 - **COST-mcp-unused** (`transcripts.mcp_configured_but_unused`, bounded observation): these
-  legacy user/project names have no observed calls in the scanned records. Check transcript
+  configured servers (user, project `.mcp.json`, local scope of the scanned roots, managed MCP, and
+  installed plugins by their tool-call label) have no observed calls in the scanned records. Check transcript
   coverage and `extensions` provenance/activation before drawing conclusions. Empty global-scope
   transcript scans provide no usage evidence. Propose removal only with additional evidence that
   the server is unnecessary; lack of calls alone is not enough. Preserve deliberate standby tools.
@@ -312,7 +313,7 @@ readiness, cost metrics and harness overhead.
   (permission prompts refused, rules denying, or the permission system answering: category `permission_gate`) from failures; `failure_rate` already excludes
   them and is `null` under `min_calls_for_rate` calls.
   - An MCP server with `failure_rate` >= 0.2 over >= 20 calls and mostly `auth`/`connection`:
-    fix authentication or configuration (`claude mcp get <name>` shows an `Issue:` line), or
+    fix authentication or configuration (the user can run `claude mcp get <name>` themselves; it shows an `Issue:` line, and Claude never runs it because it prints the server's config), or
     propose removal together with its `SEC-mcp-exposure` fields. The thresholds are a
     recommendation.
   - Bash `sandbox`: sandbox prerequisites (`SEC-sandbox`), not the commands.
@@ -665,8 +666,10 @@ project cheaply (`readiness[<repo>]`). Two rules keep this section from preachin
   With the sandbox on, also check `sandbox.credentials` (`envVars` deny/mask; see "Protect
   credentials" / "Mask credentials" in the sandboxing docs) before proposing option 3.
 - **RDY-env-secret-backend** (pointers resolve empty inside Claude's shell, e.g. the gpg or
-  1Password agent is unreachable from the sandbox): check only with the user's OK. Probe variable
-  names, never values, and tell the user rather than working around the sandbox.
+  1Password agent is unreachable from the sandbox): opt-in on every run. Ask the user in this run
+  before probing, even if an earlier audit had their OK. Probe variable names only, reporting each
+  as set or unset (`[ -n "${NAME+x}" ]`), never a value, and tell the user rather than working
+  around the sandbox.
 - **RDY-format-guardrails** (`precommit`, `formatter_config`): a formatter is configured but not
   enforced. Evidence: edit rounds that only change formatting. Propose both a git pre-commit
   hook (humans) and a Claude PostToolUse format-on-edit hook (agent), in the repo's existing tool.

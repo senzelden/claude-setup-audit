@@ -991,7 +991,6 @@
     "extensions": {
       "type": "object",
       "required": [
-        "mcp_servers",
         "plugins",
         "sources",
         "limitations"
