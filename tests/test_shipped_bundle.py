@@ -1,3 +1,8 @@
+import ast
+import contextlib
+import io
+import json
+import os
 import re
 import struct
 import sys
@@ -8,17 +13,65 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/setup-audit'
 ICON = PLUGIN / '.claude-plugin/icon.png'
 
-# Plugin directory rules (claude.com/docs/plugins/pre-submission-checklist, fetched 2026-10-27):
-# a bundled image referenced from the plugin is held for a reviewer, and a credential source
-# named next to a network destination reads as "uses a credential from the user's machine". The
-# scanner matches per file: on 0.13.1 and 0.13.2 it flagged exactly the files CREDENTIAL_SOURCE and
-# URL both match (plugin.json through its `direnv` keyword). These guards keep each shipped file
-# clear of both patterns.
+from test_collect import FakeHome, collect  # noqa: E402  (puts the scripts on sys.path)
+import config_names  # noqa: E402
+from unittest import mock  # noqa: E402
+
+# Plugin directory rule (claude.com/docs/plugins/pre-submission-checklist, fetched 2026-10-27): a
+# bundled image referenced from the plugin is held for a reviewer.
 IMAGE_OR_FONT_PATH = re.compile(r'\.(png|jpe?g|gif|webp|woff2?|ttf|otf|ico)\b', re.I)
-CREDENTIAL_SOURCE = re.compile(
-    r'\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b'
-    r'|\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY)[A-Z0-9_]*\b|\b[A-Z0-9_]+_KEY\b')
-URL = re.compile(r'https?://')
+SCRIPTS = PLUGIN / 'skills/setup-audit/scripts'
+
+# Stdlib modules that can open a connection (or load one by name); urllib.parse only parses URLs.
+NETWORK_MODULES = ('socket', 'socketserver', 'ssl', 'http', 'urllib.request', 'urllib.error', 'ftplib',
+                   'smtplib', 'imaplib', 'poplib', 'nntplib', 'telnetlib', 'xmlrpc', 'asyncio',
+                   'webbrowser', 'importlib')
+# The one script allowed to make a network request, and the one host it may reach.
+NETWORK_SCRIPT = 'fetch_doc.py'
+DOCS_HOST = 'code.claude.com'
+URL_HOST = re.compile(r'[a-z][a-z0-9+.-]*://[^/\s"\'<>]*', re.I)
+
+
+def imported_modules(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from (a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == 'urllib':
+                yield from ('urllib.' + a.name for a in node.names)
+            else:
+                yield node.module
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == '__import__'
+              and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            yield node.args[0].value
+
+
+def network_modules(tree):
+    return sorted(m for m in imported_modules(tree)
+                  if any(m == n or m.startswith(n + '.') for n in NETWORK_MODULES))
+
+
+def host_problems(tree):
+    """Why fetch_doc.py could reach a host other than DOCS_HOST (empty when it can't)."""
+    problems = []
+    consts = {t.id: n.value.value for n in tree.body if isinstance(n, ast.Assign)
+              and isinstance(n.value, ast.Constant) for t in n.targets if isinstance(t, ast.Name)}
+    if consts.get('HOST') != DOCS_HOST:
+        problems.append(f'HOST is {consts.get("HOST")!r}')
+    if consts.get('BASE') != f'https://{DOCS_HOST}/docs/':
+        problems.append(f'BASE is {consts.get("BASE")!r}')
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ('HOST', 'BASE') for t in n.targets) \
+                and not isinstance(n.value, ast.Constant):
+            problems.append(f'line {n.lineno}: HOST/BASE is computed')
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            problems += [f'line {n.lineno}: URL to {m.group(0)}' for m in URL_HOST.finditer(n.value)
+                         if m.group(0) != f'https://{DOCS_HOST}']
+    # The redirect check must compare the hostname with the HOST constant.
+    if not any(isinstance(n, ast.Compare) and isinstance(n.left, ast.Attribute) and n.left.attr == 'hostname'
+               and any(isinstance(c, ast.Name) and c.id == 'HOST' for c in n.comparators) for n in ast.walk(tree)):
+        problems.append('no hostname == HOST check')
+    return problems
 
 
 def shipped_text_files():
@@ -46,13 +99,115 @@ class ShippedBundleTests(unittest.TestCase):
         for path, text in shipped_text_files():
             self.assertIsNone(IMAGE_OR_FONT_PATH.search(text), path.relative_to(ROOT))
 
-    def test_no_shipped_file_pairs_a_credential_source_with_a_url(self):
-        # Docs are cited by page name (docs-map.md holds the base URL) wherever a file names a
-        # credential-bearing file or variable.
-        for path, text in shipped_text_files():
-            source, url = CREDENTIAL_SOURCE.search(text), URL.search(text)
-            self.assertFalse(source and url, '%s: %s with %s' % (
-                path.relative_to(ROOT), source and source.group(), url and url.group()))
+    def test_only_fetch_doc_imports_network_modules(self):
+        scripts = sorted(SCRIPTS.glob('*.py'))
+        self.assertIn(NETWORK_SCRIPT, [p.name for p in scripts])
+        for path in scripts:
+            found = network_modules(ast.parse(path.read_text(encoding='utf-8')))
+            if path.name == NETWORK_SCRIPT:
+                self.assertEqual(found, ['urllib.error', 'urllib.request'], path.name)
+            else:
+                self.assertEqual(found, [], path.name)
+
+    def test_network_module_check_catches_the_stdlib_senders(self):
+        tree = ast.parse('import os, socket\nimport urllib.parse, urllib.request\nfrom http import client\n'
+                         'from asyncio import open_connection\nimport importlib\n__import__("ssl")\n'
+                         'from urllib.parse import urlsplit\nimport xmlrpc.client\n')
+        self.assertEqual(network_modules(tree),
+                         ['asyncio', 'http', 'importlib', 'socket', 'ssl', 'urllib.request', 'xmlrpc.client'])
+
+    def test_fetch_doc_host_is_the_fixed_docs_host(self):
+        self.assertEqual(host_problems(ast.parse((SCRIPTS / NETWORK_SCRIPT).read_text(encoding='utf-8'))), [])
+
+    def test_host_check_catches_other_hosts(self):
+        text = (SCRIPTS / NETWORK_SCRIPT).read_text(encoding='utf-8')
+        for old, new in (('HOST = "code.claude.com"', 'HOST = "docs.example.com"'),
+                         ('HOST = "code.claude.com"', 'HOST = os.environ.get("H", "code.claude.com")'),
+                         ('BASE = "https://code.claude.com/docs/"', 'BASE = "https://example.com/docs/"'),
+                         ('parts.hostname == HOST', 'parts.hostname.endswith("claude.com")'),
+                         ('TIMEOUT = 20', 'TIMEOUT = 20\nMIRROR = "https://mirror.example/x"')):
+            self.assertIn(old, text)
+            self.assertTrue(host_problems(ast.parse(text.replace(old, new))), new)
+
+
+class NoCredentialValueReachesTheSnapshot(FakeHome):
+    """Rule: a full collect writes names, counts and labels from credential-bearing sources, never a value.
+
+    Sentinels are plain lowercase words, so the secret-pattern redaction cannot hide them: only the
+    names-only reads (config_names.py and its loaders) keep them out.
+    """
+    VALUES = ('zqvsettingsenv', 'zqvlocalenv', 'zqvhookheader', 'zqvhelpercmd', 'zqvenvrcplain',
+              'zqvenvrcliteralvalue', 'zqvprojmcpenv', 'zqvprojmcpheader', 'zqvusermcpenv', 'zqvusermcpheader',
+              'zqvlocalmcpenv', 'zqvlocalmcpheader', 'zqvoauthclient', 'zqvmanagedmcpenv', 'zqvpluginmcpheader',
+              'zqvmiseenv', 'zqvdevcontainerenv', 'zqvcomposeenv')
+    NAMES = ('ZQ_SETTINGS_ENV', 'X-Zq-Hook', 'ZQ_ENVRC_API_KEY', 'ZQ_PROJ_ENV', 'X-Zq-Proj',
+             'zqusersrv', 'zqlocalsrv', 'zqprojsrv', 'zqmanagedsrv', 'zqpluginsrv')
+
+    def seed(self):
+        root = os.path.join(self.home, 'repo')
+        hook = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': {'X-Zq-Hook': 'zqvhookheader'},
+                'allowedEnvVars': ['ZQ_SETTINGS_ENV']}
+        self.write('.claude/settings.json', {'env': {'ZQ_SETTINGS_ENV': 'zqvsettingsenv'},
+                                             'apiKeyHelper': 'zqvhelpercmd',
+                                             'hooks': {'Stop': [{'hooks': [hook]}]}})
+        self.write('repo/.claude/settings.local.json', {'env': {'ZQ_LOCAL_ENV': 'zqvlocalenv'}})
+        self.write('repo/.envrc', 'export ZQ_ENVRC_PLAIN=zqvenvrcplain\nexport ZQ_ENVRC_API_KEY=zqvenvrcliteralvalue\n')
+        self.write('repo/.mcp.json', {'mcpServers': {'zqprojsrv': {
+            'command': 'npx', 'env': {'ZQ_PROJ_ENV': 'zqvprojmcpenv'}, 'headers': {'X-Zq-Proj': 'zqvprojmcpheader'}}}})
+        self.write('.claude.json', {
+            'mcpServers': {'zqusersrv': {'type': 'http', 'url': 'https://mcp.example.com/m',
+                                         'env': {'ZQ_USER_ENV': 'zqvusermcpenv'},
+                                         'headers': {'X-Zq-User': 'zqvusermcpheader'},
+                                         'oauth': {'clientId': 'zqvoauthclient'}}},
+            'projects': {root: {'mcpServers': {'zqlocalsrv': {
+                'command': 'x', 'env': {'ZQ_LOCAL_MCP': 'zqvlocalmcpenv'},
+                'headers': {'X-Zq-Local': 'zqvlocalmcpheader'}}}}}})
+        self.write('managed/managed-mcp.json', {'mcpServers': {'zqmanagedsrv': {
+            'command': 'x', 'env': {'ZQ_MANAGED': 'zqvmanagedmcpenv'}}}})
+        install = os.path.join(self.claude, 'plugins/cache/m/demo/1')
+        self.write('.claude/plugins/installed_plugins.json', {'plugins': {
+            'demo@m': [{'scope': 'user', 'installPath': install, 'version': '1'}]}})
+        self.write('.claude/plugins/cache/m/demo/1/.claude-plugin/plugin.json', {'name': 'demo'})
+        self.write('.claude/plugins/cache/m/demo/1/.mcp.json', {'mcpServers': {'zqpluginsrv': {
+            'type': 'http', 'url': 'https://p.example.com', 'headers': {'X-Zq-Plugin': 'zqvpluginmcpheader'}}}})
+        self.write('repo/mise.toml', '[env]\nZQ_MISE = "zqvmiseenv"\n')
+        self.write('repo/.devcontainer/devcontainer.json', json.dumps({'containerEnv': {'ZQ_DEV': 'zqvdevcontainerenv'}}))
+        self.write('repo/docker-compose.yml', 'services:\n  a:\n    environment:\n      - ZQ_COMPOSE=zqvcomposeenv\n')
+        return root
+
+    def collect_text(self, *flags):
+        root = self.seed()
+        out = os.path.join(self.home, 'snap.json')
+        argv = ['collect.py', '--claude-dir', self.claude, '--roots', root, '--out', out, *flags]
+        with mock.patch.object(collect, 'managed_directory', return_value=os.path.join(self.home, 'managed')), \
+                mock.patch.object(collect, '_out_allowed_dirs', return_value=[self.home]), \
+                mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(io.StringIO()):
+            collect.main()
+        with open(out, encoding='utf-8') as f:
+            return f.read()
+
+    def leaks(self, text):
+        return [v for v in self.VALUES if v in text]
+
+    def test_full_collect_holds_names_but_no_value(self):
+        for flags in ((), ('--metadata-only',), ('--hash-paths',)):
+            text = self.collect_text(*flags)
+            self.assertEqual(self.leaks(text), [], flags)
+            if not flags:  # not vacuous: every source was read, names-only
+                for name in self.NAMES:
+                    self.assertIn(name, text)
+
+    def test_canary_catches_a_bypassed_names_only_reader(self):
+        real = config_names.mapping_names
+
+        def leaky(mapping):
+            names = real(mapping)
+            if names is not None:
+                names['keys'] = sorted(f'{k}={v}' for k, v in mapping.items())
+            return names
+
+        with mock.patch.object(config_names, 'mapping_names', leaky):
+            self.assertTrue(self.leaks(self.collect_text()))
 
 
 class RiskyRulePatterns(unittest.TestCase):

@@ -1,4 +1,5 @@
 """config_names: the one names-only reader of credential-bearing configuration. Fake homes only."""
+import ast
 import json
 import os
 import re
@@ -139,6 +140,176 @@ class OnlyModuleReadsSensitiveSources(unittest.TestCase):
             self.assertTrue(any(p.search(line) for p in GUARD_PATTERNS), line)
         for line in allowed:
             self.assertFalse(any(p.search(line) for p in GUARD_PATTERNS), line)
+
+
+# AST guard (ported from 0.14.0, now with the names-only reader excepted): a string constant naming a
+# credential-bearing file is flagged when it is an argument of a call that opens or loads a file, when
+# it is assigned in a scope that makes such a call, or when a module-level constant holding it is
+# passed to such a call. Classification tables, os.stat / git_status calls and docstrings pass.
+OPENERS = {'open', 'read_json_object', 'json_object', 'load_json', 'read_text', 'read_bytes', '_read', 'load'}
+# file name -> the only scripts allowed to open it (empty: none may)
+OPEN_ALLOWED = {'.claude.json': {'config_names.py'}, '.envrc': {'config_names.py'}, '.credentials.json': set(),
+                '.mcp.json': {'extensions.py', 'collect.py'}, 'managed-mcp.json': {'extensions.py'}}
+KEYCHAIN_SHAPES = ('security find-generic-password', 'find-generic-password', 'find-internet-password',
+                   'secret-tool', 'keyring', 'libsecret', 'gnome-keyring', 'kwallet')
+
+
+def _call_name(node):
+    func = node.func
+    return func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ''
+
+
+def _scopes(tree):
+    """Node lists to inspect: the module body without its functions, then each function whole."""
+    yield [n for top in tree.body if not isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef))
+           for n in ast.walk(top)]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield list(ast.walk(node))
+
+
+def shipped_trees():
+    for name in sorted(os.listdir(SCRIPTS)):
+        if name.endswith('.py'):
+            with open(os.path.join(SCRIPTS, name)) as f:
+                yield name, ast.parse(f.read())
+
+
+def _named(root, names, docs=()):
+    return [n for n in ast.walk(root) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docs and any(n.value.endswith(s) for s in names)]
+
+
+def file_opens(tree, names):
+    """Line numbers where the tree opens a file whose name ends in one of ``names``."""
+    hits = []
+    for nodes in _scopes(tree):
+        docs = {id(n.value) for n in nodes if isinstance(n, ast.Expr)}  # docstrings and bare strings
+        calls = [n for n in nodes if isinstance(n, ast.Call) and _call_name(n) in OPENERS]
+        for call in calls:
+            hits += [c.lineno for arg in [*call.args, *(k.value for k in call.keywords)]
+                     for c in _named(arg, names, docs)]
+        if calls:
+            hits += [c.lineno for n in nodes if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
+                     for c in _named(n.value, names, docs)]
+    constants = {t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None
+                 and _named(n.value, names) for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+                 if isinstance(t, ast.Name)}
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) in OPENERS):
+        hits += [x.lineno for arg in [*call.args, *(k.value for k in call.keywords)]
+                 for x in ast.walk(arg) if isinstance(x, ast.Name) and x.id in constants]
+    return hits
+
+
+def keychain_uses(tree):
+    """Imports of a keyring library, or string constants naming a keychain command (not docstrings)."""
+    docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            hits += [n.lineno for a in n.names if a.name.split('.')[0] == 'keyring']
+        elif isinstance(n, ast.ImportFrom) and (n.module or '').split('.')[0] == 'keyring':
+            hits.append(n.lineno)
+        elif (isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+              and any(s in n.value for s in KEYCHAIN_SHAPES)):
+            hits.append(n.lineno)
+    return hits
+
+
+class OnlyNamedModulesOpenCredentialFiles(unittest.TestCase):
+    """Rule: ~/.claude.json and .envrc are opened only by config_names.py, MCP config files only by
+    the inventory loaders, ~/.claude/.credentials.json and the OS keychain by no script."""
+
+    def test_only_allowed_scripts_open_credential_bearing_files(self):
+        for name, tree in shipped_trees():
+            for target, allowed in OPEN_ALLOWED.items():
+                if name not in allowed:
+                    self.assertEqual(file_opens(tree, (target,)), [], f'{name} opens {target}')
+
+    def test_not_vacuous_the_allowed_readers_do_open_them(self):
+        trees = dict(shipped_trees())
+        self.assertTrue(file_opens(trees['config_names.py'], ('.claude.json',)))
+        self.assertTrue(file_opens(trees['config_names.py'], ('.envrc',)))
+        self.assertTrue(file_opens(trees['extensions.py'], ('.mcp.json',)))
+
+    def test_open_guard_catches_known_shapes(self):
+        names = tuple(OPEN_ALLOWED)
+        for code in ("def f(home):\n    return load_json(os.path.join(home, '.claude.json'))",
+                     "def f(root):\n    p = root + '/.envrc'\n    with open(p) as h:\n        return h.read()",
+                     "def f(home):\n    return read_json_object(f'{home}/.claude.json')",
+                     "P = '.envrc'\ntext = Path(P).read_text()",
+                     "CJ = '.claude.json'\ndef f(home):\n    return load_json(os.path.join(home, CJ))",
+                     "def f(home):\n    return load_json(os.path.join(home, '.claude', '.credentials.json'))"):
+            self.assertTrue(file_opens(ast.parse(code), names), code)
+        for code in ("def f(root):\n    return os.path.isfile(os.path.join(root, '.envrc'))",
+                     "def f(root):\n    return git_status(root, '.envrc')",
+                     "NAMES = ('.mcp.json', '.claude.json')\ndef f(base):\n    return base in NAMES"):
+            self.assertFalse(file_opens(ast.parse(code), names), code)
+
+    def test_no_script_uses_the_keychain(self):
+        for name, tree in shipped_trees():
+            self.assertEqual(keychain_uses(tree), [], name)
+
+    def test_keychain_guard_catches_known_shapes(self):
+        for code in ("subprocess.run(['security', 'find-generic-password', '-s', 'x'])",
+                     "subprocess.run(['secret-tool', 'lookup', 'a', 'b'])",
+                     "import keyring", "from keyring import get_password"):
+            self.assertTrue(keychain_uses(ast.parse(code)), code)
+        self.assertFalse(keychain_uses(ast.parse('"""Never calls secret-tool."""\nx = 1')))
+
+
+class DocsBoundaryRule(unittest.TestCase):
+    """SKILL.md carries the never-open rule for Claude's own reads; only the collector reads names-only."""
+    SKILL = os.path.join(os.path.dirname(SCRIPTS), 'SKILL.md')
+
+    def bullets(self, start):
+        with open(self.SKILL, encoding='utf-8') as f:
+            text = f.read()
+        section = text[text.index('\n## Boundaries'):]
+        found = [' '.join(b.split()) for b in re.split(r'\n- ', section) if b.lstrip().startswith(start)]
+        self.assertEqual(len(found), 1, f'Boundaries must hold one "{start}" rule')
+        return found[0]
+
+    def test_never_open_rule_lists_the_files_and_keys(self):
+        bullet = self.bullets('Never open')
+        for item in ('~/.claude.json', '~/.claude/.credentials.json', '.envrc', '.env.*', 'devcontainer', 'compose',
+                     'mise', 'MCP config files', 'OS keychain', '`env`', '`headers`', '`oauth`', '`apiKeyHelper`',
+                     'helper-command', 'names-only', '`scripts/config_names.py`', '`claude mcp list`',
+                     'never run `claude mcp get`'):
+            self.assertIn(item, bullet)
+
+    def test_secret_backend_probe_asks_every_run_and_prints_no_value(self):
+        bullet = self.bullets('`RDY-env-secret-backend`')
+        for item in ('every run', 'ask the user in that run', 'set or unset', 'never prints'):
+            self.assertIn(item, bullet)
+
+    def test_docs_never_tell_claude_to_run_mcp_get(self):
+        refs = os.path.join(os.path.dirname(SCRIPTS), 'references')
+        for name in os.listdir(refs):
+            if name.endswith('.md'):
+                with open(os.path.join(refs, name), encoding='utf-8') as f:
+                    text = ' '.join(f.read().split())
+                for m in re.finditer(r'claude mcp get', text):
+                    self.assertRegex(text[m.start():m.start() + 160], r'themselves|Claude never runs', name)
+
+
+class HookEntryNeverUsesHeaderValues(unittest.TestCase):
+    """Rule (ported from 0.14.0): nothing in a hook entry derives from an http hook's header values."""
+
+    def entry(self, headers):
+        handler = {'type': 'http', 'url': 'https://hooks.example.com/h', 'headers': headers}
+        return collect.hook_handler_entry('Stop', None, handler)
+
+    def test_entry_is_identical_whatever_the_header_values(self):
+        base = self.entry({'Authorization': 'x'})
+        for value in ('Bearer ${CLAUDE_PLUGIN_TOKEN}', CANARY, ''):
+            self.assertEqual(self.entry({'Authorization': value}), base, value)
+        self.assertNotIn('plugin_relative', base)
+        self.assertEqual(base['header_keys'], ['Authorization'])
+
+    def test_plugin_relative_still_comes_from_other_fields(self):
+        handler = {'type': 'http', 'url': 'https://h.example.com/${CLAUDE_PLUGIN_ROOT}/x'}
+        self.assertIs(collect.hook_handler_entry('Stop', None, handler)['plugin_relative'], True)
 
 
 class HookFingerprintHasNoHeaderValues(unittest.TestCase):

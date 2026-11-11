@@ -19,14 +19,18 @@ Ask Claude to "audit my Claude Code setup", or run `/setup-audit:setup-audit`.
 
 - **Reads** Claude Code configuration on your machine: managed settings files, `~/.claude/`
   (settings, plugins, memory, transcripts, usage data, prompt history) and `.claude/` plus
-  CLAUDE.md in projects you have used with Claude Code. For MCP servers, hooks and environment
-  files it records names and variable names only, never their values. Best-effort secret
-  detection redacts anything that looks like a credential before it reaches a report.
+  CLAUDE.md in projects you have used with Claude Code. MCP servers come from `~/.claude.json`
+  (user and local scope, per-project approvals), project `.mcp.json`, managed and plugin MCP
+  files. For MCP servers, settings `env`, hooks and environment files (`.envrc`, mise,
+  devcontainer, compose) the collector records names and variable names only, never their values.
+  Best-effort secret detection redacts anything that looks like a credential before it reaches a
+  report.
 - **Runs** only the Python standard-library scripts bundled in `skills/setup-audit/scripts/`,
   plus read-only `git` queries to tell tracked files from ignored ones. It never runs hooks, MCP
   servers, package launchers or downloaded code. The optional status-line logger
   (`rate_limit_log.py`) runs only if you add it to your `statusLine` setting, and then also runs
-  the status-line command you pass it after `--`.
+  the status-line command you pass it after `--`. Only if you agree in that run, Claude checks
+  whether secret-backed variables are set in its own shell (set or unset, never a value).
 - **Writes** reports to `~/.claude/audits/`. It changes configuration only for items you approve,
   after a backup to `~/.claude/backups/`.
 - **Sends** nothing about you. The only network requests download public Claude Code

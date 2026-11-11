@@ -13,6 +13,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_doc.py en/settings-reference.md "$TMPD
 grep -n -i 'autoCompact\|effortLevel\|sandbox' "$TMPDIR/setup-audit-docs/settings-reference.md"
 ```
 
+If raw pages can't be saved (no network, the request refused), mark exact keys as unverified
+instead of taking them from a summary.
+
 WebFetch is fine for overview pages (What's new, costs, best practices). If a URL 404s,
 re-read llms.txt, because pages get renamed. Any setting you propose must appear verbatim in
 `settings-reference`, which is the source of truth for key names.
