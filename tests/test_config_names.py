@@ -148,6 +148,7 @@ class OnlyModuleReadsSensitiveSources(unittest.TestCase):
 # passed to such a call. Classification tables, os.stat / git_status calls and docstrings pass.
 OPENERS = {'open', 'read_json_object', 'json_object', 'load_json', 'read_text', 'read_bytes', '_read', 'load'}
 # file name -> the only scripts allowed to open it (empty: none may)
+# (names_only.py opens files only through file_entry/load with computed paths, so the AST guard does not enforce its entries.)
 OPEN_ALLOWED = {'.claude.json': {'config_names.py'}, '.envrc': {'config_names.py'}, '.credentials.json': set(),
                 '.mcp.json': {'extensions.py', 'collect.py', 'names_only.py'},
                 'managed-mcp.json': {'extensions.py', 'names_only.py'}}

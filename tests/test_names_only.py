@@ -157,9 +157,12 @@ class Statuses(Fake):
         self.assertNotIn('ZQ_X', json.dumps(result))
 
     def test_symlinked_directory_is_refused(self):
-        target = self.write('elsewhere/settings.json', {'env': {'ZQ_X': 'zqvsettingsenv'}})
-        os.symlink(os.path.dirname(target), os.path.join(self.home, 'linkedrepo'))
-        result = self.run_tool(roots=[os.path.join(self.home, 'linkedrepo')])
+        self.write('elsewhere/.claude/settings.json', {'env': {'ZQ_X': 'zqvsettingsenv'}})
+        link = os.path.join(self.home, 'linkedrepo')
+        os.symlink(os.path.join(self.home, 'elsewhere'), link)
+        result = self.run_tool(roots=[link])
+        entry = self.entry(result, os.path.join('linkedrepo', '.claude', 'settings.json'))
+        self.assertEqual(entry['status'], 'symlink_refused')
         self.assertNotIn('ZQ_X', json.dumps(result))
 
     def test_too_large(self):
@@ -168,6 +171,27 @@ class Statuses(Fake):
             result = self.run_tool()
         self.assertEqual(self.entry(result, os.path.join('.claude', 'settings.json'))['status'], 'too_large')
         self.assertNotIn('ZQ_BIG', json.dumps(result))
+
+
+class ProjectSelection(Fake):
+    def test_user_projects_adds_listed_roots_and_reports_it(self):
+        self.seed()
+        self.write('other/.mcp.json', {'mcpServers': {'zqothersrv': {'command': 'x'}}})
+        self.write('.claude.json', {'projects': {self.root: {}, os.path.join(self.home, 'other'): {},
+                                                 os.path.join(self.home, 'gone'): {}}})
+        plain = self.run_tool(roots=[])
+        self.assertNotIn('zqothersrv', json.dumps(plain))
+        self.assertIn('not read', plain['not_assessed'])
+        both = self.run_tool(roots=[], user_projects=True)
+        self.assertIn('zqothersrv', json.dumps(both))
+        self.assertEqual(sorted(both['project_roots']), sorted([self.root, os.path.join(self.home, 'other')]))
+        self.assertEqual([v for v in VALUES if v in json.dumps(both)], [])
+
+    def test_global_scope_reads_no_project_files(self):
+        self.seed()
+        result = self.run_tool(roots=[])
+        self.assertEqual(result['project_roots'], [])
+        self.assertFalse([e for e in result['files'] if e['scope'] == 'project'])
 
 
 class Caps(Fake):

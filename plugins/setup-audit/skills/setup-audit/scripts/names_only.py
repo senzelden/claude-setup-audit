@@ -26,6 +26,7 @@ MAX_RULES = 200        # permission rule strings kept per list
 MAX_ELEMENTS = 50      # array elements walked per array
 TEXT_CAP = 200         # characters kept of any name or rule
 MAX_PLUGINS = 50
+MAX_USER_PROJECTS = 100
 MAX_MANAGED_FILES = 100
 # Mappings whose keys are names of secrets: only the keys are printed.
 NAME_ONLY = frozenset({'env', 'headers'})
@@ -201,11 +202,20 @@ def plugin_entries(claude_dir):
     return entries
 
 
-def run(home=None, claude_dir=None, roots=(), managed_dir=None):
+def run(home=None, claude_dir=None, roots=(), managed_dir=None, user_projects=False):
     home = HOME if home is None else home
     claude_dir = claude_dir or os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(home, '.claude')
     files = [file_entry(os.path.join(claude_dir, n), 'user', 'settings') for n in ('settings.json', 'settings.local.json')]
-    files.append(user_state_entry(home))
+    state = user_state_entry(home)
+    files.append(state)
+    roots = list(roots)
+    omitted = 0
+    if user_projects and state['status'] == 'ok':
+        # Project roots Claude Code recorded in ~/.claude.json (names only), standing in for the
+        # collector's discovery under scope=all. Missing directories are skipped.
+        listed = [r for r in state['projects'] if os.path.isabs(r) and os.path.isdir(r) and r not in roots]
+        omitted = max(0, len(listed) - MAX_USER_PROJECTS)
+        roots += listed[:MAX_USER_PROJECTS]
     for root in roots:
         for rel in ('settings.json', 'settings.local.json'):
             files.append(file_entry(os.path.join(root, '.claude', rel), 'project', 'settings'))
@@ -222,6 +232,10 @@ def run(home=None, claude_dir=None, roots=(), managed_dir=None):
     files += plugin_entries(claude_dir)
     return {'names_only_version': 1,
             'note': 'Names, types, counts and labels only; no env, header, OAuth or argument value is printed.',
+            'project_roots': roots, 'user_projects_omitted': omitted,
+            'not_assessed': ('no project roots were given: project settings and .mcp.json files were not read'
+                             if not roots else 'projects not in project_roots, worktree main-checkout local '
+                             'settings, .envrc and transcripts were not read'),
             'files': files}
 
 
@@ -230,10 +244,13 @@ def main():
     ap.add_argument('--claude-dir', help='Claude Code config directory (default: $CLAUDE_CONFIG_DIR, else ~/.claude)')
     ap.add_argument('--project', action='append', default=[], help='project root to include (repeatable)')
     ap.add_argument('--roots', nargs='*', default=[], help='more project roots')
+    ap.add_argument('--from-user-projects', action='store_true',
+                    help='also include the project roots listed in ~/.claude.json (scope=all stand-in)')
     a = ap.parse_args()
     roots = [os.path.abspath(os.path.expanduser(r)) for r in [*a.project, *a.roots]]
     claude = os.path.abspath(os.path.expanduser(a.claude_dir)) if a.claude_dir else None
-    json.dump(run(claude_dir=claude, roots=roots, managed_dir=managed_directory()), sys.stdout, indent=1,
+    json.dump(run(claude_dir=claude, roots=roots, managed_dir=managed_directory(),
+              user_projects=a.from_user_projects), sys.stdout, indent=1,
               allow_nan=False)
     print()
 

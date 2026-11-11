@@ -118,17 +118,23 @@ error, or any other failure before the collector produces output), tell the user
 that the collector couldn't run (quote the error after redacting secret values) and that findings below come from reading
 files directly instead of the collector's redacted, pre-classified snapshot. Don't retry the same
 failing command in a loop. Then run `python3 ${CLAUDE_SKILL_DIR}/scripts/names_only.py --claude-dir
-"<claude config dir>" --project "<project root>"` (add `--project` per extra root). It prints, per
+"<claude config dir>"` plus the same project selection you gave the collector: `--project <root>`
+for `scope=project`, `--roots <dirs>` for extra roots, `--from-user-projects` for `scope=all` (it
+adds the project roots `~/.claude.json` lists, names only), and no project option for
+`scope=global`. Its `not_assessed` field and `project_roots` list say what was left out; tell the
+user which project files were not assessed instead of dropping them silently. It prints, per
 settings and MCP config file, key paths, value types, array lengths, `env` and `headers` key names
 and redacted permission rules, with a status (`ok`, `missing`, `not_json`, `symlink_refused`,
-`too_large`, `unreadable`), and never a value. Use it instead of Read on `settings.json`,
-`settings.local.json`, `.mcp.json`, managed and plugin MCP files and `~/.claude.json`: **do not
-Read those files whole, even in this fallback.** If it fails too, report those files as not
-assessed. CLAUDE.md, memory and rules files may still be read with Read/Glob, subject to the
-never-open rule in Boundaries. A degraded audit is much more useful than none, and the checklist
+`too_large`, `unreadable`), and never a value. It runs under both privacy modes, `metadata-only`
+included. Use it instead of Read on `settings.json`, `settings.local.json`, `.mcp.json`, managed
+and plugin MCP files and `~/.claude.json`: **do not Read those files whole, even in this
+fallback.** If it fails too, report those files as not assessed. CLAUDE.md, memory and rules
+files may still be read with Read/Glob, subject to the never-open rule in Boundaries. A degraded
+audit is much more useful than none, and the checklist
 findings still apply. With `privacy=metadata-only`, do not
 fall back to reading files: tell the user the collector couldn't run and ask whether to continue with
-full-text reads or stop.
+full-text reads or stop. Those opt-in full-text reads cover only CLAUDE.md, memory and rules
+files, never settings or MCP files whole; names_only.py stays allowed in either case.
 
 This fallback is read-only analysis, not permission to replace an apply procedure. If an
 approved change requires a named helper, successful dry run, or other execution prerequisite
