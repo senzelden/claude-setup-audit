@@ -14,7 +14,7 @@ MAX_PLUGINS = 50
 NAME_CAP = 120
 OBS_LIMIT = 20
 
-# mcp.md, fetched 2026-09-29: reserved built-in names ("including"; not exhaustive), remote types
+# mcp.md, fetched 2026-09-29, raw page re-checked 2026-11-11: reserved built-in names ("including"; not exhaustive), remote types
 # (streamable-http is an alias of http), and the tool-name normalization for plugin servers.
 RESERVED_NAMES = frozenset({'workspace', 'claude-in-chrome', 'computer-use', 'Claude Preview', 'Claude Browser'})
 REMOTE_TYPES = frozenset({'http', 'streamable-http', 'sse', 'ws'})
@@ -318,7 +318,7 @@ MOD_MAX_NAMES = 50
 MOD_NAME_CAP = 64
 MOD_NAME = re.compile(r'[A-Za-z][\w.]*')
 # Heuristic text patterns (mods reference "The hook function", mods-admin "Review what a mod can do",
-# fetched 2026-10-25): on('<event>' and $.<namespace>.<method>. Comments and strings can add names.
+# fetched 2026-10-25, re-checked 2026-11-11): on('<event>' and $.<namespace>.<method>. Comments and strings can add names.
 MOD_EVENT = re.compile(r"""(?<![\w.$])on\s*\(\s*(['"`])([^'"`\n]{1,%d})\1""" % MOD_NAME_CAP)
 MOD_CALL = re.compile(r'\$\.([A-Za-z]\w*(?:\.[A-Za-z]\w*)+)')
 MOD_SETTINGS_LIMITATION = ('A mod that registers settings.read can rewrite merged settings, so the collected settings '

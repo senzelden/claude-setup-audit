@@ -117,7 +117,7 @@ class Values(unittest.TestCase):
             self.assertEqual(apply_ops.check_key(key, None), 'bool')  # remove skips the scope check
 
     def test_tables_are_disjoint_dated_and_sandbox_only(self):
-        self.assertEqual(apply_ops.DOCS_FETCHED, '2026-09-29')
+        self.assertEqual(apply_ops.DOCS_FETCHED, '2026-11-11')
         self.assertFalse(set(apply_ops.SANDBOX_KEYS) & set(apply_ops.EXCLUDED_KEYS))
         kinds = {'bool', 'str_list', 'path_list', 'port', 'str_to_str_list', 'credential_files', 'credential_env'}
         for key, (kind, scopes) in apply_ops.SANDBOX_KEYS.items():
@@ -592,7 +592,7 @@ class Run(FakeHome):
         self.assertEqual(stat.S_IMODE(os.stat(self.backups).st_mode), 0o700)
 
     def test_invalid_ops_file(self):
-        self.assertEqual(apply_ops.run(b'{'), {'applied': False, 'ok': False, 'docs_fetched': '2026-09-29',
+        self.assertEqual(apply_ops.run(b'{'), {'applied': False, 'ok': False, 'docs_fetched': '2026-11-11',
                                                'targets': [], 'error': 'invalid_ops_file'})
 
     def cred(self, hosts, domains_doc=None, *extra):
@@ -721,7 +721,7 @@ class Docs(unittest.TestCase):
         ref = self.read(self.SKILL, 'references', 'apply-ops.md')
         rows = {line.split('`')[1] for line in ref.splitlines() if line.startswith('| `sandbox')}
         self.assertEqual(rows, set(apply_ops.SANDBOX_KEYS) | set(apply_ops.EXCLUDED_KEYS))
-        for text in (*apply_ops.REASONS, 'fetched 2026-09-29', *apply_ops.DOCS_SOURCES, 'expect_file',
+        for text in (*apply_ops.REASONS, 're-checked 2026-11-11', *apply_ops.DOCS_SOURCES, 'expect_file',
                      'file_sha256', 'wildcard_ignored_on_linux', 'shared_project_file'):
             self.assertIn(text, ref)
 

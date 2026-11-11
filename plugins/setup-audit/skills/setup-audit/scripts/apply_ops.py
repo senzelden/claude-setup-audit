@@ -30,8 +30,9 @@ import report_state  # noqa: E402  (load_json: rejects duplicate keys and non-fi
 import safe_write  # noqa: E402
 
 # Keys, types and scopes from the raw settings reference, fetched 2026-09-29. Key list and scopes
-# re-verified 2026-10-24, which added sandbox.allowNestedUserNamespaces (2.1.305+).
-DOCS_FETCHED = '2026-09-29'
+# re-verified 2026-10-24, which added sandbox.allowNestedUserNamespaces (2.1.305+), and again on
+# 2026-11-11 (no change; credential mask fields checked against settings-reference and sandboxing).
+DOCS_FETCHED = '2026-11-11'
 DOCS_SOURCES = ('https://code.claude.com/docs/en/settings-reference.md',
                 'https://code.claude.com/docs/en/sandboxing.md',
                 'https://code.claude.com/docs/en/settings.md')

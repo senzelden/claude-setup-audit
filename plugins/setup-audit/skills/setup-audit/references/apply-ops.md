@@ -20,7 +20,7 @@ the cache. Information only: no status, ordering or refusal depends on it.
 
 ## Sources
 
-Keys, types and scopes: fetched 2026-09-29, raw pages; refetch with `scripts/fetch_doc.py en/<page>.md <out>`:
+Keys, types and scopes: fetched 2026-09-29 and re-checked 2026-11-11, raw pages; refetch with `scripts/fetch_doc.py en/<page>.md <out>`:
 
 - <https://code.claude.com/docs/en/settings-reference.md>
 - <https://code.claude.com/docs/en/sandboxing.md>
@@ -183,7 +183,7 @@ a target's `status` is `applied` and `verified` is `true`; never claim success f
 
 ## Protected paths
 
-Sandboxing docs (fetched 2026-09-29): "Inside the directories that sandboxed commands can write to,
+Sandboxing docs (raw page re-checked 2026-11-11): "Inside the directories that sandboxed commands can write to,
 the sandbox still denies writes to the files Claude Code loads configuration and code from". With
 the sandbox on, `--apply` from a sandboxed Bash call therefore usually fails earlier with
 `backup_dir_unusable` (top-level `error`, because the backup directory is under `~/.claude/backups`),
@@ -192,8 +192,9 @@ or else with `backup_failed` or `write_failed`; report it blocked. Running outsi
 ## Verification and revert
 
 Verification is file-level: the re-read document must equal the planned one. The effective
-sandbox merges scopes ("Claude Code takes a Boolean key's value from the highest-precedence
-settings scope that sets it", settings reference, fetched 2026-09-29), so a managed value can
+sandbox merges scopes ("When managed settings set a Boolean key such as `enabled` or
+`failIfUnavailable`, that value overrides anything a developer sets", settings reference, raw page
+re-checked 2026-11-11), so a managed value can
 override the one written; the SKILL.md probe still runs.
 
 Revert by copying the named backup over the target, or by deleting a `created` file.

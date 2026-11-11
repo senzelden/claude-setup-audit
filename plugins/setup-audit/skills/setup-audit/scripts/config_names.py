@@ -25,7 +25,7 @@ import re
 from urllib.parse import urlsplit
 import inventory
 
-# ${VAR} or ${VAR:-default}, the MCP config expansion syntax (mcp.md, fetched 2026-09-29).
+# ${VAR} or ${VAR:-default}, the MCP config expansion syntax (mcp.md, fetched 2026-09-29, re-checked 2026-11-11).
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z_0-9]*)(?::-[^}]*)?\}')
 # ~/.claude.json projects[<root>] keys extensions.py reports (server names only).
 PROJECT_STATE_LISTS = ('enabledMcpjsonServers', 'disabledMcpjsonServers', 'disabledMcpServers', 'enabledMcpServers')

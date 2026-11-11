@@ -517,7 +517,7 @@ GUARD_PREPEND_NAMES = ("sec-default@builtin", GUARD_ID)
 
 
 def mods_policy(d, managed):
-    """Mods policy booleans (mods-admin "Set options on the built-in guard", fetched 2026-10-25).
+    """Mods policy booleans (mods-admin "Set options on the built-in guard", fetched 2026-10-25, re-checked 2026-11-11).
 
     The guard options live only at pluginConfigs["cc-plugin-sec-default@builtin"].options and count
     only in managed settings; elsewhere they neither set nor loosen anything, so a non-managed file

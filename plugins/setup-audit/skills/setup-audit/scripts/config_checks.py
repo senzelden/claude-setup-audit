@@ -369,7 +369,7 @@ def conflicts(stacks, redact):
             'permission_overlaps': perms, 'permission_overlaps_omitted': perms_omitted}
 
 
-# settings-reference.md (docs page `settings-reference`, fetched 2026-10-24), the
+# settings-reference.md (docs page `settings-reference`, raw page re-checked 2026-11-11), the
 # key table's Scope column and each key's `* **Scope**:` line; every key whose scope is not `Any file`.
 # Scope vocabulary: user_or_managed = "User or managed", managed = "Managed", global_config = "Global
 # config" (lives in ~/.claude.json: "Claude Code ignores them anywhere else"), user_local_managed =
@@ -377,6 +377,7 @@ def conflicts(stacks, redact):
 SETTINGS_SCOPES = {
     # user_or_managed
     'modelPicker': 'user_or_managed',
+    'permissions.denyInsteadOfPrompting': 'user_or_managed',  # new by 2026-11-11
     'autoMode': 'user_or_managed',
     'autoMode.classifyAllShell': 'user_or_managed',
     'skipAutoPermissionPrompt': 'user_or_managed',
@@ -481,7 +482,7 @@ SCOPE_IGNORED_IN = {
     'user_local_managed': frozenset({'project'}),
     'user': frozenset({'project', 'local'}),
 }
-# settings-reference.md "Variables Claude Code ignores in `env`" and env-vars.md (fetched 2026-10-24).
+# settings-reference.md "Variables Claude Code ignores in `env`" and env-vars.md (raw pages re-checked 2026-11-11).
 # Reasons: project_local = dropped from project and local settings; every_file = dropped from every
 # settings file; telemetry_unless_off = dropped from project and local settings unless the value turns
 # telemetry off (`none` for the exporter selectors, an off value for three content variables; values
@@ -495,7 +496,9 @@ ENV_PROJECT_LOCAL = frozenset({
     'OTEL_LOG_ASSISTANT_RESPONSES', 'OTEL_EXPORTER_PROMETHEUS_HOST', 'OTEL_EXPORTER_PROMETHEUS_PORT',
     'CLAUDE_CODE_PROCESS_WRAPPER', 'CLAUDE_CODE_SYNC_SKILLS', 'CLAUDE_CODE_SYNC_PLUGINS',
     'CLAUDE_CODE_PLUGIN_CACHE_DIR', 'CLAUDE_CODE_PLUGIN_SEED_DIR', 'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS',
-    'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS'})
+    'CLAUDE_CODE_DISABLE_ATTACHMENTS', 'CLAUDE_CODE_DISABLE_FILE_MENTIONS',
+    # claude.ai sign-in variables (listed by 2026-11-11); only the name is ever judged
+    'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES'})
 ENV_PROJECT_LOCAL_PREFIXES = ('XDG_', 'CLAUDE_AX_', 'ProgramFiles')  # the XDG_* family, CLAUDE_AX_*, the ProgramFiles family
 ENV_OTLP = re.compile(r'OTEL_EXPORTER_OTLP_(?:[A-Z]+_)*(?:ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)')
 # env-vars.md: a value in project or local settings doesn't turn these on (CFC: ignores `1`).
@@ -507,7 +510,8 @@ ENV_EVERY_FILE = frozenset({
     'CLAUDE_CODE_PROJECT_DIR_NAME', 'CLAUDE_CODE_RESTRICTED', 'CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY',
     'CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT', 'CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT',
     'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT', 'CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT',
-    'CLAUDE_CODE_WARN_DISK_FREE_GIB', 'CLAUDE_CODE_WARN_MEMORY_FREE_GIB'})
+    'CLAUDE_CODE_WARN_DISK_FREE_GIB', 'CLAUDE_CODE_WARN_MEMORY_FREE_GIB',
+    'CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS'})  # listed by 2026-11-11
 
 
 def _env_reason(name, layer):

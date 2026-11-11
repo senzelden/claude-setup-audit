@@ -1,6 +1,6 @@
 """Settings keys and env names a project or local file can't set (HYG-scope-ignored).
 
-Fake homes only. Doc table: settings-reference.md and env-vars.md, fetched 2026-10-24.
+Fake homes only. Doc table: settings-reference.md and env-vars.md, raw pages re-checked 2026-11-11.
 """
 import json
 
@@ -18,6 +18,17 @@ def env(layer, names):
 
 
 class SettingsScopes(FakeHome):
+    def test_entries_documented_by_2026_11_11(self):
+        self.assertEqual(keys('project', {'permissions': {'denyInsteadOfPrompting': True}}),
+                         {('permissions.denyInsteadOfPrompting', 'user_or_managed')})
+        self.assertEqual(env('project', ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+                                         'CLAUDE_CODE_OAUTH_SCOPES', 'CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS']),
+                         {'CLAUDE_CODE_OAUTH_TOKEN': 'project_local', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN': 'project_local',
+                          'CLAUDE_CODE_OAUTH_SCOPES': 'project_local',
+                          'CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS': 'every_file'})
+        self.assertEqual(env('user', ['CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS']),
+                         {'CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS': 'every_file'})
+
     def test_each_scope_class_is_ignored_where_the_docs_say(self):
         cases = {  # key -> (scope class, layers that ignore it)
             'axScreenReader': ('user_or_managed', {'project', 'local'}),

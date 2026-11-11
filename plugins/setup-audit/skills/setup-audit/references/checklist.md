@@ -125,7 +125,8 @@ readiness, cost metrics and harness overhead.
   If managed settings don't set `allowManagedHooksOnly`, any project can add its own hooks of any
   type, including `http` — mention this once per audit rather than per hook when it's unset.
 - **SEC-mods** (`extensions.plugins[].components[].mod`, `settings[].mods`; mods overview "What a
-  mod can reach", mods-admin "Review what a mod can do", fetched 2026-10-25): a mod is a plugin
+  mod can reach", mods-admin "Review what a mod can do", fetched 2026-10-25, raw pages re-checked
+  2026-11-11): a mod is a plugin
   whose `hooks/hooks.json` has `modules`. Its module runs unsandboxed with the user's permissions,
   so weigh `mod.calls` and `mod.events` (names from a heuristic text scan, never executed):
   - calls: `fs.read` / `fs.write` (files), `process.run` / `process.spawn` (commands),
@@ -133,11 +134,13 @@ readiness, cost metrics and harness overhead.
     `settings.read`, `mcp.call`, `model.complete` (spends tokens), `prompt.submit` and
     `session.send` (acts as the user). A `process.*` or `http.fetch` call next to `fs.read` or
     `env.get` is the exfiltration shape; a read-only status panel is not.
-  - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call, past
-    `ask` rules unless managed settings or a Team/Enterprise login apply), `prompt.submit`,
+  - events: `tool.call` (can inspect or change tool use), `tool.check` (can approve a call past
+    `ask` rules, and even past `deny` rules and blocking `PreToolUse` hooks, unless managed
+    settings, a `managed-mcp.json` file or a Team/Enterprise login apply; permissions "Precedence
+    among rules, hooks, and mods", raw page 2026-11-11), `prompt.submit`,
     `session.append` (sees the conversation) and `settings.read` (can rewrite merged settings:
     the collected files are then not the effective settings, see coverage).
-  - Guard options (mods-admin "Set options on the built-in guard", fetched 2026-10-25) are read
+  - Guard options (mods-admin "Set options on the built-in guard", re-checked 2026-11-11) are read
     only at `pluginConfigs["cc-plugin-sec-default@builtin"].options` and only from managed settings;
     `settings[].mods` records them as `true`/`false`/null (unset or non-boolean) for managed files only.
     - `allow_managed_mods_only` true stops user-installed mods from loading. When it is not true,
@@ -478,11 +481,11 @@ metric that motivated it, so the next run can check whether it moved.
   names only): a setting or `env` variable in a file where Claude Code ignores it, so it does
   nothing there. Say so as an ineffective setting, not a security finding, and propose moving it to
   the file that works (or removing it). Which file works comes from the key's documented scope
-  (settings reference, key table "Scope" column and each key's **Scope** line, fetched 2026-10-24):
+  (settings reference, key table "Scope" column and each key's **Scope** line, raw page re-checked 2026-11-11):
   - `user_or_managed` is honoured in user and managed settings only, so a project or local file
     ignores it (`axScreenReader`, `autoMode`, `modelPicker`, `skipAutoPermissionPrompt`,
     `forceLoginGatewayUrl`, `processWrapper`, `prependPlugins`, `appendPlugins`, `sshConfigs`,
-    `sandbox.network.strictAllowlist`, ...). `user` (`worktree.location`) is user-only.
+    `sandbox.network.strictAllowlist`, `permissions.denyInsteadOfPrompting`, ...). `user` (`worktree.location`) is user-only.
   - `managed` is honoured in managed settings only (the page: "Claude Code ignores the key in user,
     project, and local settings"), so even a user file ignores it. Either an admin deploys it or
     the line is dead.
@@ -493,14 +496,15 @@ metric that motivated it, so the next run can check whether it moved.
     only, so the personal `settings.local.json` is the right place.
   - `ignored_env_keys[].reason`: `project_local` = dropped from project and local settings (the
     "Variables Claude Code ignores in `env`" list: storage directories, `XDG_*`, `CLAUDE_AX_*`,
-    process wrapper and sync variables, the telemetry exporter group from Claude Code 2.1.282, the
+    process wrapper and sync variables, the claude.ai sign-in variables (`CLAUDE_CODE_OAUTH_*`), the telemetry exporter group from Claude Code 2.1.282, the
     dialog timer and `CLAUDE_CODE_DISABLE_ATTACHMENTS` from 2.1.290); `every_file` = ignored from every
-    settings file, user included (hosting-environment identity variables, `CLAUDE_CODE_RESTRICTED`, ...);
+    settings file, user included (hosting-environment identity variables, `CLAUDE_CODE_RESTRICTED`,
+    `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`, ...);
     `telemetry_unless_off` = the exporter selectors and `OTEL_LOG_USER_PROMPTS`/`_TOOL_CONTENT`/`_TOOL_DETAILS`:
     ignored in project and local settings unless the value turns telemetry off (`none`, `0`). Values
     aren't collected, so say "ignored unless it turns telemetry off", never that it was definitely
     dropped; `ignored_if_1` = `CLAUDE_CODE_ENABLE_CFC` or `OTEL_LOG_MANAGED_SETTINGS` set to `1` is ignored there (env-vars page,
-    fetched 2026-10-24), other values apply. Claude Code logs the dropped ones in `claude --debug`
+    raw page re-checked 2026-11-11), other values apply. Claude Code logs the dropped ones in `claude --debug`
     and lists them in `/status` or `claude doctor`; a `-p` run shows no notice.
   - Managed files are never flagged. A key missing from the table isn't judged. Unmeasured: whether
     `--settings` or the launch environment also sets the value.
