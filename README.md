@@ -172,17 +172,16 @@ Husky to a uv/ruff project or Zod to a Python one. Strictness advice depends on 
 | Check | What it looks at |
 |---|---|
 | First run | one setup command (`make setup`, `dev` script), toolchain pins (`.nvmrc`, `.tool-versions`, `.python-version`, mise, devcontainer, Nix), lockfiles |
-| Env contract | variables the code reads (`os.environ`, `process.env`, …) vs variables declared by a mechanism the audit can read: `.env.example` and its template variants, pydantic settings (`.envrc`, mise `[env]`, devcontainer and compose env files are never opened). Graded `required` / `read` / `optional` / `test-only`. |
+| Env contract | variables the code reads (`os.environ`, `process.env`, …) vs variables declared by any mechanism the audit can see: `.env.example` and its template variants, pydantic settings, and the variable names (never values) in `.envrc` (including `pass`/1Password/sops pointers), mise `[env]`, devcontainer and compose env files. Graded `required` / `read` / `optional` / `test-only`. |
 | Env reaches Claude | direnv only loads at an interactive prompt, which Claude's Bash tool never shows, so variables that work in your terminal can be missing for Claude. Cross-checked with env errors in transcripts. Fixes, with trade-offs: `direnv exec` wrappers for secrets (default), a filtered `CLAUDE_ENV_FILE` session hook for non-secrets |
 | Guardrails | formatter configured *and* enforced (pre-commit/lefthook/husky, plus a format-on-edit hook for Claude), type strictness |
 | Test loop | measured test-run time from transcripts, test data (seeds, Testcontainers), CI caching |
 | Context | ADRs (`docs/adr/`), module-boundary tooling |
 | Prompt caching in your app | Anthropic SDK call sites without `cache_control`, likely cache breakers (timestamps, random IDs, unsorted JSON in files that call the API), and the model IDs used, since each model has a minimum cacheable prompt length. Static signals; for a measured analysis it points to `/claude-api cost-optimize` |
 
-A `.envrc` is never read or executed, and neither are mise `[env]`, devcontainer env or compose
-`environment` files: the audit only notes that they exist (`envrc_not_read`, `env_files_not_read`),
-so a variable reported as undeclared may be declared there and the report says so. Env reaches Claude is
-judged from the file's presence. Structured logging and feature
+A `.envrc` is read for variable names and pointer lines only, never executed, and its values are
+never written; mise `[env]`, devcontainer env and compose `environment` files are read the same
+way, names only. Literal secret values in them are reported by name, not value. Structured logging and feature
 flags are out of scope, since they're product architecture with no agent-side signal.
 
 ## Instruction clarity pilot
@@ -194,20 +193,21 @@ positives and misses. It does not measure cost savings or certify ASD-STE100 com
 
 ## What it reads, writes and sends
 
-- **Does not read** credential-bearing files or values: it never opens `~/.claude.json`, never reads
-  `.envrc`, mise `[env]`, devcontainer or compose env files (it only records that they exist), nor
-  hook `headers`/`allowedEnvVars`, which hold or point to credentials. From settings `env` it only
-  checks names against a fixed list of documented variables.
-- **Does not open MCP config files** (project, managed or plugin; inline definitions in a plugin
-  manifest or managed settings are parsed with that file but never kept), so it lists no MCP
-  servers; you can review them with `claude mcp list` yourself.
+- **Never writes credential values.** It reads `~/.claude.json`, `.envrc`, mise `[env]`,
+  devcontainer and compose env files, MCP config files (project, managed, plugin) and hook
+  `headers`/`allowedEnvVars` for names and counts only (via `config_names.py`); values never enter
+  the snapshot. Claude itself never opens those files, `.credentials.json` or the keychain.
+- **MCP servers** are listed from `~/.claude.json` (user and local scope), project `.mcp.json`,
+  managed and plugin MCP files, with names, transport and counts of `env`, `headers` and `oauth`
+  fields, never their values.
 - **Reads** bounded managed settings files and drop-ins on Linux/macOS (selected fields;
   active server/OS/helper policy remains unverified), `~/.claude/` (settings, plugins, memory, transcripts, `usage-data` if you ran
   `/insights`, prompt history) and `.claude/` + CLAUDE.md in projects you've used with Claude Code.
 - **Writes** reports to `~/.claude/audits/` (`*-audit.html`, `*-audit.md`, and a machine-readable `*-audit.json`
   used for validated, scope-aware trends). It edits config only for approved items, after backing up to
   `~/.claude/backups/`.
-- **Sends** nothing except requests for the public Claude Code docs pages (`depth=full`).
+- **Sends** nothing except requests for the public Claude Code docs pages (`depth=full`), made by
+  `fetch_doc.py`, which only contacts `code.claude.com`.
 - Reports contain paths, rule text and memory excerpts. **Review them before sharing.**
 - **Privacy mode** (`privacy=metadata-only`, or `collect.py --metadata-only`): prompts, corrections,
   rule text, hook commands, descriptions and excerpts are replaced by `[metadata-only: N chars]`

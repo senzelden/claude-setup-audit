@@ -6,6 +6,87 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-12
+
+On 2026-11-10 and 2026-11-11 the plugin directory added rules that only Verified organizations
+can satisfy (`LOCAL_CODE_FILE_TYPE`, `LOCAL_CODE_TOOL_GRANT`). They refuse any plugin that ships
+scripts or Bash `allowed-tools` from a non-Verified organization, and there is no way to apply
+for verification ([anthropics/claude-plugins-official#7024](https://github.com/anthropics/claude-plugins-official/issues/7024)).
+Removing more features cannot satisfy them, because the plugin is made of scripts. So the full
+plugin is distributed from this repository's marketplace, and it gets back what 0.13.1 to 0.14.7
+removed for the directory scan. A Markdown-only plugin for the directory is the next project.
+
+### Restored
+
+- MCP inventory: `~/.claude.json` user and local servers, per-project approval and toggle
+  observations, trust and same-name collisions; project, managed and plugin MCP files; names and
+  counts of `env`, `headers`, `oauth` and `${VAR}` references; `mcp_configured_but_unused`, the
+  `configured` flag and `sessions_needs_auth`; checks `SEC-mcp`, `SEC-mcp-exposure` and
+  `HYG-mcp-config`.
+- Env and secret checks: `.envrc` names, pointer lines and literal-secret names; names from mise,
+  devcontainer and compose; `settings[].env_keys`, http hook `header_keys` and `allowed_env_vars`;
+  `RDY-envrc-literal-secret`, `SEC-secret-literal`, `SEC-secret-env` and the
+  `secret-literal-in-rule` and `secret-via-env-file` flags with their `prune_permissions.py`
+  categories.
+- `HYG-scope-ignored` with the telemetry and tracing names, and the mods inventory with `SEC-mods`.
+- `scripts/fetch_doc.py` (fixed host `code.claude.com`), `--hash-salt-file`, and
+  `sandbox.credentials` writes in `apply_ops.py`.
+- Eval case `readiness-envrc-pointers` and `evals/README.md` (not run).
+
+### Added
+
+- Names-only fallback, `scripts/names_only.py`: when the collector cannot run, it reports key
+  paths, types, array lengths, env and header key names and redacted permission rules with a
+  per-file status, and never a value. `--from-user-projects` adds the project roots listed in
+  `~/.claude.json`. The SKILL.md fallback no longer allows reading settings or MCP files whole.
+- Measured outcome after apply: an applied `SEC-` or `COST-` fix with a backup can be recorded as a
+  report-only ledger entry (`outcome_only: true`). Later audits show it under "Outcome of applied
+  fixes" with the applied date, the baseline and current value with their windows, and a verdict.
+  Values come from `scripts/outcome_metrics.py` and the snapshot, never from the model. The fixed
+  catalog is `context_baseline_tokens_median`, `cache_write_share`, `allow_rule_count` and
+  `risky_allow_rule_count` (see `references/ledger.md`). Outcome entries are never escalated,
+  retired or removed. New verdict reason `collected_before_fix`. Point metrics are `unknown`
+  (`incomplete`) rather than 0 when settings data is missing or a settings file was unreadable.
+- Snapshot field `generated_utc` (collection time in UTC). Ledgers and snapshots from 0.14.x still
+  load; the snapshot version stays 1 and `extensions.mcp_servers` is optional.
+
+### Changed
+
+- `sandbox.credentials` writes fail closed: every `mask` entry must list `injectHosts`; each host
+  is an exact lowercase DNS name or IP and must already be in `sandbox.network.allowedDomains` of
+  the same file before the batch; undocumented fields are refused (`inject_hosts_required`,
+  `inject_host_invalid`, `inject_host_not_allowed`, `unknown_credential_field`).
+- SKILL.md never-open rule governs Claude's own reads (`~/.claude.json`, `.envrc`, `.env*`, MCP
+  files, keychain); the collector reads them names-only. Claude never runs `claude mcp get`.
+  `RDY-env-secret-backend` asks every run and reports unset, set-but-empty or set, never a value.
+- Docs re-checked on 2026-11-11: new scope key `permissions.denyInsteadOfPrompting`, new ignored
+  env names (`CLAUDE_CODE_OAUTH_*`, `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`), and a
+  `tool.check` mod can approve past `deny` rules where no managed policy applies.
+- The root README describes the names-only reads accurately.
+
+### Fixed
+
+- Plugin hooks files read events listed beside `modules`; the component is `partial` only when the
+  module cannot be scanned.
+- An http hook header value no longer decides `plugin_relative`.
+- `mcp_configured_but_unused` also covers local, managed and plugin servers.
+- A repo root with glob characters in its name finds its compose file.
+
+### Tests
+
+- Guards assert real rules: only `fetch_doc.py` uses the network and only for `code.claude.com`;
+  only `git` is spawned (plus the user's status-line command); no credential value reaches a full
+  collect; only `config_names.py` opens `~/.claude.json` and `.envrc`. The scanner-only guards are
+  gone.
+
+### Validation and limits
+
+- 1066 regression tests pass. Strict `claude plugin validate` results are in the release commit
+  report. No paid evals were run and the restored eval cases were not run.
+- `claude plugin validate --profile directory` does not catch the Verified-organization rules.
+- Outcome verdicts compare counts and do not prove the fix caused the change. Unreadable user
+  `settings.local.json` and `--roots` project settings have no coverage row yet.
+
 ## [0.14.7] - 2026-11-10
 
 The directory's credential rule now also holds the already-published 0.10.0. Its remaining

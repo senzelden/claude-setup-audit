@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated 2026-10-25. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
+Updated 2026-11-12. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
 
 ## Shipped in 0.5.0
@@ -142,13 +142,15 @@ Hosted validation passed all eight jobs at `1167473`:
 
 ## Next candidates, separately scoped
 
-- **No credential reads (0.14.0, unreleased)**: the audit no longer opens `~/.claude.json`, reads
+- **No credential reads (0.14.0; restored in 0.15.0)**: restored for the repo marketplace; the
+  entry below is history. the audit no longer opens `~/.claude.json`, reads
   `.envrc` contents, or reads env, header or OAuth values and names. This answers the directory's
   "reads a credential" hold. Open question: user and local MCP coverage would need a supported
   non-credential source (for example output the user pastes from `claude mcp list`); until then
   the coverage limitation points the user to that command.
 
-- **MCP inventory (removed in 0.14.5)**: the project `.mcp.json`, managed MCP and plugin MCP
+- **MCP inventory (removed in 0.14.5; restored in 0.15.0)**: the readers, `SEC-mcp-exposure` and
+  `HYG-mcp-config` are back. History: the project `.mcp.json`, managed MCP and plugin MCP
   readers, `extensions.mcp_servers`, `SEC-mcp-exposure`, `HYG-mcp-config` config notes and
   `transcripts.mcp_configured_but_unused` are gone; the directory still flagged MCP files as a
   credential source. `SEC-mcp-review` tells the user to run `claude mcp list` themselves. The
@@ -239,7 +241,7 @@ Directory policy and listing:
 
 Functionality:
 
-- **Measured outcome after apply (recommended, 3):** use the ledger and drift mode to report what
+- **Measured outcome after apply (done in 0.15.0):** use the ledger and drift mode to report what
   an applied proposal changed (context per session, cache misses) with dates.
 - **MCP coverage without credential files:** parse output of `claude mcp list` that the user
   pastes, keeping server names and connection status only (no URLs or headers), and combine it
@@ -265,6 +267,27 @@ Positioning:
   one.
 
 ## Distribution follow-up
+
+2026-11-10/11: the directory added Verified-organization-only rules (`LOCAL_CODE_FILE_TYPE`,
+`LOCAL_CODE_TOOL_GRANT`) that refuse any plugin shipping scripts or Bash `allowed-tools` from a
+non-Verified organization. There is no way to apply
+([anthropics/claude-plugins-official#7024](https://github.com/anthropics/claude-plugins-official/issues/7024)).
+0.15.0 therefore restores the full plugin and is distributed from this repo's marketplace.
+
+## Next project: directory lite plugin
+
+A Markdown-only plugin for the directory (recommended scope, decided 2026-11-11): a config-only
+audit covering security, permissions, context and cost settings, CLAUDE.md clarity and missing
+features, with doc-dated findings. Tools: Read, Grep, Glob and LS only; Markdown and JSON files
+only. It needs its own guard test, because `claude plugin validate --profile directory` does not
+catch the Verified-organization rules.
+
+## Deferred follow-ups (from 0.15.0 review)
+
+- Coverage row for an unreadable user `settings.local.json` and for project settings reached only
+  through `--roots`, so outcome point metrics can detect them.
+- `names_only.py --from-user-projects`: hint when `~/.claude.json` is unreadable.
+- The spawn guard does not see launches through `getattr` or `__import__`.
 
 Resolved 2026-10-19: 0.10.0 is live in the built-in Anthropic plugin directory as
 `setup-audit@anthropic-plugin-directory` (Claude Code, Cowork, Claude apps), served from
