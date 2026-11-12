@@ -42,8 +42,8 @@ lookaround, no backreferences. For each file, in this order:
 1. **Find it.** Glob for the file. Skip anything on the never-opened list above.
 2. **Probe with counts only.**
    - (a) non-empty lines: `.`;
-   - (b) a key and its value on different lines (a line ending or starting with the colon):
-     `(^\s*:|:\s*$)`;
+   - (b) a key and its value on different lines (a line ending or starting with the colon, or a
+     colon followed by a JSONC comment): `(^\s*:|:\s*$|"\s*:\s*/[/*])`;
    - (c) secret-shaped text in a rule, command, URL, args or helper line:
      `(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`;
    - (d) secret-shaped text in a line made only of quoted strings separated by commas (array
@@ -108,7 +108,9 @@ lookaround, no backreferences. For each file, in this order:
    probes (c) and (d) are defence in depth for secrets typed into rules, hook commands and URLs:
    they catch known shapes on a best-effort basis, not every secret. Not covered, for example: a
    password passed as a separate argument (`-pSECRET`, `--password X`) or a bare token with no known
-   prefix. The report's coverage list says "inline secrets in rules and commands checked by known
+   prefix, a secret shaped like a path or host name inside an args list, a token carried in a
+   webhook's host name (a unique subdomain), or a token on a Makefile `define` line that starts with
+   a common target name. The report's coverage list says "inline secrets in rules and commands checked by known
    shapes only".
 
 If a Grep result ever shows a value anyway (a secret-shaped string, a token, a password), stop

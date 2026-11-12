@@ -330,7 +330,7 @@ HOOK_URL = r'^\s*"url"\s*:\s*"https?://[A-Za-z0-9.-]+(:\d+)?",?\s*$'
 PATH_ELEMENT = r'^\s*"[~./][^"\\]*",?\s*$'
 HOST_ELEMENT = r'^\s*"(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}",?\s*$'
 # A key and its value on different lines: a lone string line could then be a value, not a rule.
-SPLIT_LINE = r'(^\s*:|:\s*$)'
+SPLIT_LINE = r'(^\s*:|:\s*$|"\s*:\s*/[/*])'
 NON_EMPTY = '.'
 # Secret shapes: best effort by known shapes (the allowlist is the guarantee for env, headers and
 # helpers; these guard the free-text rule, command and URL lines).
@@ -544,6 +544,8 @@ LEAK_SAMPLES = {
     'dotted token in hook args': '{\n  "hooks": [\n    {\n      "args": [\n'
                                  '        "eyJhbGci.%s.Q2x9"\n      ]\n    }\n  ]\n}',
     'path value after a split key': '{\n  "env": {\n    "API_TOKEN":\n      "/%s"\n  }\n}',
+    'path value after a block-commented key': '{\n  "env": {\n    "API_TOKEN": /* c */\n      "/%s"\n  }\n}',
+    'host value after a line-commented key': '{\n  "env": {\n    "API_TOKEN": // c\n      "%s.example.com"\n  }\n}',
     'secret in a path element': '{\n  "sandbox": {\n    "allowWrite": [\n'
                                 '      "./x?to' + 'ken=%s"\n    ]\n  }\n}',
     'minified': '{"env": {"A": "%s"}, "model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
@@ -870,7 +872,8 @@ class ReferencesRedProofTests(unittest.TestCase):
         found = leaks(gate=False)
         for label in ('secret in an allow rule', 'secret in a hook command', 'secret in a path element',
                       'value on the line after its key', 'colon on its own line',
-                      'path value after a split key'):
+                      'path value after a split key', 'path value after a block-commented key',
+                      'host value after a line-commented key'):
             self.assertIn(label, found)
 
     def test_credential_key_in_allowlist_detected(self):
