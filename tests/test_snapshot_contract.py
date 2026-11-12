@@ -351,3 +351,41 @@ class SnapshotContract(FakeHome):
             mutate(altered)
             with self.assertRaises(contract.SnapshotError):
                 contract.validate_snapshot(altered)
+
+
+class RestoredCheckFields(FakeHome):
+    """Each snapshot field a restored check's checklist entry cites is produced by a fresh collect."""
+    snapshot = SnapshotContract.snapshot
+    CHECKLIST = os.path.join(SCRIPTS, '..', 'references', 'checklist.md')
+    # (check id, field as the checklist cites it, path into the snapshot; '[]' = every list item)
+    FIELDS = (
+        ('SEC-mcp-exposure', 'settings[].mcp_policy', ('global', 'settings', '[]', 'mcp_policy')),
+        ('SEC-mods', 'settings[].mods', ('global', 'settings', '[]', 'mods')),
+        ('RDY-envrc-literal-secret', 'envrc.literal_secret_names', ('readiness', '*', 'envrc', 'literal_secret_names')),
+        ('COST-mcp-unused', 'transcripts.mcp_configured_but_unused', ('transcripts', 'mcp_configured_but_unused')),
+    )
+
+    def resolve(self, node, path):
+        if not path:
+            return [node]
+        head, rest = path[0], path[1:]
+        if head == '[]':
+            return [v for item in node for v in self.resolve(item, rest)]
+        if head == '*':
+            return [v for item in node.values() for v in self.resolve(item, rest)]
+        return self.resolve(node[head], rest) if isinstance(node, dict) and head in node else []
+
+    def test_cited_fields_exist_in_a_fresh_snapshot(self):
+        self.write('.claude/settings.json', {'permissions': {'allow': ['Bash(git status)']}})
+        self.write('repo/.envrc', 'export ZQ_API_TOKEN=zqnotarealvalue1234\n')
+        snap = self.snapshot('all')
+        with open(self.CHECKLIST, encoding='utf-8') as f:
+            checklist = f.read()
+        for check, cited, path in self.FIELDS:
+            with self.subTest(check=check, field=cited):
+                entry = checklist.split('**%s**' % check, 1)[1].split('\n- **', 1)[0]
+                self.assertIn(cited, entry)   # the checklist still cites this field for the check
+                self.assertTrue(self.resolve(snap, path), cited)
+        literal = self.resolve(snap, self.FIELDS[2][2])
+        self.assertIn(['ZQ_API_TOKEN'], literal)
+        self.assertNotIn('zqnotarealvalue1234', json.dumps(snap))
