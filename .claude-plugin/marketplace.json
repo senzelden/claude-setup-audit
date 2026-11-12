@@ -9,6 +9,11 @@
       "name": "setup-audit",
       "source": "./plugins/setup-audit",
       "description": "Audit Claude Code configuration and usage against current docs, generate readable reports, and apply approved fixes with backups and verification."
+    },
+    {
+      "name": "setup-audit-lite",
+      "source": "./plugins/setup-audit-lite",
+      "description": "Config-only, Markdown-only edition: compare your Claude Code configuration with current official docs and community practice, and apply approved fixes with backups."
     }
   ]
 }
