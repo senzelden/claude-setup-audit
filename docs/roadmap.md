@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated 2026-11-12. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
+Updated 2026-11-13. Completed release details live in [CHANGELOG.md](../CHANGELOG.md).
 This is the active backlog; historical review findings are not additional open tasks.
 
 ## Shipped in 0.5.0
@@ -276,13 +276,29 @@ non-Verified organization. There is no way to apply
 ([anthropics/claude-plugins-official#7024](https://github.com/anthropics/claude-plugins-official/issues/7024)).
 0.15.0 therefore restores the full plugin and is distributed from this repo's marketplace.
 
-## Next project: directory lite plugin
+## Built: setup-audit-lite 0.1.0 (not yet submitted)
 
-A Markdown-only plugin for the directory (recommended scope, decided 2026-11-11): a config-only
-audit covering security, permissions, context and cost settings, CLAUDE.md clarity and missing
-features, with doc-dated findings. Tools: Read, Grep, Glob and LS only; Markdown and JSON files
-only. It needs its own guard test, because `claude plugin validate --profile directory` does not
-catch the Verified-organization rules.
+A Markdown-only plugin at `plugins/setup-audit-lite/` for the directory: a config-only audit with
+doc-dated findings. Read, Grep, Glob and LS only; settings are read through a whole-line Grep
+allowlist, never opened; the MCP inventory comes from a pasted `claude mcp list`. Instruction files
+are applied with backups outside the project; settings changes are handed over as paste-ready edits;
+community-only practices are never applied. Guarded by `tests/test_lite_bundle.py`. Listed in this
+repo's marketplace. Built on `feature/lite-0.1.0`; not merged, tagged or submitted.
+
+Open risks:
+
+- The directory may scan the whole repo, not just `plugins/setup-audit-lite`; the fallback is a
+  separate repo for lite.
+- The policy review may object to settings guidance.
+- The listing's own Verified-organization policy.
+
+Follow-ups:
+
+- Refresh the docs snapshot and the settings allowlist each release. The freshness test fails 120
+  days after 2026-11-12.
+- Eval cases for lite (paid; needs approval).
+- The minors parked in the build ledger: CRLF/BOM frontmatter in non-skill Markdown skips the
+  allowed-tools check; missing PASSWD sample and an overlapping API_KEY branch in the red-proofs.
 
 ## Deferred follow-ups (from 0.15.0 review)
 
