@@ -15,7 +15,9 @@ Each check gives:
 
 Evidence is file and key (or rule text for permission rules), never a value. A check whose input is
 missing (no pasted MCP list, no pasted `claude --version`, a file "not read") is reported as "not
-run" with the reason, not as passed.
+run" with the reason, not as passed. A check that saw only part of its input (entries counted but
+not shown, see `reading-rules.md`) is reported as "partial" with what was not shown; never guess
+the rest.
 
 Lite reads configuration only. These full-plugin checks need usage data, transcript analysis or
 scripted scans and are left to the full plugin: `SEC-settings-in-git` (needs git), `SEC-mods` (needs
@@ -77,14 +79,17 @@ one of these, say the full plugin covers it.
   `failIfUnavailable` unset or `false` (Claude Code runs unsandboxed when the sandbox can't start);
   `allowNestedUserNamespaces: true` in user or managed settings (turns off a security boundary; a
   repo can't turn it on, so a project `true` is ineffective); broad filesystem or network exceptions,
-  or filesystem isolation without network isolation (both are needed). Sandbox changes loosen or
-  tighten security: lite never applies a loosening; the user makes it by hand.
+  or filesystem isolation without network isolation (both are needed). Path and host entries show
+  through the element patterns; `excludedCommands` entries are counted only ("names not shown"), and
+  when the secret or split-line probes fire, the lists are counted only: report "partial". Sandbox
+  changes loosen or tighten security: lite never applies a loosening; the user makes it by hand.
 - `SEC-hooks` (medium). Read: `hooks` blocks in settings files and plugin `hooks/hooks.json` (hook
   scripts are not read). Claims: `hooks-full-permissions`, `hooks-on-failure`, `hooks-managed-only`.
   Weigh by handler type: `command` hooks run with the user's full permissions (flag ones that run
   code from outside the repo or plugin, or match every tool with a slow command); `http` hooks send
-  each matching event's JSON to a URL (flag an unfamiliar host and a wide matcher; header names
-  only, the `headers` block is skipped); `prompt` and `agent` hooks are another model call; an
+  each matching event's JSON to a URL (flag an unfamiliar host and a wide matcher; a URL with a
+  path is counted, not shown, so the host is then unknown: "partial"; the `headers` block is not
+  shown); `prompt` and `agent` hooks are another model call; an
   `mcp_tool` hook is as trustworthy as its server. A `PreToolUse` or `PermissionRequest` hook that
   exists to block something fails open unless it sets `"onFailure": "block"` (Claude Code 2.1.295+);
   propose that for guards only, never for loggers or formatters. If managed settings exist and don't
@@ -94,8 +99,9 @@ one of these, say the full plugin covers it.
   systems, and project servers the user didn't expect. Report names, transport and status only. No
   paste: "not run: no pasted MCP list".
 - `SEC-mcp-exposure` (high in a shared project settings file, medium otherwise). Read:
-  `enableAllProjectMcpServers`, `enabledMcpjsonServers` and `disabledMcpjsonServers` key names and
-  lists in settings files. Claims: `mcp-project-approval`, `mcp-headless-loads`, `mcp-cloned-repo`.
+  `enableAllProjectMcpServers` and its value; `enabledMcpjsonServers` and `disabledMcpjsonServers`
+  key names and entry counts only ("names not shown", so which servers are listed is "partial").
+  Claims: `mcp-project-approval`, `mcp-headless-loads`, `mcp-cloned-repo`.
   Approving all project servers means any server a teammate adds loads; in `claude -p`, SDK and cloud
   sessions project servers load without asking anyway. Fix: remove the blanket approval, list the
   wanted servers, or disable the unwanted ones. Credentials inside MCP config are not checked, because
@@ -196,12 +202,16 @@ Always on.
 - `HYG-settings-shape` (medium; high when the key is `permissions` or `hooks`). Read: the
   allowlisted lines and counts from the reading rules. Claims: `settings-strict-json`,
   `settings-error`, `settings-warning`, `settings-status`. A value of the wrong type (a `deny` entry
-  that isn't a string, `permissions` that isn't an object) or a comment line (count `^\s*//`). Claude Code skips the entry or the file; ask the user to check `/status` or `claude doctor`.
+  that isn't a string, `permissions` that isn't an object) or a comment line (count `^\s*//`).
+  Lite can't parse the file, so brace pairing and trailing commas are "not run": Claude Code skips
+  the entry or the file; ask the user to check `/status` or `claude doctor`.
 - `HYG-scope-ignored` (low). Read: key names per settings file; the Scope column of the fetched
   `settings-reference` page. Claims: `settings-repo-ignored-keys`, `settings-default-mode-scope`. A
   key in a file where Claude Code ignores it (for example `permissions.defaultMode: auto` in a
-  project file). Propose moving it to the file where it works. `env` variable names aren't read, so
-  ignored env variables are not checked.
+  project file). Propose moving it to the file where it works. Keys seen through the allowlist and
+  openings are checked; other keys only by a count-only presence Grep for the key names on the
+  fetched page, so report "partial" when that wasn't done. `env` variable names aren't read, so
+  ignored env variables are "not run".
 - `HYG-missing-hook-script` (high on `PreToolUse`, low otherwise). Read: the script path in each hook
   command; Glob for it (expand `$CLAUDE_PROJECT_DIR` and the plugin root by hand). Claims:
   `hooks-mistyped-path`. A hook that points at a missing file never does its job.
@@ -210,8 +220,10 @@ Always on.
 - `HYG-one-off-rules` (low). Read: count of `permissions.allow` entries. Claims:
   `settings-dont-ask-again`. More than about 50 allow rules, mostly exact commands saved from
   prompts, which hide the risky ones. Propose pruning the one-off ones.
-- `HYG-stale-dirs` (low). Read: `permissions.additionalDirectories`; Glob each. Claims:
-  `perm-additional-dirs`. Entries that no longer exist or come from another machine.
+- `HYG-stale-dirs` (low). Read: `permissions.additionalDirectories` entries through the path
+  element pattern; Glob each. Claims: `perm-additional-dirs`. Entries that no longer exist or come
+  from another machine. Entries that are counted but not shown (secret or split-line probe hit, or
+  not path-shaped) make the check "partial".
 - `HYG-hook-duplicates` (low; medium when a plugin and a settings file both carry it). Read: hooks
   in all settings files and plugins. Claims: `hooks-dedup`. The same handler in several settings
   files runs once (clutter); a plugin's copy runs separately (double cost and side effects). Fix: drop

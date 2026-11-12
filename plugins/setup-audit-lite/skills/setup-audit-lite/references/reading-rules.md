@@ -68,15 +68,24 @@ lookaround, no backreferences. For each file, in this order:
    - true, false or null under any key name (`enabledPlugins` entries, flags not on the list):
      `^\s*"[A-Za-z0-9_.@/-]+"\s*:\s*(true|false|null),?\s*$`;
    - hook fields: `^\s*"(type|matcher|event|timeout|async|onFailure)"\s*:\s*("[^"\\]*"|true|false|-?\d+),?\s*$`;
-   - only when count (c) + count (d) is 0, hook commands and URLs:
-     `^\s*"(command|url)"\s*:\s*"[^"\\]*",?\s*$`;
-   - only when count (c) + count (d) is 0 and count (b) is 0, permission rules (a line that is
-     exactly one string starting with a tool name):
-     `^\s*"(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|Grep|LS|Agent|Task|Skill|mcp__[A-Za-z0-9_*-]+)(\([^"\\]*\))?",?\s*$`.
-     Count (b) must be 0 because a lone string line after a split key could be a value, not a
-     rule.
+   - hook URLs, only when the value is a bare scheme and host (and port), with no path, query or
+     user part: `^\s*"url"\s*:\s*"https?://[A-Za-z0-9.-]+(:\d+)?",?\s*$`. Any other `url` line is counted only: a webhook URL with a path
+     is a credential;
+   - only when count (c) + count (d) is 0, hook commands: `^\s*"command"\s*:\s*"[^"\\]*",?\s*$`;
+   - only when count (c) + count (d) is 0 and count (b) is 0, array entries of three shapes:
+     - permission rules (a line that is exactly one string starting with a tool name):
+       `^\s*"(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|Grep|LS|Agent|Task|Skill|mcp__[A-Za-z0-9_*-]+)(\([^"\\]*\))?",?\s*$`;
+     - paths (`additionalDirectories`, sandbox filesystem lists): `^\s*"[~./][^"\\]*",?\s*$`;
+     - host names (sandbox network lists): `^\s*"(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}",?\s*$`.
 
-   Otherwise the gated lines are counted, not shown: "N rules not shown: secret-shaped text".
+     Count (b) must be 0 because a lone string line after a split key could be a value, not an
+     array entry. There is no pattern for other bare words, so `enabledMcpjsonServers`,
+     `disabledMcpjsonServers` and `excludedCommands` entries and hook `args` are counted, not
+     shown: their evidence is "names not shown". Grep `-n` gives line numbers; attribute an
+     entry to the nearest opening above it, and call the attribution partial when another
+     opening or a compact line sits between them.
+
+   Otherwise the gated lines are counted, not shown: "N entries not shown: secret-shaped text".
    Lines that match no allowlisted pattern are reported as a count ("N other lines not shown");
    a rule or command containing a backslash, or a compact hook written on one line, is one of
    them.
@@ -87,12 +96,15 @@ lookaround, no backreferences. For each file, in this order:
    case-sensitive). The opening and true/false patterns accept any name but show no string value,
    and env values are always strings. Header names (`Authorization`, `X-Api-Key`) and helper keys
    aren't on the lists either. The remaining case is an env or header
-   entry whose name happens to equal an allowlisted lowercase settings key (an env variable called
-   `model`): its value is shown, and it is not a credential by name. Key names written with Unicode
+   entry whose name happens to equal a key on the scalar allowlist plus the hook-field keys (`type`,
+   `matcher`, `event`, `timeout`, `async`, `onFailure`), such as an env variable called `model`: its
+   value is shown, and it is not a credential by name. Key names written with Unicode
    escapes (`"\u0065nv"`) contain a backslash and match nothing.
 
    Record key names seen inside `permissions`, `hooks`, `sandbox`, `enabledPlugins` and the rest.
-   `env` and `headers` names are not seen; say "env block present, names not read". The secret
+   `env` and `headers` names are not seen, with one harmless exception: a boolean env entry
+   (`"FEATURE_FLAG": true`, not a valid env value anyway) shows its name and value through the
+   true/false pattern. Otherwise say "env block present, names not read". The secret
    probes (c) and (d) are defence in depth for secrets typed into rules, hook commands and URLs:
    they catch known shapes on a best-effort basis, not every secret. Not covered, for example: a
    password passed as a separate argument (`-pSECRET`, `--password X`) or a bare token with no known
@@ -119,7 +131,7 @@ rotate if it is a credential".
 Glob for names first (`Makefile`, `justfile`, `package.json`, `pyproject.toml`, `tsconfig.json`,
 version pin files, `.pre-commit-config.yaml`, CI workflow files, `docs/adr/`). Presence is enough for
 most readiness checks. Manifests are never opened with Read either; the same line-allowlist idea
-applies. Before any content Grep of `package.json` or `pyproject.toml`, run this count-only probe
+applies. Before any content Grep of `package.json`, `pyproject.toml`, `Makefile` or `justfile`, run this count-only probe
 over the whole file (it also matches `"KEY": "value"` lines, such as script values):
 
 `(?i)(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`
@@ -127,16 +139,18 @@ over the whole file (it also matches `"KEY": "value"` lines, such as script valu
 A hit means only names are shown (section headers, the `"scripts"` opening) and the file is
 reported "not read: secret-shaped text".
 
-- `pyproject.toml`: section header names from a content Grep for `^\[\[?[A-Za-z]` (header lines
-  hold only the section name; array continuation lines starting with `[` and a quote or digit don't
-  match). Presence of `[project.scripts]`, `[tool.pytest*]`, `[tool.ruff]`, `[tool.mypy]` and
+- `pyproject.toml`: section header names from a content Grep for `^\[\[?[A-Za-z][^\]#]*\]\]?\s*$` (anchored at
+  both ends: a header line holding only the section name; a header with a trailing comment or
+  text, and array continuation lines starting with `[` and a quote or digit, don't match). Presence of `[project.scripts]`, `[tool.pytest*]`, `[tool.ruff]`, `[tool.mypy]` and
   `[tool.pyright]` is what readiness needs. With no probe hit, the strict setting:
   `^\s*(strict|typeCheckingMode)\s*=\s*("[a-z]+"|true|false)\s*$`.
 - `package.json`: the `"scripts"` opening from the opener pattern above; with no probe hit, the
   common script lines: `^\s*"(test|lint|check|format|typecheck|build|dev|start|ci|verify|setup|bootstrap|prepare)(:[A-Za-z0-9_.:-]+)?"\s*:\s*"[^"\\]*",?\s*$`. Other scripts are counted only.
 - `tsconfig.json`: `^\s*"strict"\s*:\s*(true|false),?\s*$`.
-- `Makefile` and `justfile`: target names only, from a content Grep for `^[A-Za-z0-9_.-]+:[^=]*$` (a target
-  line; variable assignments contain `=` and don't match); the recipes are never read.
+- `Makefile` and `justfile`: with no probe hit, common target lines only, from a content Grep for
+  `^(test|tests|check|lint|format|fmt|typecheck|build|dev|start|run|ci|verify|setup|bootstrap|install|all)([-_.][A-Za-z0-9_.-]*)?:[^=]*$` (variable assignments contain `=` and don't match, and a `Name: value` line such
+  as a header doesn't start with a listed target name). Other targets are counted with
+  `^[A-Za-z0-9_.-]+:[^=]*$`; recipes are never read.
 - Everything else (pin files, pre-commit config, CI workflows, ADR directories): Glob only.
 
 ## Counting

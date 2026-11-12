@@ -321,7 +321,14 @@ BOOLEAN_FLAG = r'^\s*"[A-Za-z0-9_.@/-]+"\s*:\s*(true|false|null),?\s*$'
 RULE_LINE = (r'^\s*"(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|'
              r'Grep|LS|Agent|Task|Skill|mcp__[A-Za-z0-9_*-]+)(\([^"\\]*\))?",?\s*$')
 HOOK_FIELD = r'^\s*"(type|matcher|event|timeout|async|onFailure)"\s*:\s*("[^"\\]*"|true|false|-?\d+),?\s*$'
-HOOK_TARGET = r'^\s*"(command|url)"\s*:\s*"[^"\\]*",?\s*$'
+HOOK_TARGET = r'^\s*"command"\s*:\s*"[^"\\]*",?\s*$'
+# Webhook URLs with a path or query are credentials: only a bare scheme and host (and port) shows.
+HOOK_URL = r'^\s*"url"\s*:\s*"https?://[A-Za-z0-9.-]+(:\d+)?",?\s*$'
+# Array entries shaped like a path or a host name (sandbox and directory lists). There is no
+# bare-word element pattern: it would show bare tokens in hook args. The host's last label is
+# letters only, so dotted tokens (JWT-like) with digits in the last part don't match.
+PATH_ELEMENT = r'^\s*"[~./][^"\\]*",?\s*$'
+HOST_ELEMENT = r'^\s*"(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}",?\s*$'
 # A key and its value on different lines: a lone string line could then be a value, not a rule.
 SPLIT_LINE = r'(^\s*:|:\s*$)'
 NON_EMPTY = '.'
@@ -343,13 +350,15 @@ SECRET_IN_RULE = (r'(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)
 SECRET_IN_ELEMENT = (r'(?i)^\s*("' + _STRING_BODY + r'",\s*)*"' + _STRING_BODY + '(' + _SECRET_SHAPES
                      + ')' + _STRING_BODY + r'"(,\s*"' + _STRING_BODY + r'")*,?\s*$')
 SECRET_IN_MANIFEST = r'(?i)(' + _SECRET_SHAPES + ')'
-TOML_HEADER = r'^\[\[?[A-Za-z]'
+TOML_HEADER = r'^\[\[?[A-Za-z][^\]#]*\]\]?\s*$'
 PY_STRICT = r'^\s*(strict|typeCheckingMode)\s*=\s*("[a-z]+"|true|false)\s*$'
 TS_STRICT = r'^\s*"strict"\s*:\s*(true|false),?\s*$'
 SCRIPT_LINE = (r'^\s*"(test|lint|check|format|typecheck|build|dev|start|ci|verify|setup|bootstrap|'
                r'prepare)(:[A-Za-z0-9_.:-]+)?"\s*:\s*"[^"\\]*",?\s*$')
-MAKE_TARGET = r'^[A-Za-z0-9_.-]+:[^=]*$'
+MAKE_TARGET = (r'^(test|tests|check|lint|format|fmt|typecheck|build|dev|start|run|ci|verify|setup|'
+               r'bootstrap|install|all)([-_.][A-Za-z0-9_.-]*)?:[^=]*$')
 DOCUMENTED_PATTERNS = (SCALAR_SETTING, OPENER, BOOLEAN_FLAG, RULE_LINE, HOOK_FIELD, HOOK_TARGET,
+                       HOOK_URL, PATH_ELEMENT, HOST_ELEMENT,
                        SPLIT_LINE, SECRET_IN_RULE, SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER,
                        PY_STRICT, TS_STRICT, SCRIPT_LINE, MAKE_TARGET)
 # Words that mark a helper or credential-bearing key; no allowlisted key may contain one.
@@ -442,7 +451,8 @@ def mcp_instruction_problems(root):
 
 
 SETTINGS_PATTERNS = {'scalar': SCALAR_SETTING, 'opener': OPENER, 'boolean': BOOLEAN_FLAG,
-                     'rule': RULE_LINE, 'hook_field': HOOK_FIELD, 'hook_target': HOOK_TARGET}
+                     'rule': RULE_LINE, 'hook_field': HOOK_FIELD, 'hook_target': HOOK_TARGET,
+                     'hook_url': HOOK_URL, 'path': PATH_ELEMENT, 'host': HOST_ELEMENT}
 
 
 def grep_shown(text, patterns=None, gate=True):
@@ -460,12 +470,12 @@ def grep_shown(text, patterns=None, gate=True):
 
     if count(NON_EMPTY) == 1:
         return 'compact JSON layout', []
-    shown = [p['scalar'], p['opener'], p['boolean'], p['hook_field']]
+    shown = [p['scalar'], p['opener'], p['boolean'], p['hook_field'], p['hook_url']]
     secret = count(SECRET_IN_RULE) + count(SECRET_IN_ELEMENT) > 0
     if not gate or not secret:
         shown.append(p['hook_target'])
         if not gate or not count(SPLIT_LINE):
-            shown.append(p['rule'])
+            shown += [p['rule'], p['path'], p['host']]
     return None, [line for line in lines if any(re.search(pat, line) for pat in shown)]
 
 
@@ -524,6 +534,18 @@ LEAK_SAMPLES = {
     'crlf line endings': '{\r\n  "env": {\r\n    "API_TOKEN": "%s"\r\n  },\r\n  "model": "opus"\r\n}',
     'env after a hook command on one line': '{\n  "hooks": [\n    { "command": "run", "env": '
                                             '{"API_TOKEN": "%s"} }\n  ]\n}',
+    'webhook url in a hook': '{\n  "hooks": {\n    "Stop": [\n      {\n        "type": "http",\n'
+                             '        "url": "https://hooks.example.invalid/services/%s"\n      }\n'
+                             '    ]\n  }\n}',
+    'url with a query': '{\n  "hooks": [\n    {\n      "url": "https://h.example.invalid?k=%s"\n'
+                        '    }\n  ]\n}',
+    'bare token in hook args': '{\n  "hooks": [\n    {\n      "args": [\n        "--flag",\n'
+                               '        "%s",\n        "ab%s"\n      ]\n    }\n  ]\n}',
+    'dotted token in hook args': '{\n  "hooks": [\n    {\n      "args": [\n'
+                                 '        "eyJhbGci.%s.Q2x9"\n      ]\n    }\n  ]\n}',
+    'path value after a split key': '{\n  "env": {\n    "API_TOKEN":\n      "/%s"\n  }\n}',
+    'secret in a path element': '{\n  "sandbox": {\n    "allowWrite": [\n'
+                                '      "./x?to' + 'ken=%s"\n    ]\n  }\n}',
     'minified': '{"env": {"A": "%s"}, "model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
     'value on the line after its key': '{\n  "env": {\n    "API_TOKEN":\n      "Bash(%s)"\n  },\n'
                                        '  "permissions": {\n    "allow": [\n      "Read"\n    ]\n  }\n}',
@@ -630,7 +652,7 @@ class LiteReferencesTests(unittest.TestCase):
             re.compile(pattern)
 
     def test_allowlisted_keys_are_settings_names(self):
-        self.assertEqual(allowlisted_key_problems((SCALAR_SETTING, HOOK_FIELD, HOOK_TARGET)), [])
+        self.assertEqual(allowlisted_key_problems((SCALAR_SETTING, HOOK_FIELD)), [])
 
     def test_no_secret_reaches_a_shown_line(self):
         self.assertEqual(leaks(), [])
@@ -650,7 +672,11 @@ class LiteReferencesTests(unittest.TestCase):
                      '      "mcp__github__get_issue",', '      "WebFetch(domain:example.invalid)"',
                      '            "type": "command",', '        "matcher": "Bash",',
                      '            "timeout": 30', '            "onFailure": "block",',
-                     '            "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",'):
+                     '            "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",',
+                     '        "url": "https://hooks.example.invalid",',
+                     '        "url": "http://localhost:8080"',
+                     '      "~/old-project",', '      "./build"', '      "/tmp/scratch",',
+                     '      "pypi.org",', '      "*.github.com"', '      "registry.npmjs.org",'):
             with self.subTest(line=line):
                 reason, shown = grep_shown('{\n%s\n}' % line)
                 self.assertIsNone(reason)
@@ -707,6 +733,16 @@ class LiteReferencesTests(unittest.TestCase):
         self.assertNotIn('      "Bash(ls *)"', shown)  # rule lines are only counted after a hit
         self.assertIn('    "allow": [', shown)
 
+    def test_boolean_env_name_shows(self):
+        # A boolean env entry's name shows through the true/false pattern; the doc says so.
+        _, shown = grep_shown('{\n  "env": {\n    "FEATURE_FLAG": true,\n    "A": "x"\n  }\n}')
+        self.assertEqual(shown, ['  "env": {', '    "FEATURE_FLAG": true,'])
+        self.assertIn('a boolean env entry', ref('reading-rules.md'))
+
+    def test_collision_names_listed(self):
+        text = ref('reading-rules.md')
+        self.assertIn('scalar allowlist plus the hook-field keys', text)
+
     def test_minified_reported_not_read(self):
         reason, shown = grep_shown('{"model": "opus"}\n')
         self.assertEqual((reason, shown), ('compact JSON layout', []))
@@ -723,9 +759,11 @@ class LiteReferencesTests(unittest.TestCase):
             with self.subTest(miss=line):
                 self.assertFalse(manifest.search(line))
         header = re.compile(TOML_HEADER)
-        for line in ('[tool.ruff]', '[[tool.uv.index]]', '[project.scripts]'):
+        for line in ('[tool.ruff]', '[[tool.uv.index]]', '[project.scripts]',
+                     '[tool.pytest.ini_options]'):
             self.assertTrue(header.search(line), line)
-        for line in ('["a",', '[1, 2]', '  [tool.x]', '"[x]"'):
+        for line in ('["a",', '[1, 2]', '  [tool.x]', '"[x]"', '[tool.ruff] # SECRET',
+                     '[tool.x] token = "y"'):
             self.assertFalse(header.search(line), line)
         for pattern, hits, misses in (
                 (SCRIPT_LINE, ('    "test": "pytest -q",', '    "lint:fix": "eslint --fix ."'),
@@ -733,7 +771,9 @@ class LiteReferencesTests(unittest.TestCase):
                 (TS_STRICT, ('    "strict": true,',), ('    "strict": "yes"', '"strict": true, "x": 1')),
                 (PY_STRICT, ('strict = true', 'typeCheckingMode = "strict"'),
                  ('strict = true # x', 'password = "x"')),
-                (MAKE_TARGET, ('test:', 'build: deps'), ('TOKEN := x', 'x = y:z'))):
+                (MAKE_TARGET, ('test:', 'build: deps', 'lint-fix: deps', 'setup:'),
+                 ('TOKEN := x', 'x = y:z', 'Authorization: Bear' + 'er x', 'deploy: build',
+                  'Token: abc'))):
             for line in hits:
                 self.assertTrue(re.search(pattern, line), line)
             for line in misses:
@@ -818,6 +858,9 @@ class ReferencesRedProofTests(unittest.TestCase):
             'value spans quotes': {'scalar': SCALAR_SETTING.replace(SCALAR_VALUE, '(".*")')},
             'opener with a value': {'opener': r'^\s*"[A-Za-z][A-Za-z0-9_.-]*"\s*:\s*[\[{]'},
             'command not anchored': {'hook_target': r'"(command|url)"\s*:\s*"[^"\\]*"'},
+            'url with any path': {'hook_url': r'^\s*"url"\s*:\s*"[^"\\]*",?\s*$'},
+            'element of any word': {'path': r'^\s*"[^"\\]*",?\s*$'},
+            'host with a digit tail': {'host': r'^\s*"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+",?\s*$'},
         }
         for label, patterns in mutations.items():
             with self.subTest(mutation=label):
@@ -825,8 +868,9 @@ class ReferencesRedProofTests(unittest.TestCase):
 
     def test_ungated_rules_leak(self):
         found = leaks(gate=False)
-        for label in ('secret in an allow rule', 'secret in a hook command', 'credentials in a hook url',
-                      'value on the line after its key', 'colon on its own line'):
+        for label in ('secret in an allow rule', 'secret in a hook command', 'secret in a path element',
+                      'value on the line after its key', 'colon on its own line',
+                      'path value after a split key'):
             self.assertIn(label, found)
 
     def test_credential_key_in_allowlist_detected(self):
