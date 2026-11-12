@@ -7,7 +7,8 @@ cost and context efficiency, and repeated mistakes, plus an optional check of wh
 is ready for Claude Code to work in. Approved fixes are applied with backups and verified.
 
 Install from this repository's marketplace, or from Anthropic's directory as
-`setup-audit@anthropic-plugin-directory`:
+`setup-audit@anthropic-plugin-directory` (an older 0.10.x version, no longer updated there because
+the directory refuses plugins with scripts from non-Verified organizations):
 
 ```
 /plugin install setup-audit --marketplace senzelden/claude-setup-audit

@@ -39,15 +39,17 @@ apps). In Claude Code, search for `setup-audit` on the **Discover** tab of `/plu
 /plugin install setup-audit@anthropic-plugin-directory
 ```
 
-To install straight from this repository instead, for example to get a release before the
-directory picks it up:
+To get the current version, install straight from this repository instead. The directory listing
+holds an older version (0.10.x) and is not updated any more, because the directory refuses plugins
+with scripts from organizations that are not Verified:
 
 ```
 /plugin marketplace add senzelden/claude-setup-audit
 /plugin install setup-audit@claude-setup-audit
 ```
 
-Install from one source only. Both provide the same `setup-audit` skill.
+Install from one source only. Both provide a `setup-audit` skill, but the directory's is the older
+0.10.x version; the repository marketplace has the current one.
 
 The Update and Uninstall commands below use the repository marketplace. For a directory install,
 replace `@claude-setup-audit` with `@anthropic-plugin-directory` and skip the marketplace refresh
