@@ -455,9 +455,11 @@ Table, effects and estimate: `references/cache-effects.md`.
    markers), verification and `record` before starting the next, because `next-id` reads the
    ledger and prints the same id until the previous entry is recorded. `record` refuses an edit
    that `ledger.py remove` could not undo later.
-10. **Outcome entry.** After `prune_permissions.py` or `apply_ops.py` applied and verified a SEC or
-   COST item whose check has a metric in the "Outcome metrics" table of `references/ledger.md`,
-   and its `applied` item (status `applied`) is in the current audit JSON, run `ledger.py next-id`,
+10. **Outcome entry.** After a SEC or COST item was applied and verified in this step with a
+   backup (`prune_permissions.py`, `apply_ops.py`, or your own edit after item 1's backup, e.g. a
+   CLAUDE.md split or a removed MCP server), its check has a metric in the "Outcome metrics" table
+   of `references/ledger.md`, and its `applied` item (status `applied`, `backups` listed) is in the
+   current audit JSON, run `ledger.py next-id`,
    write the outcome spec from "Outcome entries" there (`outcome_only: true`, `mechanism:
    setting`, empty `edits`, the catalog selector copied exactly) and run the same `ledger.py
    record` command with the Step 1 snapshot. Never write a metric value yourself: `record`

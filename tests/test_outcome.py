@@ -49,10 +49,11 @@ def snapshot(at="2026-09-01T10:00:00Z", risky=None, allow=12, median=20000, read
     }
 
 
-def report(finding="SEC-risky-allow:global", check="SEC-risky-allow", status="applied", generated=None):
+def report(finding="SEC-risky-allow:global", check="SEC-risky-allow", status="applied", generated=None,
+           backups=("~/.claude/backups/setup-audit-20260901/settings.json",)):
     return dict(version=1, generated=generated or "2026-09-01T11:00:00Z", window_days=30, metrics={},
                 findings=[dict(id=finding, check=check)],
-                applied=[dict(id=finding, status=status)] if status else [])
+                applied=[dict(id=finding, status=status, backups=list(backups))] if status else [])
 
 
 def outcome_entry(selector=RISKY, baseline=None, **changes):
@@ -118,7 +119,7 @@ class Metrics(unittest.TestCase):
             self.assertIsNone(outcome_metrics.compute(RISKY, bad))
 
 
-class Record(unittest.TestCase):
+class FakeHomeCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -137,6 +138,8 @@ class Record(unittest.TestCase):
         s.update(changes)
         return s
 
+
+class Record(FakeHomeCase):
     def test_record_outcome_entry_takes_baseline_from_snapshot(self):
         book = ledger.record(ledger.empty(), self.spec(), snapshot(), report(), "2026-09-01-audit", self.now)
         item = book["entries"][0]
@@ -165,6 +168,11 @@ class Record(unittest.TestCase):
             "wrong labels": (self.spec(selector=dict(RISKY, unit="files")), snapshot(), report()),
             "not applied": (self.spec(), snapshot(), report(status="partial")),
             "no applied item": (self.spec(), snapshot(), report(status=None)),
+            "applied without backup": (self.spec(), snapshot(), report(backups=())),
+            "unmapped cost check": (self.spec(finding_id="COST-model-default:global", selector=dict(CONTEXT)),
+                                    snapshot(), report("COST-model-default:global", "COST-model-default")),
+            "cost check, wrong metric": (self.spec(finding_id="COST-cache-health:global", selector=dict(CONTEXT)),
+                                         snapshot(), report("COST-cache-health:global", "COST-cache-health")),
             "has edits": (self.spec(edits=[dict(file="~/x", kind="markdown_block", backup=None)]),
                           snapshot(), report()),
             "other mechanism": (self.spec(mechanism="rule"), snapshot(), report()),
@@ -187,6 +195,43 @@ class Record(unittest.TestCase):
         with self.assertRaises(ledger.LedgerError):
             ledger.record(book, spec, snapshot(), report("LRN-corrections:tests", "LRN-corrections"), "r",
                           self.now)
+
+
+class CostEndToEnd(FakeHomeCase):
+    """COST-claude-md-size measured by the context baseline: record, two snapshots, render."""
+
+    def test_record_verdicts_and_render(self):
+        finding = "COST-claude-md-size:~/repo"
+        rep = report(finding, "COST-claude-md-size",
+                     backups=("~/.claude/backups/setup-audit-20260901/repo/CLAUDE.md",))
+        spec = self.spec(finding_id=finding, pattern="CLAUDE.md split into nested files",
+                         selector=dict(CONTEXT))
+        book = ledger.record(ledger.empty(), spec, snapshot(median=24000), rep, "2026-09-01-audit", self.now)
+        item = book["entries"][0]
+        self.assertEqual(item["baseline"], {"from": "2026-08-02T10:00:00Z", "to": "2026-09-01T10:00:00Z",
+                                            "value": 24000, "complete": True})
+        later = report(finding, "COST-claude-md-size", generated="2026-10-05T00:00:00Z")
+        rows, book = ledger.evaluate(book, snapshot(at="2026-09-15T00:00:00Z", median=11000), later, "mid")
+        self.assertEqual((rows[0]["verdict"], rows[0]["reason"]), ("too_early", "window_overlaps_fix"))
+        rows, book = ledger.evaluate(book, snapshot(at="2026-10-05T00:00:00Z", median=11000), later,
+                                     "2026-10-05-audit")
+        self.assertEqual((rows[0]["verdict"], rows[0]["proposal"], rows[0]["outcome_only"]),
+                         ("dropped", None, True))
+        rows2, _ = ledger.evaluate(book, snapshot(at="2026-10-05T00:00:00Z", median=13000), later, "again")
+        self.assertEqual(rows2[0]["verdict"], "not_dropped")
+        html = render_report.render(dict(later, trend=dict(comparable=False, reason="x", metrics={},
+                                                           findings={}, ledger=rows)))
+        section = html.split('id="outcomes"', 1)[1].split("</section>", 1)[0]
+        for text in (finding, "Applied 2026-09-01", "Context baseline tokens median",
+                     "24,000 tokens, 2026-08-02 to 2026-09-01", "11,000 tokens, 2026-09-05 to 2026-10-05",
+                     "dropped to half or less", "not proof that the fix caused the change"):
+            self.assertIn(text, section)
+
+    def test_every_mapped_check_names_catalog_metrics_of_its_family(self):
+        for check, names in outcome_metrics.CHECKS.items():
+            self.assertTrue(check.startswith(outcome_metrics.FAMILIES), check)
+            self.assertTrue(names and all(n in outcome_metrics.CATALOG for n in names), check)
+        self.assertEqual(outcome_metrics.CHECKS["COST-cache-health"], ("cache_write_share",))
 
 
 class Verdicts(unittest.TestCase):

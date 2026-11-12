@@ -20,14 +20,21 @@ CATALOG = {
         basis='measured', unit='rules', source='settings.permissions.risky', kind='point'),
 }
 
-# Finding checks eligible for an outcome entry, and the metric each one is measured by. Only fixes
-# that apply_ops.py or prune_permissions.py can apply are listed: prune_permissions removes the
-# risky-flag rules these SEC checks report. No COST check is listed because neither helper applies
-# a COST change (apply_ops only writes sandbox keys).
+# Finding checks eligible for an outcome entry, and the metrics a fix for each can plausibly move
+# (reasons per check: references/ledger.md, "Outcome metrics"). The fix itself may come from
+# apply_ops.py, prune_permissions.py or a backed-up Edit in SKILL.md's apply flow.
+CONTEXT, CACHE = ('context_baseline_tokens_median',), ('cache_write_share',)
 CHECKS = {
     'SEC-risky-allow': ('risky_allow_rule_count', 'allow_rule_count'),
     'SEC-secret-literal': ('risky_allow_rule_count', 'allow_rule_count'),
     'SEC-secret-env': ('risky_allow_rule_count', 'allow_rule_count'),
+    'COST-baseline': CONTEXT,
+    'COST-claude-md-size': CONTEXT,
+    'COST-mcp-unused': CONTEXT,
+    'COST-skill-listing': CONTEXT,
+    'COST-startup-hooks': CONTEXT,
+    'COST-harness-overhead': CONTEXT,
+    'COST-cache-health': CACHE,
 }
 FAMILIES = ('SEC-', 'COST-')
 RISKY_CAP = 6  # collect.analyze_permissions keeps at most 6 rules per risky flag and file

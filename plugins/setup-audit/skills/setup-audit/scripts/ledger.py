@@ -474,9 +474,11 @@ def _outcome_baseline(spec, report, snapshot, now):
             and spec['selector']['name'] in outcome_metrics.CHECKS.get(check, ()),
             'finding has no outcome metric, or not this one', input='spec')
     applied = report.get('applied', [])
-    require(isinstance(applied, list) and any(isinstance(a, dict) and a.get('id') == spec['finding_id']
-                                              and a.get('status') == 'applied' for a in applied),
-            'finding is not recorded as applied in the report', input='report')
+    # Applied through the apply flow: an `applied` item with status applied and at least one backup.
+    require(isinstance(applied, list) and any(
+        isinstance(a, dict) and a.get('id') == spec['finding_id'] and a.get('status') == 'applied'
+        and isinstance(a.get('backups'), list) and a['backups'] for a in applied),
+        'finding is not recorded as applied with a backup in the report', input='report')
     baseline = snapshot_metric(spec['selector'], snapshot)
     require(baseline is not None, 'snapshot has no collection time (generated_utc) or window; recollect',
             input='snapshot')

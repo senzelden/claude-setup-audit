@@ -150,9 +150,10 @@ whatever their verdict.
 
 ## Outcome entries
 
-After `apply_ops.py` or `prune_permissions.py` applies an approved SEC or COST fix whose finding
-check has a metric below, record a report-only entry with the usual `ledger.py record` command and
-this spec:
+After SKILL.md's apply flow applies an approved SEC or COST fix with a backed-up change
+(`apply_ops.py`, `prune_permissions.py`, or Claude's own edit after the backup step) and the
+finding's check has a metric below, record a report-only entry with the usual `ledger.py record`
+command and this spec:
 
 ```json
 {
@@ -175,7 +176,9 @@ this spec:
 - The finding is in the `--report` file, its id starts with `SEC-` or `COST-`, its `check` (or
   the id before `:`) is listed below, and the selector is one of that check's metrics with the
   catalog's exact labels.
-- The report's `applied` array holds an item for that finding with `status` `applied`.
+- The report's `applied` array holds an item for that finding with `status` `applied` and a
+  non-empty `backups` list. That is how `record` sees a recorded, backed-up change; the entry's own
+  `edits` stay empty so it can never be removed.
 - The `--snapshot` (the Step 1 snapshot, collected before the fix) has `generated_utc`, the metric
   has a value above 0 in it, and it was collected no later than the record time.
 
@@ -209,17 +212,26 @@ exactly. The window is the snapshot's: `window` metrics cover `window_days` endi
 Permission prompts per session are not collected (transcripts record denials, not prompts), so no
 prompt metric exists.
 
-| Finding check | Metrics |
-|---|---|
-| `SEC-risky-allow` | `risky_allow_rule_count`, `allow_rule_count` |
-| `SEC-secret-literal` | `risky_allow_rule_count`, `allow_rule_count` |
-| `SEC-secret-env` | `risky_allow_rule_count`, `allow_rule_count` |
+A check is listed only where its fix plausibly moves the metric:
 
-Prefer `risky_allow_rule_count`: the prune removes those rules, while a total allow count rarely
-halves. No COST check is listed: neither helper applies a COST change (`apply_ops.py` writes only
-`sandbox.*` keys), and `SEC-sandbox` has no metric because prompts are not collected. The two
-`transcripts` metrics exist for when a listed check needs them, and any metric-selector entry
-using their exact labels is computed from the snapshot too.
+| Finding check | Metrics | Why |
+|---|---|---|
+| `SEC-risky-allow` | `risky_allow_rule_count`, `allow_rule_count` | the prune removes the flagged allow rules |
+| `SEC-secret-literal` | `risky_allow_rule_count`, `allow_rule_count` | the prune removes the rule carrying the literal (flag `secret-literal-in-rule`) |
+| `SEC-secret-env` | `risky_allow_rule_count`, `allow_rule_count` | the prune removes the rule reading the env file (flag `secret-via-env-file`) |
+| `COST-baseline` | `context_baseline_tokens_median` | the finding is this metric; its fix cuts what loads before the first answer |
+| `COST-claude-md-size` | `context_baseline_tokens_median` | CLAUDE.md loads at launch, so moving text to nested files, rules or skills shrinks the first request |
+| `COST-mcp-unused` | `context_baseline_tokens_median` | a removed server no longer lists its tools or instructions in the first request |
+| `COST-skill-listing` | `context_baseline_tokens_median` | the skill listing is part of the first request |
+| `COST-startup-hooks` | `context_baseline_tokens_median` | SessionStart `additionalContext` is added before the first prompt |
+| `COST-harness-overhead` | `context_baseline_tokens_median` | its fixes trim skill listing growth and injected context, both in the first request |
+| `COST-cache-health` | `cache_write_share` | TTL and habit fixes target cache rewrites, which are the write share |
+
+Not listed, because no catalog metric measures what their fix changes: `SEC-sandbox` (prompts are
+not collected), `COST-model-default`, `COST-long-sessions`, `COST-subagents`, `COST-memory-index`,
+the tool-error and subscription checks. For SEC prunes prefer `risky_allow_rule_count`: the prune
+removes those rules, while a total allow count rarely halves. Any metric-selector entry using a
+catalog metric's exact labels is computed from the snapshot too.
 
 The verdict rules are those of metric selectors: value at most half the baseline is `dropped`;
 `window` metrics are `too_early` until the snapshot window starts after `applied_at`, `point`
