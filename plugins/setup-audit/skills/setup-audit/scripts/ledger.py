@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import outcome_metrics  # noqa: E402
 import report_state  # noqa: E402
 import safe_write  # noqa: E402
 
@@ -34,6 +35,9 @@ SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 MIN_SESSIONS, MIN_BASELINE, QUIET_DAYS = 5, 3, 30
 ENTRY_FIELDS = {'id', 'applied_at', 'run', 'finding_id', 'pattern', 'mechanism', 'state',
                 'supersedes', 'selector', 'scope', 'baseline', 'edits', 'observations'}
+# Report-only outcome entries (0.15.0) add `outcome_only: true`; entries written by 0.14.x have no
+# such field and keep loading unchanged. The field is written only when true.
+OUTCOME_FIELD = 'outcome_only'
 COUNT_FIELDS = {'from', 'to', 'matches', 'sessions_matched', 'sessions_scanned', 'complete'}
 METRIC_FIELDS = {'from', 'to', 'value', 'complete'}
 OBSERVATION_EXTRA = {'run', 'verdict', 'reason'}
@@ -139,8 +143,24 @@ def validate_scope(scope):
     require(type(scope['window_days']) is int and scope['window_days'] > 0, 'invalid window')
 
 
+def is_outcome(item):
+    return isinstance(item, dict) and item.get(OUTCOME_FIELD) is True
+
+
+def validate_outcome(item):
+    """An outcome entry can only be measured: no edits to remove, no rung to escalate to, nothing
+    it supersedes, and a catalog metric computed from the snapshot."""
+    require(item[OUTCOME_FIELD] is True, 'invalid outcome flag')
+    require(item['mechanism'] == 'setting', 'outcome entries use mechanism setting')
+    require(item['edits'] == [], 'outcome entries record no edits')
+    require(item['supersedes'] is None, 'outcome entries supersede nothing')
+    require(outcome_metrics.catalog_row(item['selector']) is not None, 'outcome entries need a catalog metric')
+    require(item['finding_id'].startswith(outcome_metrics.FAMILIES), 'outcome entries are SEC or COST fixes')
+
+
 def validate_entry(item):
-    require(isinstance(item, dict) and set(item) == ENTRY_FIELDS, 'invalid entry fields')
+    require(isinstance(item, dict) and set(item) in (ENTRY_FIELDS, ENTRY_FIELDS | {OUTCOME_FIELD}),
+            'invalid entry fields')
     require(isinstance(item['id'], str) and ID_RE.match(item['id']), 'invalid entry id')
     epoch(item['applied_at'])
     require(_text(item['run'], 120), 'invalid run')
@@ -154,7 +174,10 @@ def validate_entry(item):
     validate_scope(item['scope'])
     metric = item['selector']['type'] == 'metric'
     validate_counts(item['baseline'], metric)
-    require(isinstance(item['edits'], list) and item['edits'], 'entry needs edits')
+    if OUTCOME_FIELD in item:
+        validate_outcome(item)
+    else:
+        require(isinstance(item['edits'], list) and item['edits'], 'entry needs edits')
     for edit in item['edits']:
         validate_edit(edit)
     require(isinstance(item['observations'], list), 'invalid observations')
@@ -173,6 +196,8 @@ def validate(book):
         validate_entry(item)
         require(item['id'] not in seen, 'duplicate entry id')
         seen.add(item['id'])
+    outcomes = {e['id'] for e in book['entries'] if is_outcome(e)}
+    require(all(e['supersedes'] not in outcomes for e in book['entries']), 'an outcome entry cannot be superseded')
     return book
 
 
@@ -230,7 +255,11 @@ def verdict(entry, current, scope, previous):
     if not (base['complete'] and current['complete']):
         return 'unknown', 'incomplete'
     if entry['selector']['type'] == 'metric':
-        if epoch(current['from']) < epoch(entry['applied_at']):
+        row = outcome_metrics.catalog_row(entry['selector'])
+        if row is not None and row['kind'] == 'point':
+            if epoch(current['to']) < epoch(entry['applied_at']):
+                return 'too_early', 'collected_before_fix'
+        elif epoch(current['from']) < epoch(entry['applied_at']):
             return 'too_early', 'window_overlaps_fix'
         if base['value'] is None or current['value'] is None:
             return 'unknown', 'incomparable'
@@ -259,6 +288,8 @@ def next_rung(entry):
 
 
 def proposal(entry, verdict_now, previous):
+    if is_outcome(entry):  # report-only: never escalated, never retired
+        return None
     if verdict_now == 'quiet' and entry['mechanism'] in ('memory', 'rule'):
         return 'retire'
     if (verdict_now == 'not_dropped' and previous is not None and previous['verdict'] == 'not_dropped'
@@ -268,6 +299,7 @@ def proposal(entry, verdict_now, previous):
 
 
 SPEC_FIELDS = {'id', 'finding_id', 'pattern', 'mechanism', 'selector', 'edits'}
+SPEC_OPTIONAL = {'supersedes', OUTCOME_FIELD}
 LABELS = {'ledger': 'ledger', 'snapshot': 'snapshot', 'report': 'current report',
           'spec': 'entry spec', 'edited file': 'edited file', 'backup': 'backup'}
 
@@ -422,6 +454,38 @@ def snapshot_scope(snapshot):
     return scope, {scope['project']}
 
 
+def snapshot_metric(selector, snapshot):
+    """Catalog metric counts computed from the snapshot (never from the report), or None."""
+    return outcome_metrics.compute(selector, snapshot)
+
+
+def _outcome_baseline(spec, report, snapshot, now):
+    """Refuse an outcome spec that is not an applied, eligible SEC/COST fix; return its baseline."""
+    require(spec[OUTCOME_FIELD] is True, 'outcome_only must be true', input='spec')
+    require(spec['mechanism'] == 'setting', 'outcome entries use mechanism setting', input='spec')
+    require(spec['edits'] == [], 'outcome entries record no edits; files and backups go in the report',
+            input='spec')
+    require(spec.get('supersedes') is None, 'outcome entries supersede nothing', input='spec')
+    require(outcome_metrics.catalog_row(spec['selector']) is not None,
+            'outcome metric must be a catalog metric with its exact labels', input='spec')
+    finding = next(f for f in report['findings'] if f.get('id') == spec['finding_id'])
+    check = finding.get('check') if isinstance(finding.get('check'), str) else spec['finding_id'].split(':')[0]
+    require(spec['finding_id'].startswith(outcome_metrics.FAMILIES)
+            and spec['selector']['name'] in outcome_metrics.CHECKS.get(check, ()),
+            'finding has no outcome metric, or not this one', input='spec')
+    applied = report.get('applied', [])
+    require(isinstance(applied, list) and any(isinstance(a, dict) and a.get('id') == spec['finding_id']
+                                              and a.get('status') == 'applied' for a in applied),
+            'finding is not recorded as applied in the report', input='report')
+    baseline = snapshot_metric(spec['selector'], snapshot)
+    require(baseline is not None, 'snapshot has no collection time (generated_utc) or window; recollect',
+            input='snapshot')
+    require(baseline['value'] is not None and baseline['value'] > 0, 'metric has no value to reduce in this snapshot',
+            input='snapshot')
+    require(epoch(baseline['to']) <= now, 'snapshot was collected after the fix', input='snapshot')
+    return baseline
+
+
 def metric_baseline(selector, report, start, end):
     metrics = report.get('metrics', {})
     require(isinstance(metrics, dict), 'invalid metrics', input='report')
@@ -443,7 +507,7 @@ def record(book, spec, snapshot, report, run, now):
     import collect  # lazy: collect imports ledger lazily too
     require(_text(run, 120), 'report file name is too long to serve as a ledger run id', input='report')
     book = copy.deepcopy(validate(book))
-    require(isinstance(spec, dict) and SPEC_FIELDS <= set(spec) <= SPEC_FIELDS | {'supersedes'},
+    require(isinstance(spec, dict) and SPEC_FIELDS <= set(spec) <= SPEC_FIELDS | SPEC_OPTIONAL,
             'invalid spec fields', input='spec')
     try:
         report_state.validate_report(report)
@@ -461,6 +525,7 @@ def record(book, spec, snapshot, report, run, now):
     if supersedes is not None:
         require(isinstance(supersedes, str) and supersedes in ids and ids[supersedes]['state'] == 'active',
                 'superseded entry not active', input='spec')
+        require(not is_outcome(ids[supersedes]), 'an outcome entry cannot be superseded', input='spec')
     require(_text(spec['pattern'], 200), 'invalid pattern', input='spec')
     try:
         validate_selector(spec['selector'])
@@ -468,7 +533,11 @@ def record(book, spec, snapshot, report, run, now):
         exc.input = 'spec'
         raise
     require(spec['mechanism'] in MECHANISMS, 'invalid mechanism', input='spec')
-    require(isinstance(spec['edits'], list) and spec['edits'], 'entry needs edits', input='spec')
+    outcome = OUTCOME_FIELD in spec
+    if outcome:
+        outcome_base = _outcome_baseline(spec, report, snapshot, now)
+    else:
+        require(isinstance(spec['edits'], list) and spec['edits'], 'entry needs edits', input='spec')
     selector = copy.deepcopy(spec['selector'])
     if selector['type'] == 'keywords':
         # Stored keywords are also what later runs count, so a redacted keyword would count nothing.
@@ -479,7 +548,13 @@ def record(book, spec, snapshot, report, run, now):
             'a global-scope snapshot has no sessions to count; use a metric selector or another scope',
             input='snapshot')
     start = now - scope['window_days'] * 86400
-    if selector['type'] == 'metric':
+    if outcome:
+        baseline = outcome_base
+    elif outcome_metrics.catalog_row(selector) is not None:
+        baseline = snapshot_metric(selector, snapshot)
+        require(baseline is not None, 'snapshot has no collection time (generated_utc) or window; recollect',
+                input='snapshot')
+    elif selector['type'] == 'metric':
         baseline = metric_baseline(selector, report, start, now)
     else:
         baseline = collect.count_selector(selector, start, now, project_filter)
@@ -488,6 +563,8 @@ def record(book, spec, snapshot, report, run, now):
                  pattern=collect.redact(spec['pattern'])[:200], mechanism=spec['mechanism'], state='active',
                  supersedes=supersedes, selector=selector, scope=scope, baseline=baseline,
                  edits=[fingerprint_edit(spec['id'], e, collect.HOME) for e in spec['edits']], observations=[])
+    if outcome:
+        entry[OUTCOME_FIELD] = True
     _require_removable(entry)
     if supersedes is not None:
         ids[supersedes]['state'] = 'superseded'
@@ -511,11 +588,24 @@ def _require_removable(entry):
 
 
 ROW_COUNTS = ('matches', 'sessions_matched', 'sessions_scanned', 'value')
+WINDOW = ('value', 'from', 'to')
 
 
-def _current_counts(entry, signals, report):
+def _metric_detail(item, now):
+    """Outcome-section fields of a metric row: labels, and value plus window before and after."""
+    return dict(metric={k: v for k, v in item['selector'].items() if k != 'type'},
+                baseline={k: item['baseline'][k] for k in WINDOW},
+                current=None if now is None else {k: now[k] for k in WINDOW})
+
+
+def _current_counts(entry, signals, report, snapshot=None):
     """Current-window counts for one entry, or None when they are missing, malformed or unusable."""
     try:
+        if outcome_metrics.catalog_row(entry['selector']) is not None:
+            counts = snapshot_metric(entry['selector'], snapshot)
+            if counts is not None:
+                counts['selector_sha'] = selector_hash(entry['selector'])
+            return counts
         if entry['selector']['type'] == 'metric':
             end = report_state.timestamp(report['generated']).timestamp()
             start = end - report['window_days'] * 86400
@@ -554,7 +644,7 @@ def evaluate(book, snapshot, report, run):
     for item in book['entries']:
         if item['state'] != 'active':
             continue
-        now = _current_counts(item, entries, report)
+        now = _current_counts(item, entries, report, snapshot)
         earlier = [o for o in item['observations'] if o['run'] != run]
         previous = earlier[-1] if earlier else None
         try:
@@ -563,8 +653,11 @@ def evaluate(book, snapshot, report, run):
             now, verdict_now, reason = None, 'unknown', 'incomparable'
         offer = proposal(item, verdict_now, previous)
         row = dict(entry=item['id'], verdict=verdict_now, reason=reason, proposal=offer,
-                   next_mechanism=next_rung(item) if offer == 'escalate' else None)
+                   next_mechanism=next_rung(item) if offer == 'escalate' else None,
+                   finding_id=item['finding_id'], applied_at=item['applied_at'], outcome_only=is_outcome(item))
         row.update({k: (now or {}).get(k) for k in ROW_COUNTS})
+        if item['selector']['type'] == 'metric':
+            row.update(_metric_detail(item, now))
         rows.append(row)
         if now is not None and verdict_now != 'unknown':
             observation = {k: v for k, v in now.items() if k != 'selector_sha'}
@@ -717,12 +810,19 @@ def plan_edit(entry, index):
         return row('blocked', 'unreadable')
 
 
+def removable_ids(book):
+    """Entries `remove --all` covers: everything not already removed, except report-only outcome
+    entries, which have no edits and are never removed."""
+    return [e['id'] for e in book['entries'] if e['state'] != 'removed' and not is_outcome(e)]
+
+
 def plan_removal(book, entry_ids):
     index = {e['id']: e for e in book['entries']}
     rows = []
     for entry_id in entry_ids:
         require(entry_id in index, 'entry not found')
         entry = index[entry_id]
+        require(not is_outcome(entry), 'outcome entries are report-only and cannot be removed')
         order = sorted(range(len(entry['edits'])), key=lambda i: ORDER[entry['edits'][i]['kind']])
         rows.extend(plan_edit(entry, i) for i in order)
     return rows
@@ -914,8 +1014,7 @@ def main(argv=None):
     try:
         book = load(args.ledger)
         if args.command == 'remove':
-            ids = list(dict.fromkeys(args.entry)) if args.entry else [
-                e['id'] for e in book['entries'] if e['state'] != 'removed']
+            ids = list(dict.fromkeys(args.entry)) if args.entry else removable_ids(book)
             rows = plan_removal(book, ids)
             if args.apply:
                 try:

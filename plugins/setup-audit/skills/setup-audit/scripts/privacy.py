@@ -363,7 +363,7 @@ SUBSCRIPTION_KEEP = (  # subscription_usage.py: kinds (dict keys), UTC dates, se
     *(('subscription', 'log', k) for k in ('status', 'first_at', 'last_at')),
     ('subscription', 'log_basis'), ('subscription', 'early_resets_basis'),
     *(('subscription', 'early_resets', '*', k) for k in ('window', 'at')))
-SINGLE = (('generated',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
+SINGLE = (('generated',), ('generated_utc',), ('previous_audits', '*'), ('managed_settings', 'effective_policy'),
           ('global', 'version'), ('global', 'doctor'),
           *(('global', k, '*') for k in ('skills', 'agents', 'commands', 'mcp_user', 'installed_plugins')),
           *(('projects', '*', k, '*') for k in ('claude_md_dead_refs', 'mcp_servers', 'skills', 'agents',

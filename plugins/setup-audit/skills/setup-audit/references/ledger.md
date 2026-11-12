@@ -6,6 +6,9 @@ runs count the same pattern after the fix, so a rule that did not help can be es
 rule that nothing triggers any more can be removed. A verdict is a comparison of counts, not
 proof that the fix caused the change.
 
+It also records report-only outcome entries for applied SEC and COST fixes (see "Outcome
+entries"): a metric before and after the fix, shown in the report and never acted on.
+
 The default path is `<report_dir>/ledger.json`. Every path is passed explicitly (`--ledger`);
 nothing is searched for. The file is written atomically with mode 0600 and must not be a symlink.
 An absent ledger file counts as empty. The collector never writes it: only `ledger.py record`,
@@ -26,6 +29,7 @@ An absent ledger file counts as empty. The collector never writes it: only `ledg
 | `baseline` | counts for the window before the fix |
 | `edits` | every file change the tool made, with a fingerprint |
 | `observations` | one per run that produced a usable verdict |
+| `outcome_only` | only on outcome entries, and then always `true`; absent on learning entries (and in every ledger written before 0.15.0, which still loads unchanged) |
 
 Only `active` entries are counted and evaluated. Mechanisms form the ladder
 `memory < rule < hook < skill`. `setting` has no next rung, so it is never escalated.
@@ -77,6 +81,7 @@ Escalating writes a new entry with `supersedes` set to the old one.
   `removable` (for example, an appended value that already existed in the array is refused as an
   ambiguous duplicate).
 - The report file stem becomes the entry's `run` and must be at most 120 characters.
+- `outcome_only`: optional, only `true`; see "Outcome entries" for the rules it brings.
 
 ## Selectors
 
@@ -86,7 +91,7 @@ Escalating writes a new entry with `supersedes` set to the old one.
 | `keywords`, source `friction_details` | sessions whose `/insights` facet `friction_detail` contains a keyword |
 | `friction_category` | the facet `friction_counts` for one category name |
 | `failure_loops` | turns with a failing-cycle loop (`transcripts.failure_loops`); matched sessions are main sessions with at least one such turn, scanned sessions those with any turn in the window |
-| `metric` | one labeled report metric (name, basis, unit, source) compared between reports |
+| `metric` | a catalog metric (see "Outcome metrics") computed from the snapshot, or any other labeled report metric (name, basis, unit, source) compared between reports |
 
 Keywords: 1 to 5 per selector, each 1 to 40 characters, literal strings (no regular expressions),
 matched case-insensitively. A keyword that the collector's redaction would change (it looks like a
@@ -108,7 +113,8 @@ Counts are marked `complete: false`, and the verdict becomes `unknown`, when:
   the window and makes the counts incomplete. Sessions that have session metadata but no facet
   are not a gap; they are simply not scanned by facet selectors.
 
-A metric selector is complete only when the report's metric coverage is complete.
+A metric selector is complete only when the report's metric coverage is complete. A catalog
+metric is complete as its row in "Outcome metrics" says.
 
 ## Verdicts
 
@@ -120,6 +126,7 @@ them with the baseline and writes one `trend.ledger` row per active entry.
 | `too_early` | `few_sessions` | fewer than 5 post-fix sessions scanned |
 | `too_early` | `weak_baseline` | baseline matched fewer than 3 sessions |
 | `too_early` | `window_overlaps_fix` | metric report window starts before the fix |
+| `too_early` | `collected_before_fix` | point-in-time catalog metric: the snapshot was collected before `applied_at` |
 | `dropped` | `rate_at_or_below_half` | post-fix session match rate is at most half the baseline rate (metrics: value at most half) |
 | `not_dropped` | `rate_above_half` | rate is above half the baseline rate |
 | `quiet` | `quiet` | 30 days or more since the fix, zero matches now and in the previous usable observation |
@@ -138,7 +145,89 @@ the verdict is not `unknown`; `unknown` rows still appear in the report.
 - Hooks are never proposed for retirement in v1: a hook that works keeps the pattern quiet, so
   quiet is not evidence the hook is unnecessary.
 
-`unknown` and `too_early` rows are reported and never acted on.
+`unknown` and `too_early` rows are reported and never acted on. Outcome entries get no proposal
+whatever their verdict.
+
+## Outcome entries
+
+After `apply_ops.py` or `prune_permissions.py` applies an approved SEC or COST fix whose finding
+check has a metric below, record a report-only entry with the usual `ledger.py record` command and
+this spec:
+
+```json
+{
+  "id": "L-20261111-1",
+  "finding_id": "SEC-risky-allow:global",
+  "pattern": "Broad allow rules removed from user settings",
+  "mechanism": "setting",
+  "selector": {"type": "metric", "name": "risky_allow_rule_count", "basis": "measured",
+               "unit": "rules", "source": "settings.permissions.risky"},
+  "edits": [],
+  "outcome_only": true
+}
+```
+
+`record` refuses the spec unless all of these hold:
+
+- `outcome_only` is `true`, `mechanism` is `setting`, `edits` is empty and there is no
+  `supersedes`. The changed files and backups are in the report's `applied` item; an outcome
+  entry records no edits, so nothing can remove it.
+- The finding is in the `--report` file, its id starts with `SEC-` or `COST-`, its `check` (or
+  the id before `:`) is listed below, and the selector is one of that check's metrics with the
+  catalog's exact labels.
+- The report's `applied` array holds an item for that finding with `status` `applied`.
+- The `--snapshot` (the Step 1 snapshot, collected before the fix) has `generated_utc`, the metric
+  has a value above 0 in it, and it was collected no later than the record time.
+
+The baseline is the metric computed from that snapshot; the model never supplies a value.
+
+**Marker choice.** Outcome entries carry `outcome_only: true` rather than a new `mechanism`:
+`mechanism` keeps saying what kind of change was made (`setting`), and the flag is the single
+thing every report-only rule checks. Older ledgers have no such field and load unchanged.
+
+**Report-only.** An outcome entry is never escalated or removed, never proposed for retirement, and nothing offers either:
+
+- `proposal` is always null on its `trend.ledger` row, and `process_report.py` refuses a row with
+  `outcome_only: true` that carries a proposal or a metric outside the catalog;
+- `ledger.py remove --entry <id>` refuses it (exit 1), and `remove --all` skips it;
+- no entry may supersede it, and it supersedes nothing.
+
+## Outcome metrics
+
+Each value is computed by `scripts/outcome_metrics.py` from snapshot fields the collector already
+writes, by the fixed rule below, so the next audit produces a comparable value. Labels must match
+exactly. The window is the snapshot's: `window` metrics cover `window_days` ending at
+`generated_utc`; `point` metrics are the state at `generated_utc` (`from` equals `to`).
+
+| Name | Unit | Source | Basis | Kind | Rule | Complete when |
+|---|---|---|---|---|---|---|
+| `context_baseline_tokens_median` | `tokens` | `transcripts.context_baseline_tokens.median` | `measured` | window | the median of first main-thread request tokens per session | every `transcripts.*` coverage source is `collected` with nothing omitted |
+| `cache_write_share` | `ratio` | `transcripts.cache.write_tokens` | `measured` | window | `write_tokens / (read_tokens + write_tokens)`, 3 decimals; null without tokens | as above |
+| `allow_rule_count` | `rules` | `settings.permissions.allow_count` | `measured` | point | sum of `allow_count` over user and project settings files, once per path | every file has an integer `allow_count` |
+| `risky_allow_rule_count` | `rules` | `settings.permissions.risky` | `measured` | point | distinct (settings path, rule) pairs over every risky flag of those files | no flag list holds the collector's cap of 6 rules, and the snapshot is not metadata-only (masked rule text can merge) |
+
+Permission prompts per session are not collected (transcripts record denials, not prompts), so no
+prompt metric exists.
+
+| Finding check | Metrics |
+|---|---|
+| `SEC-risky-allow` | `risky_allow_rule_count`, `allow_rule_count` |
+| `SEC-secret-literal` | `risky_allow_rule_count`, `allow_rule_count` |
+| `SEC-secret-env` | `risky_allow_rule_count`, `allow_rule_count` |
+
+Prefer `risky_allow_rule_count`: the prune removes those rules, while a total allow count rarely
+halves. No COST check is listed: neither helper applies a COST change (`apply_ops.py` writes only
+`sandbox.*` keys), and `SEC-sandbox` has no metric because prompts are not collected. The two
+`transcripts` metrics exist for when a listed check needs them, and any metric-selector entry
+using their exact labels is computed from the snapshot too.
+
+The verdict rules are those of metric selectors: value at most half the baseline is `dropped`;
+`window` metrics are `too_early` until the snapshot window starts after `applied_at`, `point`
+metrics until a snapshot is collected after it; scope or window change, a missing value or
+collection time make the row `unknown`. The report shows each metric row under "Outcome of applied
+fixes" with the finding id, applied date, baseline and current value with their windows, the
+verdict and the caveat that a verdict is a comparison of counts, not proof that the fix caused the
+change. In scope `all`, a project discovered since the baseline adds its settings to the counts.
 
 ## Markers and edit kinds
 
@@ -163,7 +252,8 @@ exists.
 ## Removal
 
 `ledger.py remove --ledger <ledger> (--entry <id> ... | --all)` is a dry run. `--all` covers every
-entry not already `removed`, including `superseded` ones, so the plan may list them. It prints one row
+entry not already `removed`, including `superseded` ones, so the plan may list them, but never an
+outcome entry (`--entry` with one exits 1). It prints one row
 per edit (`entry`, `edit` index, `file`, `kind`, `status`, `reason`) and never values.
 
 | Status | Reasons | Meaning |

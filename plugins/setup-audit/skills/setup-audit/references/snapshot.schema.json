@@ -518,6 +518,9 @@
     "generated": {
       "type": "string"
     },
+    "generated_utc": {
+      "type": "string"
+    },
     "window_days": {
       "type": "integer",
       "minimum": 1

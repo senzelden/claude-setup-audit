@@ -449,7 +449,8 @@ metric that motivated it, so the next run can check whether it moved.
 - **LRN-effectiveness** (`trend.ledger` from the ledger; report-level `applied` + `metrics` only
   for fixes applied before the ledger existed). Act on processor proposals: escalate after two
   consecutive `not_dropped` verdicts, retire quiet memory/rule entries. A verdict is not causal
-  proof.
+  proof. Rows with `outcome_only: true` measure applied SEC/COST fixes: report them in the outcome
+  section only, never as an `LRN-effectiveness` finding.
 - **LRN-failure-loops** (`transcripts.failure_loops`, measured counts; thresholds in `thresholds`). A turn
   (real user prompt to the next, main thread) that repeats one failing Bash command (`repeat_error`) or
   edits one file and fails the tests again (`edit_test`) 3 or more times. Evidence is counts only: `turns_with_loop`

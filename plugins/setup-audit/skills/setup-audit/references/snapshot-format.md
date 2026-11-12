@@ -204,7 +204,9 @@ serialized, sanitized snapshot before printing or writing it; invalid output is 
   not a general JSON Schema implementation. CI also checks the schema with `jsonschema`.
 - JSON values must be finite. The window is a positive integer number of days. The legacy
   `generated` field is local wall time (`YYYY-MM-DD HH:MM`), not a UTC timestamp; window filtering
-  retains the existing family-specific semantics documented in `coverage.md`.
+  retains the existing family-specific semantics documented in `coverage.md`. `generated_utc`
+  (0.15.0, additive) is the same clock reading as `YYYY-MM-DDTHH:MM:SSZ`; ledger outcome metrics
+  use it as the collection time (`ledger.md`).
 
 ## Provenance and completeness
 

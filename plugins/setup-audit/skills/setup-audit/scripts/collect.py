@@ -2377,6 +2377,8 @@ def build_snapshot(a):
     snap = {
         "snapshot_version": VERSION,
         "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime(generated_at)),
+        # The same clock reading in UTC: ledger outcome verdicts compare it with a UTC applied_at.
+        "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(generated_at)),
         "window_days": a.days,
         "collection_scope": {"requested": a.scope, "project": a.project, "projects_collected": len(roots)},
         "global": collect_global(),

@@ -77,7 +77,11 @@ A complete fictional example is in `examples/readable-audit.json` in the plugin 
   `trend.ledger` (added by the processor when run with `--ledger`) holds one row per active
   entry: `entry`, `verdict`, `reason`, `proposal` (`escalate`, `retire` or null),
   `next_mechanism`, and the counts `matches`, `sessions_matched`, `sessions_scanned`, `value`
-  (each may be null). See `ledger.md`.
+  (each may be null), plus `finding_id`, `applied_at` and `outcome_only` (true for a report-only
+  outcome entry, which never carries a proposal). Rows of metric-selector entries add `metric`
+  (`name`, `basis`, `unit`, `source`), `baseline` and `current` (each `value`, `from`, `to`;
+  `current` is null when nothing was measured); the renderer lists them under "Outcome of applied
+  fixes". See `ledger.md`.
 - Text is plain text, including evidence, diffs, commands and URLs. The renderer does not execute
   commands, interpret Markdown, activate URLs, fetch resources, or add model-written narrative.
   Use redacted evidence only; escaping HTML does not redact secrets.

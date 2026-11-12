@@ -351,14 +351,17 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json"
 python3 ${CLAUDE_SKILL_DIR}/scripts/render_report.py "<report_dir>/<stem>.json"
 ```
 
-When a ledger exists or any LRN item may be applied, use this order instead (the `--ledger` and
+When a ledger exists or any LRN item, or a SEC/COST item with an outcome metric, may be applied,
+use this order instead (the `--ledger` and
 `--snapshot` flags go together; the ledger is written only with `--finalize`):
 
 1. Finalize with the ledger:
    `python3 ${CLAUDE_SKILL_DIR}/scripts/process_report.py "<report_dir>/<stem>.json" --finalize --ledger "<report_dir>/ledger.json" --snapshot <snapshot>`
 2. For each `trend.ledger` row with a `proposal`, add a finding `LRN-effectiveness:<entry>` to the
    JSON and the Markdown: `escalate` proposes `next_mechanism`, `retire` proposes
-   `ledger.py remove --entry <id>`. `unknown`/`too_early` rows are reported, never acted on. See
+   `ledger.py remove --entry <id>`. `unknown`/`too_early` rows are reported, never acted on. Rows
+   with `outcome_only: true` never carry a proposal: never add a finding for them, and never offer
+   to escalate or remove them; the HTML shows them under "Outcome of applied fixes". See
    `references/ledger.md`.
 3. If you added findings, re-run the step 1 command with the same flags. This run's ledger
    observation is replaced, not duplicated.
@@ -447,11 +450,19 @@ Table, effects and estimate: `references/cache-effects.md`.
    where `--report` is the current audit JSON (already containing the LRN finding, written in
    Step 4) and `--snapshot` is the Step 1 snapshot (`$TMPDIR/setup-audit-snapshot.json`), which
    supplies the baseline window and scope. Afterwards add `ledger_entry` to the matching
-   `applied` item. Escalations set `supersedes`. Do not
-   record non-LRN fixes. Handle one approved fix at a time: finish its `next-id`, edit (with
+   `applied` item. Escalations set `supersedes`. Record a non-LRN fix only as an outcome entry
+   (next item). Handle one approved fix at a time: finish its `next-id`, edit (with
    markers), verification and `record` before starting the next, because `next-id` reads the
    ledger and prints the same id until the previous entry is recorded. `record` refuses an edit
    that `ledger.py remove` could not undo later.
+10. **Outcome entry.** After `prune_permissions.py` or `apply_ops.py` applied and verified a SEC or
+   COST item whose check has a metric in the "Outcome metrics" table of `references/ledger.md`,
+   and its `applied` item (status `applied`) is in the current audit JSON, run `ledger.py next-id`,
+   write the outcome spec from "Outcome entries" there (`outcome_only: true`, `mechanism:
+   setting`, empty `edits`, the catalog selector copied exactly) and run the same `ledger.py
+   record` command with the Step 1 snapshot. Never write a metric value yourself: `record`
+   computes it from the snapshot. Add `ledger_entry` to the `applied` item. Outcome entries are
+   report-only: never propose escalating, retiring or removing one.
 
 Offer to record declined items in `decisions.yaml` with a `review_after` date and the finding’s
 `evidence_hash` from finalized JSON, so the next run

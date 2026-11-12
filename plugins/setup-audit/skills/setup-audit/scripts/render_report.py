@@ -85,6 +85,51 @@ ACTION_LABELS = {
 }
 
 
+OUTCOME_VERDICTS = {'dropped': 'dropped to half or less of the baseline',
+                    'not_dropped': 'did not drop to half of the baseline', 'too_early': 'too early to judge',
+                    'unknown': 'not comparable this run', 'quiet': 'quiet'}
+CAVEAT = 'A verdict is a comparison of counts, not proof that the fix caused the change.'
+
+
+def _stamp(text, with_time):
+    moment = report_state.timestamp(text)
+    return moment.strftime('%Y-%m-%d %H:%M UTC' if with_time else '%Y-%m-%d')
+
+
+def _measured(window, unit):
+    """'2 rules, at 2026-09-01 10:00 UTC' for a point-in-time value; a date range for a window."""
+    if window is None:
+        return 'Not measured this run'
+    value = window['value']
+    shown = 'no value' if value is None else f'{format(value, ",")} {unit}'
+    if window['from'] == window['to']:
+        return f"{shown}, at {_stamp(window['to'], True)}"
+    return f"{shown}, {_stamp(window['from'], False)} to {_stamp(window['to'], False)}"
+
+
+def outcome_section(parts, rows):
+    """Outcome of applied fixes: one entry per metric-selector ledger row. Report-only: no row
+    here ever offers an action."""
+    if not rows:
+        return
+    parts.append('<section id="outcomes"><h2>Outcome of applied fixes</h2>')
+    parts.append(paragraph(CAVEAT, 'muted'))
+    for row in rows:
+        metric = row['metric']
+        parts.append('<article><h3>' + escape(row.get('finding_id') or row['entry']) + '</h3>')
+        if row.get('applied_at'):
+            parts.append(paragraph('Applied ' + _stamp(row['applied_at'], False)))
+        parts.append(field_label(label(metric['name'])) + '<dl>'
+                     f"<dt>Before the fix</dt><dd>{escape(_measured(row['baseline'], metric['unit']))}</dd>"
+                     f"<dt>Now</dt><dd>{escape(_measured(row.get('current'), metric['unit']))}</dd>"
+                     f"<dt>Verdict</dt><dd>{escape(OUTCOME_VERDICTS.get(row['verdict'], row['verdict']))} "
+                     f"({escape(row['reason'])})</dd></dl>")
+        parts.append(paragraph(f"Source: {metric['source']} ({metric['basis']}); ledger entry {row['entry']}.",
+                               'muted'))
+        parts.append('</article>')
+    parts.append('</section>')
+
+
 def render(report):
     validate(report)
     findings = report.get('findings', [])
@@ -196,6 +241,8 @@ def render(report):
                         'quiet': 'the targeted pattern has been quiet', 'too_early': 'too early to judge',
                         'unknown': 'not comparable this run'}
         for row in trend.get('ledger', []):
+            if row.get('outcome_only'):
+                continue  # report-only outcome rows appear in their own section below
             text = f"Learning fix {row['entry']}: {verdict_text.get(row['verdict'], row['verdict'])} ({row['reason']})"
             counts = (row.get('sessions_matched'), row.get('sessions_scanned'))
             if all(type(n) is int for n in counts):
@@ -211,6 +258,7 @@ def render(report):
             parts.append(paragraph('Some earlier findings were not rechecked; they are not counted as resolved.'))
         parts.append(disclosure('Comparison evidence', trend))
         parts.append('</section>')
+        outcome_section(parts, [r for r in trend.get('ledger', []) if isinstance(r.get('metric'), dict)])
     parts.append('<section id="coverage"><h2>What was checked</h2>')
     coverage = report.get('coverage')
     if coverage is None:

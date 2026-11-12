@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import re
+import outcome_metrics
 
 HISTORY = {'new', 'open', 'regressed', 'resolved', 'suppressed'}
 ACTIONS = {'proposed', 'approved', 'applied', 'partial', 'failed', 'skipped', 'declined'}
@@ -195,6 +196,7 @@ def _validate_report(report, strict=False):
                 require(all(row.get(k) is None or (type(row[k]) is int and row[k] >= 0)
                             for k in ('matches', 'sessions_matched', 'sessions_scanned'))
                         and (row.get('value') is None or finite(row['value'])), 'invalid trend ledger')
+                _validate_outcome_row(row)
         for metric in trend['metrics'].values():
             require(isinstance(metric, dict) and type(metric.get('comparable')) is bool, 'invalid trend metric')
             if metric['comparable']:
@@ -204,6 +206,35 @@ def _validate_report(report, strict=False):
     if strict:
         require(all(item['id'] in seen for item in report['applied']), 'action refers to missing finding')
     return report
+
+
+def _window(value):
+    require(isinstance(value, dict) and set(value) == {'value', 'from', 'to'}
+            and (value['value'] is None or finite(value['value'])), 'invalid trend ledger window')
+    timestamp(value['from'])
+    timestamp(value['to'])
+
+
+def _validate_outcome_row(row):
+    """Outcome fields of a trend.ledger row. A report-only row never carries a proposal, and its
+    metric must be a catalog metric with the catalog's labels, so later audits stay comparable."""
+    require(type(row.get('outcome_only', False)) is bool, 'invalid trend ledger outcome flag')
+    for key in ('finding_id', 'applied_at'):
+        require(key not in row or isinstance(row[key], str), 'invalid trend ledger')
+    if 'applied_at' in row:
+        timestamp(row['applied_at'])
+    if 'metric' in row:
+        metric = row['metric']
+        require(isinstance(metric, dict) and set(metric) == {'name', 'basis', 'unit', 'source'}
+                and all(isinstance(v, str) for v in metric.values()), 'invalid trend ledger metric')
+        _window(row.get('baseline'))
+        if row.get('current') is not None:
+            _window(row['current'])
+    if row.get('outcome_only'):
+        require(row['proposal'] is None and row['next_mechanism'] is None,
+                'outcome rows are report-only and carry no proposal')
+        require('metric' in row and outcome_metrics.catalog_row(dict(row['metric'], type='metric')) is not None,
+                'outcome rows need a catalog metric with its labels')
 
 
 def yaml_scalar(text):
