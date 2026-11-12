@@ -22,83 +22,85 @@ exists; the report says "present, not read" and nothing more.
 The MCP inventory comes only from `claude mcp list` or `/mcp` output that the user pastes (see
 "Pasted output"). Without a paste, MCP checks are reported as "not run: no pasted MCP list".
 
-## Settings and other JSON config: the value-free algorithm
+## Settings and other JSON config: the line allowlist
 
 Applies to `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`,
-managed settings files, and a plugin's `hooks/hooks.json`. Settings files are never Read whole in one
-unchecked call. Every pattern here uses only syntax that Grep (ripgrep) and common regex engines
-share: no lookaround, no backreferences. For each file, in this order:
+managed settings files, and a plugin's `hooks/hooks.json`. These files are never opened with Read,
+not even in line ranges. Claude learns their content only from Grep, in two ways:
+
+- **Counts** (`output_mode: count`) may use any pattern, because they return numbers, never lines.
+  Use them for key presence (`"includeCoAuthoredBy"\s*:`), the line total (`.`, non-empty lines)
+  and the probes below.
+- **Lines** (`output_mode: content`, `-n: true` allowed) only with the patterns listed here, each
+  anchored to the whole line, so a shown line can only be one of the allowed shapes. Never pass
+  `-i` (the patterns are case-sensitive), `-A`, `-B` or `-C` context, or `multiline: true`, and
+  never edit a pattern.
+
+Every pattern here uses only syntax that Grep (ripgrep) and common regex engines share: no
+lookaround, no backreferences. For each file, in this order:
 
 1. **Find it.** Glob for the file. Skip anything on the never-opened list above.
-2. **Probe with counts only.** Run each Grep below with `output_mode: count`, which returns numbers,
-   never lines:
-   - (a) lines naming a value block: `"(env|headers)"`;
-   - (b) a value block opened alone on its line: `^\s*"(env|headers)"\s*:\s*\{\s*$`;
-   - (c) an empty value block alone on its line: `^\s*"(env|headers)"\s*:\s*\{\s*\},?\s*$`;
-   - (d) helper lines: `"(apiKeyHelper|awsAuthRefresh|gcpAuthRefresh|awsCredentialExport|otelHeadersHelper|headersHelper)"`;
-   - (e) a headers helper: `"headersHelper"`;
-   - (f) secret-shaped text in a rule, command, URL, args or helper line:
+2. **Probe with counts only.**
+   - (a) non-empty lines: `.`;
+   - (b) a key and its value on different lines (a line ending or starting with the colon):
+     `(^\s*:|:\s*$)`;
+   - (c) secret-shaped text in a rule, command, URL, args or helper line:
      `(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`;
-   - (g) secret-shaped text in a line made only of quoted strings separated by commas (array
-     elements: allow rules, hook `args`), which never matches a `"KEY": "value"` line:
-     `(?i)^\s*("([^"\\]|\\.)*",\s*)*"([^"\\]|\\.)*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])([^"\\]|\\.)*"(,\s*"([^"\\]|\\.)*")*,?\s*$`;
-   - (h) non-empty lines: `.` (the line count used below), and all lines: `^`;
-   - (i) key names written with Unicode escapes (`"\u0065nv"` reads as `"env"` to a JSON parser,
-     but no probe above sees it): `"[^"]*\\u[0-9A-Fa-f]{4}[^"]*"\s*:`;
-   - (j) lines that leave a `{` open: `\{[^}]*$`;
-   - (k) openings the structure map can see: `^\s*("[^"]*"\s*:\s*)?\{\s*$`.
+   - (d) secret-shaped text in a line made only of quoted strings separated by commas (array
+     elements: allow rules, hook `args`):
+     `(?i)^\s*("([^"\\]|\\.)*",\s*)*"([^"\\]|\\.)*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])([^"\\]|\\.)*"(,\s*"([^"\\]|\\.)*")*,?\s*$`.
 
    A value starting with `$` (a `$VAR` or `${VAR}` reference, quoted or not) is not secret-shaped.
-   The file is **not read** at all, and goes in the coverage list as "not read" with the probe that
-   fired, when:
-   - count (a) differs from count (b) + count (c). Both forms are anchored to the whole line, so
-     this holds only when every line naming `env` or `headers` is exactly an opening alone on its
-     line or an empty block alone on its line. A value on an opening line (`"env": {"A": "x"}`), a
-     block opened after other text (`}, "env": {`), two blocks on one line, or a key and brace on
-     separate lines all break it;
-   - count (e) is above 0 (a headers helper is a command that prints header values);
-   - count (i) is above 0 (an escaped key name could hide `env`, `headers` or a helper);
-   - count (j) differs from count (k): some object opens on a line that also carries other text
-     (`"A": {"n": 1,`), so step 3 could not map it and a value block could end early;
-   - count (f) + count (g) is above 0 (also report `SEC-secret-literal` with the count only);
-   - the file has exactly one non-empty line (minified JSON: any line-number Grep would print
-     values).
+   When count (a) is 1 the file is minified: the anchored patterns below can't match it, so report
+   "not read: compact JSON layout — reformat to audit" and use counts only. When count (c) + count
+   (d) is above 0, report `SEC-secret-literal` with the count only.
+3. **Show allowlisted lines.** Run these content Greps:
+   - known non-secret settings with a scalar value:
+     `^\s*"(model|fallbackModel|effortLevel|maxEffortLevel|cleanupPeriodDays|alwaysThinkingEnabled|disableAllHooks|allowManagedHooksOnly|allowManagedPermissionRulesOnly|allowManagedDomainsOnly|allowManagedReadPathsOnly|enableAllProjectMcpServers|enableArtifact|disableClaudeAiConnectors|isolatePeerMachines|remoteControlAtStartup|crossSessionInbound|useAutoModeDuringPlan|syncClaudeAiSkills|syncClaudeAiPlugins|requiredMinimumVersion|spinnerTipsEnabled|promptCacheTtl|subagentPromptCacheTtl|idleCompaction|skipDangerousModePermissionPrompt|defaultMode|disableBypassPermissionsMode|disableAutoMode|denyInsteadOfPrompting|blockReadsOutsideWorkingDirectories|blockWritesOutsideWorkingDirectories|enabled|failIfUnavailable|autoAllowBashIfSandboxed|allowUnsandboxedCommands|enableWeakerNestedSandbox|enableWeakerNetworkIsolation|allowNestedUserNamespaces|allowAppleEvents|allowLocalBinding|allowAllUnixSockets|strictAllowlist|httpProxyPort|socksProxyPort|disabled)"\s*:\s*("[^"\\]*"|true|false|null|-?\d+(\.\d+)?),?\s*$`
+     (the keys come from the settings, permissions, sandboxing, model and env-var pages; no helper
+     or credential-bearing key is on the list: not `apiKeyHelper`, `awsAuthRefresh`,
+     `gcpAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`, `headersHelper`, nor any name
+     with Token, Secret, Password, Key, Header, Credential or Auth in it);
+   - object and array openings, key name only (the value starts on a later line):
+     `^\s*"[A-Za-z][A-Za-z0-9_.-]*"\s*:\s*[\[{]\s*$`
+     (this shows that `env`, `headers`, `hooks`, `permissions` or an event name exists, never
+     what is inside);
+   - true, false or null under any key name (`enabledPlugins` entries, flags not on the list):
+     `^\s*"[A-Za-z0-9_.@/-]+"\s*:\s*(true|false|null),?\s*$`;
+   - hook fields: `^\s*"(type|matcher|event|timeout|async|onFailure)"\s*:\s*("[^"\\]*"|true|false|-?\d+),?\s*$`;
+   - only when count (c) + count (d) is 0, hook commands and URLs:
+     `^\s*"(command|url)"\s*:\s*"[^"\\]*",?\s*$`;
+   - only when count (c) + count (d) is 0 and count (b) is 0, permission rules (a line that is
+     exactly one string starting with a tool name):
+     `^\s*"(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|Grep|LS|Agent|Task|Skill|mcp__[A-Za-z0-9_*-]+)(\([^"\\]*\))?",?\s*$`.
+     Count (b) must be 0 because a lone string line after a split key could be a value, not a
+     rule.
 
-   The structural skip of `env`, `headers` and helper lines (steps 2 to 4) is the guarantee. The
-   secret-shaped probes (f) and (g) are defence in depth for secrets typed into rules, hook
-   commands and args: they catch known shapes on a best-effort basis, not every secret. Not
-   covered, for example: a password passed as a separate argument (`-pSECRET`, `--password X`) or
-   a bare token with no known prefix. The report's coverage list says "inline secrets in rules and
-   commands checked by known shapes only".
-3. **Map the structure with lines that can't carry a value.** Run line-number Grep (`-n: true`,
-   `output_mode: content`) only for these, never with `-A`, `-B` or `-C` context:
-   - block openings: `^\s*("[^"]*"\s*:\s*)?[\[{]\s*$` (a key and a bracket, nothing else);
-   - block closings: `^\s*[\]}],?\s*$`.
-
-   Pair them in line order as a stack. The root object's own `{` and `}` lines are not a block;
-   the lines directly inside the root are at depth 1 (top-level keys), lines inside a top-level
-   block are at depth 2, and so on. An opening whose line matches probe (b) starts a **value
-   block**, which ends at its paired closing line. The file is "not read" when the openings and
-   closings don't pair up (a closing with no opening, a bracket of the other kind, an opening left
-   over), or when any opening lies inside a value block (a nested object inside `env` or
-   `headers`).
-4. **Read in ranges.** Read the file with `offset` and `limit` so that every range skips every value
-   block, including its opening and closing lines.
-   - With no helper (count (d) is 0), every other line may be read.
-   - With a helper, read only lines at depth 2 or deeper, and skip every depth-1 line: helper keys
-     are top-level scalars, so their lines are never in a range. The key names of skipped depth-1
-     blocks are known from the step 3 map; report the skipped top-level scalars as "not read:
-     helper present".
+   Otherwise the gated lines are counted, not shown: "N rules not shown: secret-shaped text".
+   Lines that match no allowlisted pattern are reported as a count ("N other lines not shown");
+   a rule or command containing a backslash, or a compact hook written on one line, is one of
+   them.
+4. **Why no value leaks.** JSON strings can't span lines, so each pattern above sees one whole
+   key and value. Values inside `env` are `"NAME": "value"` pairs; environment variable names are
+   uppercase by convention, and the only patterns that show a string or number value accept just
+   the listed lowercase or camelCase settings names, so an env line doesn't match (the patterns are
+   case-sensitive). The opening and true/false patterns accept any name but show no string value,
+   and env values are always strings. Header names (`Authorization`, `X-Api-Key`) and helper keys
+   aren't on the lists either. The remaining case is an env or header
+   entry whose name happens to equal an allowlisted lowercase settings key (an env variable called
+   `model`): its value is shown, and it is not a credential by name. Key names written with Unicode
+   escapes (`"\u0065nv"`) contain a backslash and match nothing.
 
    Record key names seen inside `permissions`, `hooks`, `sandbox`, `enabledPlugins` and the rest.
-   `env` and `headers` key names inside a skipped block are not seen; say "env block present, names
-   not read".
-5. **Anything not cleanly split** is "not read" with the reason in the report's coverage list:
-   unpaired structure, an expected range that would include a line inside a value block, or a file
-   that changed between steps (its counts differ on a second probe).
+   `env` and `headers` names are not seen; say "env block present, names not read". The secret
+   probes (c) and (d) are defence in depth for secrets typed into rules, hook commands and URLs:
+   they catch known shapes on a best-effort basis, not every secret. Not covered, for example: a
+   password passed as a separate argument (`-pSECRET`, `--password X`) or a bare token with no known
+   prefix. The report's coverage list says "inline secrets in rules and commands checked by known
+   shapes only".
 
-If a Read result ever shows a value anyway (a secret-shaped string, a token, a password), stop
-reading that file, don't repeat the value anywhere, and report the file as "not read: value seen,
+If a Grep result ever shows a value anyway (a secret-shaped string, a token, a password), stop
+searching that file, don't repeat the value anywhere, and report the file as "not read: value seen,
 rotate if it is a credential".
 
 ## Markdown and repo files
@@ -116,38 +118,34 @@ rotate if it is a credential".
 
 Glob for names first (`Makefile`, `justfile`, `package.json`, `pyproject.toml`, `tsconfig.json`,
 version pin files, `.pre-commit-config.yaml`, CI workflow files, `docs/adr/`). Presence is enough for
-most readiness checks. Before reading any section of `package.json`, `pyproject.toml` or
-`tsconfig.json`, run this count-only probe over the whole file (it also matches `"KEY": "value"`
-lines, such as script values):
+most readiness checks. Manifests are never opened with Read either; the same line-allowlist idea
+applies. Before any content Grep of `package.json` or `pyproject.toml`, run this count-only probe
+over the whole file (it also matches `"KEY": "value"` lines, such as script values):
 
 `(?i)(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`
 
-A hit means only section header names are read (the header Grep below, or the block map's key
-names for JSON), and the file is reported "not read: secret-shaped text". Otherwise only these
-sections are ever read:
+A hit means only names are shown (section headers, the `"scripts"` opening) and the file is
+reported "not read: secret-shaped text".
 
-- `pyproject.toml`: `[project.scripts]`, `[tool.pytest*]` (such as `[tool.pytest.ini_options]`),
-  `[tool.ruff]` and its subtables, `[tool.mypy]`, `[tool.pyright]`. Find section headers with a
-  line-number Grep for `^\[\[?[A-Za-z]` (header lines hold only the section name; array
-  continuation lines starting with `[` and a quote or digit don't match); a section runs from its
-  header to the next one. Never read a section whose name contains `index`, `source`, `publish` or
-  `registry` (package indexes and upload settings can carry credentials), and never read
-  `[project]` itself.
-- `package.json`: the `"scripts"` block only, located with the same probes and block map as
-  settings files (steps 2 and 3); never the rest of the file.
-- `tsconfig.json`: the `"compilerOptions"` block only, located the same way.
-- `Makefile` and `justfile`: target names only, from a line-number Grep for
-  `^[A-Za-z0-9_.-]+:[^=]*$` (a target line; variable assignments contain `=` and don't match); the
-  recipes are never read.
+- `pyproject.toml`: section header names from a content Grep for `^\[\[?[A-Za-z]` (header lines
+  hold only the section name; array continuation lines starting with `[` and a quote or digit don't
+  match). Presence of `[project.scripts]`, `[tool.pytest*]`, `[tool.ruff]`, `[tool.mypy]` and
+  `[tool.pyright]` is what readiness needs. With no probe hit, the strict setting:
+  `^\s*(strict|typeCheckingMode)\s*=\s*("[a-z]+"|true|false)\s*$`.
+- `package.json`: the `"scripts"` opening from the opener pattern above; with no probe hit, the
+  common script lines: `^\s*"(test|lint|check|format|typecheck|build|dev|start|ci|verify|setup|bootstrap|prepare)(:[A-Za-z0-9_.:-]+)?"\s*:\s*"[^"\\]*",?\s*$`. Other scripts are counted only.
+- `tsconfig.json`: `^\s*"strict"\s*:\s*(true|false),?\s*$`.
+- `Makefile` and `justfile`: target names only, from a content Grep for `^[A-Za-z0-9_.-]+:[^=]*$` (a target
+  line; variable assignments contain `=` and don't match); the recipes are never read.
 - Everything else (pin files, pre-commit config, CI workflows, ADR directories): Glob only.
 
 ## Counting
 
 Counts never bring content into context. Use Grep with `output_mode: count` (or
 `files_with_matches` when only presence matters) for: line counts, how often a named mistake
-appears in session logs, how often a denied action was still tried, and every probe in step 2.
-Search patterns for session logs are built from the user's own words for the mistake, reduced to a
-fixed phrase; never from config values.
+appears in session logs, how often a denied action was still tried, and every probe in step 2 of
+the settings rules. Search patterns for session logs are built from the user's own words for the
+mistake, reduced to a fixed phrase; never from config values.
 
 ## Pasted output
 

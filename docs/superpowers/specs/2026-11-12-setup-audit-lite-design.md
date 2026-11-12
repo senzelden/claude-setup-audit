@@ -96,10 +96,14 @@ noticed" list.
 ## Reading the setup (no credential values in context)
 
 - Claude reads with Read, Grep, Glob, LS only.
-- Settings files are never Read whole. Claude first Greps for the line numbers of `env`, `headers`
-  and similar value-bearing blocks, then Reads the file in line ranges around them, so key names are
-  seen but values are not. Anything it can't split safely is reported as "not read" with the reason
-  (user agreed to this tradeoff).
+- Settings files are never opened with Read, not even in line ranges (builder's change after
+  review, 2026-11-12: a text-level JSON structure scanner kept missing valid layouts that leak a
+  value). Claude sees their content only through content-mode Grep with whole-line allowlisted
+  shapes: known non-secret settings keys with scalar values, object and array openings (key names
+  only), true/false flags, hook fields, and, when no secret-shaped count probe fires, permission
+  rules and hook commands. Count-only Grep may use any pattern. So key names are seen but `env`,
+  `headers` and helper values are not; whatever matches no allowed shape (including minified files)
+  is reported as a count or as "not read" with the reason (user agreed to this tradeoff).
 - **MCP config files (`.mcp.json`, plugin MCP files) and `~/.claude.json` are never opened, Read or
   Grepped** (user decision 2026-11-12, matching full-plugin 0.14.5, because the directory's
   MCP_FORWARDS_CREDENTIAL_ENV hold applied plugin-wide). The MCP inventory comes from `claude mcp

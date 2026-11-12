@@ -295,17 +295,38 @@ NOT_STALE_STATUSES = {'old style, still valid', 'current again'}
 READ_VERB = re.compile(r'(?i)\b(read|grep|open)\b')
 MCP_OR_GLOBAL_CONFIG_FILE = re.compile(r'\.mcp\.json|\.claude\.json')
 NEGATION = re.compile(r'(?i)\b(never|not)\b')
-# Probes and structure patterns of the value-free algorithm in reading-rules.md, copied verbatim
-# (a test asserts each appears there). They must stay within syntax that Python re and ripgrep
-# share: no lookaround and no backreferences (test_documented_patterns_portable).
-VALUE_KEY = r'"(env|headers)"'
-# Both forms are anchored to the whole line: every line naming env/headers must be exactly one.
-VALUE_OPEN_EOL = r'^\s*"(env|headers)"\s*:\s*\{\s*$'
-VALUE_EMPTY = r'^\s*"(env|headers)"\s*:\s*\{\s*\},?\s*$'
-HELPER = (r'"(apiKeyHelper|awsAuthRefresh|gcpAuthRefresh|awsCredentialExport|otelHeadersHelper|'
-          r'headersHelper)"')
-HEADERS_HELPER = r'"headersHelper"'
-# Secret shapes: defence in depth, best effort by known shapes (the structural skip is the guarantee).
+# Patterns of the allowlist reading rules in reading-rules.md, copied verbatim (a test asserts each
+# appears there). They must stay within syntax that Python re and ripgrep share: no lookaround and
+# no backreferences (test_documented_patterns_portable).
+# Settings files are never Read; Claude sees only lines that match one of these whole-line shapes.
+# Keys are lowercase or camelCase settings names from the docs, never a helper or credential name
+# (test_allowlisted_keys_are_settings_names); env variable names are uppercase by convention.
+SCALAR_KEYS = ('model|fallbackModel|effortLevel|maxEffortLevel|cleanupPeriodDays|alwaysThinkingEnabled|'
+               'disableAllHooks|allowManagedHooksOnly|allowManagedPermissionRulesOnly|'
+               'allowManagedDomainsOnly|allowManagedReadPathsOnly|enableAllProjectMcpServers|'
+               'enableArtifact|disableClaudeAiConnectors|isolatePeerMachines|remoteControlAtStartup|'
+               'crossSessionInbound|useAutoModeDuringPlan|syncClaudeAiSkills|syncClaudeAiPlugins|'
+               'requiredMinimumVersion|spinnerTipsEnabled|promptCacheTtl|subagentPromptCacheTtl|'
+               'idleCompaction|skipDangerousModePermissionPrompt|defaultMode|'
+               'disableBypassPermissionsMode|disableAutoMode|denyInsteadOfPrompting|'
+               'blockReadsOutsideWorkingDirectories|blockWritesOutsideWorkingDirectories|enabled|'
+               'failIfUnavailable|autoAllowBashIfSandboxed|allowUnsandboxedCommands|'
+               'enableWeakerNestedSandbox|enableWeakerNetworkIsolation|allowNestedUserNamespaces|'
+               'allowAppleEvents|allowLocalBinding|allowAllUnixSockets|strictAllowlist|httpProxyPort|'
+               'socksProxyPort|disabled')
+SCALAR_VALUE = r'("[^"\\]*"|true|false|null|-?\d+(\.\d+)?)'
+SCALAR_SETTING = r'^\s*"(' + SCALAR_KEYS + r')"\s*:\s*' + SCALAR_VALUE + r',?\s*$'
+OPENER = r'^\s*"[A-Za-z][A-Za-z0-9_.-]*"\s*:\s*[\[{]\s*$'
+BOOLEAN_FLAG = r'^\s*"[A-Za-z0-9_.@/-]+"\s*:\s*(true|false|null),?\s*$'
+RULE_LINE = (r'^\s*"(Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|'
+             r'Grep|LS|Agent|Task|Skill|mcp__[A-Za-z0-9_*-]+)(\([^"\\]*\))?",?\s*$')
+HOOK_FIELD = r'^\s*"(type|matcher|event|timeout|async|onFailure)"\s*:\s*("[^"\\]*"|true|false|-?\d+),?\s*$'
+HOOK_TARGET = r'^\s*"(command|url)"\s*:\s*"[^"\\]*",?\s*$'
+# A key and its value on different lines: a lone string line could then be a value, not a rule.
+SPLIT_LINE = r'(^\s*:|:\s*$)'
+NON_EMPTY = '.'
+# Secret shapes: best effort by known shapes (the allowlist is the guarantee for env, headers and
+# helpers; these guard the free-text rule, command and URL lines).
 _ANY_QUOTE = r"""(\\?["'])?"""  # an optional, possibly escaped, quote before a value
 _SECRET_SHAPES = '|'.join([
     r"""bearer\s+[^\s$"'\\][^\s"'\\]{11,}""",
@@ -323,14 +344,16 @@ SECRET_IN_ELEMENT = (r'(?i)^\s*("' + _STRING_BODY + r'",\s*)*"' + _STRING_BODY +
                      + ')' + _STRING_BODY + r'"(,\s*"' + _STRING_BODY + r'")*,?\s*$')
 SECRET_IN_MANIFEST = r'(?i)(' + _SECRET_SHAPES + ')'
 TOML_HEADER = r'^\[\[?[A-Za-z]'
-ESCAPED_KEY = r'"[^"]*\\u[0-9A-Fa-f]{4}[^"]*"\s*:'
-OPEN_BRACE_LINE = r'\{[^}]*$'
-MAPPED_BRACE_OPEN = r'^\s*("[^"]*"\s*:\s*)?\{\s*$'
-BLOCK_OPEN = r'^\s*("[^"]*"\s*:\s*)?[\[{]\s*$'
-BLOCK_CLOSE = r'^\s*[\]}],?\s*$'
-DOCUMENTED_PATTERNS = (VALUE_KEY, VALUE_OPEN_EOL, VALUE_EMPTY, HELPER, HEADERS_HELPER, SECRET_IN_RULE,
-                       SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER, ESCAPED_KEY,
-                       OPEN_BRACE_LINE, MAPPED_BRACE_OPEN, BLOCK_OPEN, BLOCK_CLOSE)
+PY_STRICT = r'^\s*(strict|typeCheckingMode)\s*=\s*("[a-z]+"|true|false)\s*$'
+TS_STRICT = r'^\s*"strict"\s*:\s*(true|false),?\s*$'
+SCRIPT_LINE = (r'^\s*"(test|lint|check|format|typecheck|build|dev|start|ci|verify|setup|bootstrap|'
+               r'prepare)(:[A-Za-z0-9_.:-]+)?"\s*:\s*"[^"\\]*",?\s*$')
+MAKE_TARGET = r'^[A-Za-z0-9_.-]+:[^=]*$'
+DOCUMENTED_PATTERNS = (SCALAR_SETTING, OPENER, BOOLEAN_FLAG, RULE_LINE, HOOK_FIELD, HOOK_TARGET,
+                       SPLIT_LINE, SECRET_IN_RULE, SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER,
+                       PY_STRICT, TS_STRICT, SCRIPT_LINE, MAKE_TARGET)
+# Words that mark a helper or credential-bearing key; no allowlisted key may contain one.
+CREDENTIAL_KEY_WORDS = re.compile(r'(?i)token|secret|password|key|header|credential|auth|helper|refresh|export')
 SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
                 'luongnv89/claude-howto', 'hesreallyhim/awesome-claude-code',
                 'simonwillison.net/tags/claude-code', 'systima.ai/blog/claude-code-vs-opencode-token-overhead',
@@ -418,49 +441,114 @@ def mcp_instruction_problems(root):
     return problems
 
 
-def simulate_settings_read(text):
-    """Run the reading-rules algorithm on a settings file's text, as Grep and Read would.
+SETTINGS_PATTERNS = {'scalar': SCALAR_SETTING, 'opener': OPENER, 'boolean': BOOLEAN_FLAG,
+                     'rule': RULE_LINE, 'hook_field': HOOK_FIELD, 'hook_target': HOOK_TARGET}
 
-    Returns (reason, []) when the file is "not read", else (None, [line numbers read]).
+
+def grep_shown(text, patterns=None, gate=True):
+    """Lines of a settings file that content-mode Grep shows under the reading rules.
+
+    Returns (reason, lines): reason is set when the file is reported "not read" as a whole. Counts
+    (output_mode: count) never show lines, so only the content-mode patterns matter here. Lines are
+    split on newline only, as ripgrep does, so a carriage return stays on the line.
     """
-    lines = text.splitlines()
+    p = dict(SETTINGS_PATTERNS, **(patterns or {}))
+    lines = text.split('\n')
 
     def count(pattern):
         return sum(1 for line in lines if re.search(pattern, line))
 
-    if count(VALUE_KEY) != count(VALUE_OPEN_EOL) + count(VALUE_EMPTY):
-        return 'value on an opening line or split key', []
-    if count(HEADERS_HELPER):
-        return 'headers helper', []
-    if count(SECRET_IN_RULE) + count(SECRET_IN_ELEMENT):
-        return 'secret-shaped', []
-    if count('.') == 1:
-        return 'one non-empty line', []
-    if count(ESCAPED_KEY):
-        return 'unicode-escaped key name', []
-    if count(OPEN_BRACE_LINE) != count(MAPPED_BRACE_OPEN):
-        return 'object opened on a line with other text', []
-    helper = count(HELPER) > 0
-    stack, depth_of, in_value = [], {}, set()
-    for number, line in enumerate(lines, 1):
-        depth_of[number] = len(stack)
-        if stack and stack[-1][1]:
-            in_value.add(number)
-        if re.search(BLOCK_OPEN, line):
-            if stack and stack[-1][1]:
-                return 'opening inside a value block', []
-            stack.append((line.rstrip()[-1], bool(re.search(VALUE_OPEN_EOL, line))))
-            if stack[-1][1]:
-                in_value.add(number)
-        elif re.search(BLOCK_CLOSE, line):
-            if not stack or {'{': '}', '[': ']'}[stack[-1][0]] != line.strip().rstrip(',')[0]:
-                return 'unpaired structure', []
-            stack.pop()
-    if stack:
-        return 'unpaired structure', []
-    read = [n for n in range(1, len(lines) + 1)
-            if n not in in_value and (not helper or depth_of[n] >= 2)]
-    return None, read
+    if count(NON_EMPTY) == 1:
+        return 'compact JSON layout', []
+    shown = [p['scalar'], p['opener'], p['boolean'], p['hook_field']]
+    secret = count(SECRET_IN_RULE) + count(SECRET_IN_ELEMENT) > 0
+    if not gate or not secret:
+        shown.append(p['hook_target'])
+        if not gate or not count(SPLIT_LINE):
+            shown.append(p['rule'])
+    return None, [line for line in lines if any(re.search(pat, line) for pat in shown)]
+
+
+def allowlisted_key_problems(patterns):
+    """Keys in the settings and hook allowlists that aren't plain settings names."""
+    problems = []
+    for pattern in patterns:
+        keys = re.match(r'\^\\s\*"\(([^)]*)\)"', pattern).group(1).split('|')
+        for key in keys:
+            if not re.fullmatch(r'[a-z][A-Za-z0-9]*', key):
+                problems.append('not lowercase or camelCase: %s' % key)
+            if CREDENTIAL_KEY_WORDS.search(key):
+                problems.append('credential-bearing name: %s' % key)
+    return problems
+
+
+SECRET = 'SECRET' + 'VAL'  # marker for a value that must never be shown
+# Settings layouts that carry a value Claude must not see, including every leak sample from the
+# structure-scanner rounds. Fixture secrets are assembled at run time so they never look like real
+# vendor keys.
+LEAK_SAMPLES = {
+    'env value line': '{\n  "env": {\n    "API_TOKEN": "%s",\n    "B": "x"\n  }\n}',
+    'tight inline env': '{\n  "env": {"A": "%s"},\n  "model": "opus"\n}',
+    'spaced inline env': '{\n  "env": { "A": "%s" },\n  "model": "opus"\n}',
+    'inline env ending in an allowlisted pair': '{\n  "env": {"API_TOKEN": "%s"}, "model": "opus",\n'
+                                                '  "x": 1\n}',
+    'two pairs on one line': '{\n  "env": {\n    "effortLevel": "high", "API_TOKEN": "%s",\n'
+                             '    "model": "opus", "API_KEY": "%s"\n  }\n}',
+    'block opened after other text': '{\n  "permissions": {\n    "allow": []\n  }, "env": {\n'
+                                     '    "A": "%s"\n  }\n}',
+    'escaped env key, inline': '{\n  "\\u0065nv": {"A": "%s"},\n  "model": "opus"\n}',
+    'escaped env key, pretty': '{\n  "\\u0065nv": {\n    "A": "%s"\n  }\n}',
+    'escaped helper key': '{\n  "apiKey\\u0048elper": "echo %s",\n  "model": "opus"\n}',
+    'escaped allowlisted key': '{\n  "\\u006dodel": "%s",\n  "x": 1\n}',
+    'brace in a string hides an opening': '{\n  "env": {\n    "A": {"n": "}",\n    "m": 2\n    },\n'
+                                          '    "B": "%s" }\n}',
+    'object opened mid-line inside env': '{\n  "env": {\n    "A": {"n": 1,\n    "m": 2\n    },\n'
+                                         '    "B": "%s" }\n}',
+    'value block and empty block on one line': '{\n  "env": {"A": "%s"}, "headers": {},\n'
+                                               '  "model": "opus"\n}',
+    'nested object in env': '{\n  "env": {\n    "A": {\n      "B": "%s"\n    }\n  }\n}',
+    'brace on next line': '{\n  "env":\n  {\n    "A": "%s"\n  }\n}',
+    'helpers': '{\n  "apiKeyHelper": "echo %s",\n  "awsAuthRefresh": "%s",\n'
+               '  "gcpAuthRefresh": "%s",\n  "awsCredentialExport": "%s",\n'
+               '  "otelHeadersHelper": "%s",\n  "headersHelper": "%s",\n  "model": "opus"\n}',
+    'hook headers': '{\n  "hooks": {\n    "PostToolUse": [\n      {\n        "type": "http",\n'
+                    '        "headers": {\n          "Authorization": "Bearer %s",\n'
+                    '          "X-Api-Key": "%s",\n          "authorization": "%s",\n'
+                    '          "x-api-key": "%s"\n        }\n      }\n    ]\n  }\n}',
+    'credential-named lowercase keys': '{\n  "token": "%s",\n  "apiKey": "%s",\n  "password": "%s",\n'
+                                       '  "secret": "%s",\n  "authToken": "%s"\n}',
+    'uppercase allowlisted name': '{\n  "env": {\n    "MODEL": "%s",\n    "ENABLED": "%s"\n  }\n}',
+    'quote escaped in an allowlisted value': '{\n  "model": "x\\", \\"API_TOKEN\\": \\"%s",\n'
+                                             '  "y": 1\n}',
+    'trailing text after an allowlisted pair': '{\n  "model": "opus", // %s\n  "y": 1\n}',
+    'crlf line endings': '{\r\n  "env": {\r\n    "API_TOKEN": "%s"\r\n  },\r\n  "model": "opus"\r\n}',
+    'env after a hook command on one line': '{\n  "hooks": [\n    { "command": "run", "env": '
+                                            '{"API_TOKEN": "%s"} }\n  ]\n}',
+    'minified': '{"env": {"A": "%s"}, "model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
+    'value on the line after its key': '{\n  "env": {\n    "API_TOKEN":\n      "Bash(%s)"\n  },\n'
+                                       '  "permissions": {\n    "allow": [\n      "Read"\n    ]\n  }\n}',
+    'colon on its own line': '{\n  "env": {\n    "API_TOKEN"\n    :\n    "Read(%s)"\n  }\n}',
+    'secret in an allow rule': '{\n  "permissions": {\n    "allow": [\n'
+                               '      "Bash(PG' + 'PASSWORD=hunter2%s psql -h db)",\n'
+                               '      "Bash(ls *)"\n    ]\n  }\n}',
+    'secret in a hook command': '{\n  "hooks": {\n    "Stop": [\n      {\n'
+                                '        "command": "curl -H \'Authorization: Bear' + 'er abcdef%s123\' x",\n'
+                                '        "type": "command"\n      }\n    ]\n  }\n}',
+    'credentials in a hook url': '{\n  "hooks": {\n    "Stop": [\n      {\n        "type": "http",\n'
+                                 '        "url": "https://deploy:' + 'pw%s@hooks.example.invalid/x"\n'
+                                 '      }\n    ]\n  }\n}',
+}
+
+
+def leaks(patterns=None, gate=True):
+    """Labels of leak samples whose secret marker reaches a shown line."""
+    found = []
+    for label, template in LEAK_SAMPLES.items():
+        text = template.replace('%s', SECRET)
+        _, shown = grep_shown(text, patterns, gate)
+        if any(SECRET in line for line in shown):
+            found.append(label)
+    return found
 
 
 def ref(name):
@@ -522,15 +610,16 @@ class LiteReferencesTests(unittest.TestCase):
             if row['status'] not in NOT_STALE_STATUSES:
                 self.assertRegex(row['since'], r'^\d+\.\d+\.\d+$', row)
 
-    def test_reading_rules_cover_inline_and_minified(self):
+    def test_reading_rules_document_allowlist(self):
         text = ref('reading-rules.md')
         for pattern in DOCUMENTED_PATTERNS:
             self.assertIn('`%s`' % pattern, text)
-        self.assertIn('output_mode: count', text)
-        self.assertIn('one non-empty line', text)
-        self.assertIn('not read', text)
-        self.assertIn('depth 2 or deeper', text)
-        self.assertIn('root object', text)
+        for phrase in ('output_mode: count', 'never opened with Read',
+                       'not read: compact JSON layout — reformat to audit', 'uppercase', '-i'):
+            self.assertIn(phrase, text)
+        # The structure scanner is gone.
+        for phrase in ('value block', 'depth 2 or deeper', 'offset'):
+            self.assertNotIn(phrase, text)
 
     def test_documented_patterns_portable(self):
         # Grep runs ripgrep, Python runs these tests: keep to the shared syntax.
@@ -540,38 +629,87 @@ class LiteReferencesTests(unittest.TestCase):
         for pattern in DOCUMENTED_PATTERNS:
             re.compile(pattern)
 
-    def test_value_blocks_never_read(self):
-        clean = '\n'.join(['{', '  "model": "opus",', '  "env": {', '    "A": "VALUE1",',
-                           '    "B": "VALUE2"', '  },', '  "headers": {},', '  "permissions": {',
-                           '    "allow": [', '      "Bash(uv run pytest -q)"', '    ]', '  }', '}'])
-        reason, read = simulate_settings_read(clean)
-        self.assertIsNone(reason)
-        lines = clean.splitlines()
-        self.assertFalse([n for n in read if 'VALUE' in lines[n - 1]])
-        self.assertIn(10, read)  # the allow rule
-        self.assertIn(2, read)   # a top-level scalar, no helper present
-        layouts = {
-            'tight inline': '{\n  "env": {"A": "VALUE"},\n  "model": "opus"\n}',
-            'spaced inline': '{\n  "env": { "A": "VALUE" },\n  "model": "opus"\n}',
-            'brace on next line': '{\n  "env":\n  {\n    "A": "VALUE"\n  }\n}',
-            'key alone, colon on next line': '{\n  "env"\n  : {\n    "A": "VALUE"\n  }\n}',
-            'nested object in env': '{\n  "env": {\n    "A": {\n      "B": "VALUE"\n    }\n  }\n}',
-            'minified': '{"model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
-            'unpaired': '{\n  "permissions": {\n    "allow": []\n}',
-            'headers helper': '{\n  "headersHelper": "/x.sh",\n  "model": "opus"\n}',
-            'block opened after other text': ('{\n  "permissions": {\n    "allow": []\n  }, "env": {\n'
-                                              '    "A": "VALUE"\n  }\n}'),
-            'escaped env key, inline': '{\n  "\\u0065nv": {"A": "VALUE"},\n  "model": "opus"\n}',
-            'escaped env key, pretty': '{\n  "\\u0065nv": {\n    "A": "VALUE"\n  }\n}',
-            'escaped helper key': '{\n  "apiKey\\u0048elper": "echo VALUE",\n  "model": "opus"\n}',
-            'object opened mid-line inside env': ('{\n  "env": {\n    "A": {"n": 1,\n    "m": 2\n'
-                                                  '    },\n    "B": "VALUE" }\n}'),
-            'value block and empty block on one line': ('{\n  "env": {"A": "VALUE"}, "headers": {},\n'
-                                                        '  "model": "opus"\n}'),
+    def test_allowlisted_keys_are_settings_names(self):
+        self.assertEqual(allowlisted_key_problems((SCALAR_SETTING, HOOK_FIELD, HOOK_TARGET)), [])
+
+    def test_no_secret_reaches_a_shown_line(self):
+        self.assertEqual(leaks(), [])
+
+    def test_secret_layouts_named_in_corpus(self):
+        # Every layout the structure scanner missed stays in the corpus.
+        for label in ('brace in a string hides an opening', 'block opened after other text',
+                      'escaped env key, inline', 'tight inline env', 'helpers', 'minified'):
+            self.assertIn(label, LEAK_SAMPLES)
+
+    def test_safe_lines_shown(self):
+        for line in ('  "model": "opus",', '    "defaultMode": "acceptEdits",', '    "enabled": true,',
+                     '    "failIfUnavailable": false', '    "httpProxyPort": 8080,',
+                     '  "permissions": {', '    "allow": [', '  "env": {', '    "PreToolUse": [',
+                     '    "superpowers@claude-plugins-official": true',
+                     '      "Bash(uv run pytest -q)",', '      "Read(./.env)"', '      "WebSearch",',
+                     '      "mcp__github__get_issue",', '      "WebFetch(domain:example.invalid)"',
+                     '            "type": "command",', '        "matcher": "Bash",',
+                     '            "timeout": 30', '            "onFailure": "block",',
+                     '            "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",'):
+            with self.subTest(line=line):
+                reason, shown = grep_shown('{\n%s\n}' % line)
+                self.assertIsNone(reason)
+                self.assertEqual(shown, [line])
+
+    def test_realistic_settings_stay_readable(self):
+        text = """{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opus",
+  "env": {
+    "API_TOKEN": "%s"
+  },
+  "permissions": {
+    "allow": ["Bash(uv run pytest *)", "Bash(awk '{print $1}' *)"],
+    "deny": [
+      "Read(./.env)",
+      "Bash(git push --force *)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",
+          "onFailure": "block",
+          "timeout": 30
         }
-        for label, text in layouts.items():
-            with self.subTest(layout=label):
-                self.assertIsNotNone(simulate_settings_read(text)[0])
+      ]
+    }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "echo hi" }] }]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  }
+}""" % SECRET
+        reason, shown = grep_shown(text)
+        self.assertIsNone(reason)
+        self.assertFalse([line for line in shown if SECRET in line])
+        for fragment in ('"model": "opus"', '"env": {', '"Bash(git push --force *)"',
+                         '"defaultMode"', '"matcher": "Bash"', '"onFailure": "block"',
+                         'guard.sh', '"enabled": true', '"superpowers@'):
+            self.assertTrue(any(fragment in line for line in shown), fragment)
+
+    def test_secret_probe_hides_rules_and_commands(self):
+        text = LEAK_SAMPLES['secret in an allow rule'].replace('%s', SECRET)
+        _, shown = grep_shown(text)
+        self.assertNotIn('      "Bash(ls *)"', shown)  # rule lines are only counted after a hit
+        self.assertIn('    "allow": [', shown)
+
+    def test_minified_reported_not_read(self):
+        reason, shown = grep_shown('{"model": "opus"}\n')
+        self.assertEqual((reason, shown), ('compact JSON layout', []))
 
     def test_manifest_probe_samples(self):
         manifest = re.compile(SECRET_IN_MANIFEST)
@@ -589,78 +727,17 @@ class LiteReferencesTests(unittest.TestCase):
             self.assertTrue(header.search(line), line)
         for line in ('["a",', '[1, 2]', '  [tool.x]', '"[x]"'):
             self.assertFalse(header.search(line), line)
-
-    def test_realistic_settings_stay_readable(self):
-        # The structure probes must not refuse an ordinary pretty-printed settings file.
-        text = '''{
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "model": "opus",
-  "env": {
-    "A": "VALUE1"
-  },
-  "permissions": {
-    "allow": ["Bash(uv run pytest *)", "Bash(awk '{print $1}' *)"],
-    "deny": [
-      "Read(./.env)",
-      "Bash(git push --force *)"
-    ],
-    "additionalDirectories": []
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",
-            "onFailure": "block",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "echo hi" }] }]
-  },
-  "sandbox": {
-    "enabled": true,
-    "network": {
-      "allowedDomains": ["pypi.org"]
-    }
-  },
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true
-  }
-}'''
-        reason, read = simulate_settings_read(text)
-        self.assertIsNone(reason)
-        lines = text.splitlines()
-        self.assertFalse([n for n in read if 'VALUE' in lines[n - 1]])
-        self.assertTrue(any('onFailure' in lines[n - 1] for n in read))
-
-    def test_structure_probe_samples(self):
-        escaped, open_line, mapped = (re.compile(ESCAPED_KEY), re.compile(OPEN_BRACE_LINE),
-                                      re.compile(MAPPED_BRACE_OPEN))
-        self.assertTrue(escaped.search('  "\\u0065nv": {"A": "x"}'))
-        self.assertTrue(escaped.search('  "apiKey\\u0048elper": "echo x",'))
-        self.assertFalse(escaped.search('  "env": {'))
-        self.assertTrue(open_line.search('    "A": {"n": 1,'))
-        self.assertFalse(mapped.search('    "A": {"n": 1,'))
-        for line in ('{', '  "hooks": {', '      {'):
-            self.assertTrue(open_line.search(line) and mapped.search(line), line)
-        for line in ('"command": "${CLAUDE_PLUGIN_ROOT}/x.sh",', '"Bash(awk \'{print $1}\' *)",',
-                     '[{ "hooks": [{ "type": "command" }] }]'):
-            self.assertFalse(open_line.search(line), line)
-
-    def test_helper_lines_skipped(self):
-        text = '\n'.join(['{', '  "apiKeyHelper": "/opt/VALUE.sh",', '  "model": "opus",',
-                          '  "permissions": {', '    "deny": [', '      "Read(./.env)"', '    ]',
-                          '  }', '}'])
-        reason, read = simulate_settings_read(text)
-        self.assertIsNone(reason)
-        self.assertNotIn(2, read)
-        self.assertNotIn(3, read)  # every depth-1 line is skipped when a helper is present
-        self.assertIn(6, read)
+        for pattern, hits, misses in (
+                (SCRIPT_LINE, ('    "test": "pytest -q",', '    "lint:fix": "eslint --fix ."'),
+                 ('    "pub": "npm publish",', '    "test": "echo \\"x\\""', '"test": "a", "b": "c"')),
+                (TS_STRICT, ('    "strict": true,',), ('    "strict": "yes"', '"strict": true, "x": 1')),
+                (PY_STRICT, ('strict = true', 'typeCheckingMode = "strict"'),
+                 ('strict = true # x', 'password = "x"')),
+                (MAKE_TARGET, ('test:', 'build: deps'), ('TOKEN := x', 'x = y:z'))):
+            for line in hits:
+                self.assertTrue(re.search(pattern, line), line)
+            for line in misses:
+                self.assertFalse(re.search(pattern, line), line)
 
     def test_secret_probe_samples(self):
         # Fixture secrets are assembled at run time so they never look like real vendor keys.
@@ -732,6 +809,31 @@ class ReferencesRedProofTests(unittest.TestCase):
     def test_stale_string_in_quote_detected(self):
         text = ref('docs-snapshot.md') + '- `x-claim` — set includeCoAuthoredBy to false — page `settings`\n'
         self.assertIn(('includeCoAuthoredBy', 'x-claim'), stale_in_snapshot(ref('stale-strings.md'), text))
+
+    def test_widened_allowlist_leaks(self):
+        # Each loosening of the documented rules lets a secret through, so the corpus test fails.
+        mutations = {
+            'any key name': {'scalar': r'^\s*"[A-Za-z_]+"\s*:\s*' + SCALAR_VALUE + r',?\s*$'},
+            'start not anchored': {'scalar': SCALAR_SETTING.replace(r'^\s*', '', 1)},
+            'value spans quotes': {'scalar': SCALAR_SETTING.replace(SCALAR_VALUE, '(".*")')},
+            'opener with a value': {'opener': r'^\s*"[A-Za-z][A-Za-z0-9_.-]*"\s*:\s*[\[{]'},
+            'command not anchored': {'hook_target': r'"(command|url)"\s*:\s*"[^"\\]*"'},
+        }
+        for label, patterns in mutations.items():
+            with self.subTest(mutation=label):
+                self.assertNotEqual(leaks(patterns), [])
+
+    def test_ungated_rules_leak(self):
+        found = leaks(gate=False)
+        for label in ('secret in an allow rule', 'secret in a hook command', 'credentials in a hook url',
+                      'value on the line after its key', 'colon on its own line'):
+            self.assertIn(label, found)
+
+    def test_credential_key_in_allowlist_detected(self):
+        widened = SCALAR_SETTING.replace('"(model|', '"(apiKeyHelper|API_TOKEN|model|')
+        problems = allowlisted_key_problems((widened,))
+        self.assertIn('credential-bearing name: apiKeyHelper', problems)
+        self.assertIn('not lowercase or camelCase: API_TOKEN', problems)
 
     def test_mcp_read_instruction_detected(self):
         tmp = tempfile.TemporaryDirectory(prefix='lite-redproof-')

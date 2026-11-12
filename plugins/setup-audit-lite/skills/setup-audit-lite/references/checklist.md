@@ -6,8 +6,8 @@ editions; the three ids under "Lite-only" exist only here.
 
 Each check gives:
 
-- **Read:** what to look at, always through `reading-rules.md` (settings by the value-free
-  algorithm, MCP only from a pasted list, counts for logs);
+- **Read:** what to look at, always through `reading-rules.md` (settings by the line allowlist,
+  MCP only from a pasted list, counts for logs);
 - **Claims:** the `docs-snapshot.md` keys the check relies on. Quote the fetched page when the run
   fetched it; fall back to the snapshot otherwise. "Claims: none" marks lite's own recommendation,
   which the report labels as such;
@@ -57,10 +57,10 @@ one of these, say the full plugin covers it.
   user-level baseline: `Read` denies for `.env` files, `~/.ssh/**`, `~/.aws/**` and credential files,
   plus force-push. Anchor user-level paths with `//` or `~/`; a single leading `/` anchors at the
   settings file's own location.
-- `SEC-secret-literal` (high). Read: the secret-shaped count probe in `reading-rules.md` step 2.
+- `SEC-secret-literal` (high). Read: the secret-shaped count probes in `reading-rules.md` step 2.
   Claims: `settings-dont-ask-again`. A token-shaped string sits in an allow rule, hook command or hook
-  URL, usually saved by "Yes, and don't ask again". Report file and count only; the file is then not
-  read. Fix (by hand): rotate the credential, delete the rule, keep the secret in the environment or
+  URL, usually saved by "Yes, and don't ask again". Report file and count only; that file's rule,
+  command and URL lines are then counted, not shown. Fix (by hand): rotate the credential, delete the rule, keep the secret in the environment or
   a secrets manager.
 - `SEC-secret-env` (low). Read: `permissions.allow`. Claims: `settings-dont-ask-again`. An allow rule
   that pulls a dotenv file onto the command line (`source .env`, `$(cat .env)`, `export $(...)`), so
@@ -141,10 +141,10 @@ one of these, say the full plugin covers it.
   `bp-subagents-cost`. Agents for routine tasks with no `model:` (they follow the main model) or a
   top-tier model. Fix: `model: haiku` or `sonnet` in that agent's frontmatter.
 - `COST-cache-health` (low). Read: `promptCacheTtl`, `subagentPromptCacheTtl`, `idleCompaction` key
-  names and values in settings ranges. Claims: `env-prompt-cache-ttl`, `env-idle-compaction`. Config
-  side only: lite can't see cache hits. Note a 1-hour TTL (writes cost more) or idle compaction
-  turned off, and ask why. Environment-variable forms sit in the skipped `env` block and are not
-  seen.
+  names and values from the allowlisted setting lines. Claims: `env-prompt-cache-ttl`,
+  `env-idle-compaction`. Config side only: lite can't see cache hits. Note a 1-hour TTL (writes cost
+  more) or idle compaction turned off, and ask why. Environment-variable forms sit in the `env`
+  block, which is not shown, and are not seen.
 
 ## Learning (LRN-)
 
@@ -193,11 +193,10 @@ own stack and conventions.
 
 Always on.
 
-- `HYG-settings-shape` (medium; high when the key is `permissions` or `hooks`). Read: structure
-  from the reading rules. Claims: `settings-strict-json`, `settings-error`, `settings-warning`,
-  `settings-status`. A value of the wrong type (a `deny` entry that isn't a string, `permissions`
-  that isn't an object), a comment or trailing comma, or block openings and closings that don't pair
-  up. Claude Code skips the entry or the file; ask the user to check `/status` or `claude doctor`.
+- `HYG-settings-shape` (medium; high when the key is `permissions` or `hooks`). Read: the
+  allowlisted lines and counts from the reading rules. Claims: `settings-strict-json`,
+  `settings-error`, `settings-warning`, `settings-status`. A value of the wrong type (a `deny` entry
+  that isn't a string, `permissions` that isn't an object) or a comment line (count `^\s*//`). Claude Code skips the entry or the file; ask the user to check `/status` or `claude doctor`.
 - `HYG-scope-ignored` (low). Read: key names per settings file; the Scope column of the fetched
   `settings-reference` page. Claims: `settings-repo-ignored-keys`, `settings-default-mode-scope`. A
   key in a file where Claude Code ignores it (for example `permissions.defaultMode: auto` in a
