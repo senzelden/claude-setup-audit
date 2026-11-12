@@ -33,25 +33,36 @@ share: no lookaround, no backreferences. For each file, in this order:
 2. **Probe with counts only.** Run each Grep below with `output_mode: count`, which returns numbers,
    never lines:
    - (a) lines naming a value block: `"(env|headers)"`;
-   - (b) value blocks opened at the end of a line: `"(env|headers)"\s*:\s*\{\s*$`;
-   - (c) empty value blocks: `"(env|headers)"\s*:\s*\{\s*\}`;
+   - (b) a value block opened alone on its line: `^\s*"(env|headers)"\s*:\s*\{\s*$`;
+   - (c) an empty value block alone on its line: `^\s*"(env|headers)"\s*:\s*\{\s*\},?\s*$`;
    - (d) helper lines: `"(apiKeyHelper|awsAuthRefresh|gcpAuthRefresh|awsCredentialExport|otelHeadersHelper|headersHelper)"`;
    - (e) a headers helper: `"headersHelper"`;
    - (f) secret-shaped text in a rule, command, URL, args or helper line:
-     `(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*(bearer\s+[^\s$"'][^\s"']{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=[^\s$"'&;|)]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,})`;
-   - (g) secret-shaped text in an array element line (allow rules, hook `args`), which never
-     matches a `"KEY": "value"` line:
-     `(?i)^\s*"[^"]*(bearer\s+[^\s$"'][^\s"']{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=[^\s$"'&;|)]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,})[^"]*",?\s*$`;
+     `(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`;
+   - (g) secret-shaped text in a line made only of quoted strings separated by commas (array
+     elements: allow rules, hook `args`), which never matches a `"KEY": "value"` line:
+     `(?i)^\s*("([^"\\]|\\.)*",\s*)*"([^"\\]|\\.)*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])([^"\\]|\\.)*"(,\s*"([^"\\]|\\.)*")*,?\s*$`;
    - (h) non-empty lines: `.` (the line count used below), and all lines: `^`.
 
-   A value starting with `$` (a `$VAR` or `${VAR}` reference) is not secret-shaped. The file is
-   **not read** at all, and goes in the coverage list as "not read" with the probe that fired, when:
-   - count (a) differs from count (b) + count (c): some `env` or `headers` block has a value on its
-     opening line (`"env": {"A": "x"}`), or its key and brace sit on separate lines;
+   A value starting with `$` (a `$VAR` or `${VAR}` reference, quoted or not) is not secret-shaped.
+   The file is **not read** at all, and goes in the coverage list as "not read" with the probe that
+   fired, when:
+   - count (a) differs from count (b) + count (c). Both forms are anchored to the whole line, so
+     this holds only when every line naming `env` or `headers` is exactly an opening alone on its
+     line or an empty block alone on its line. A value on an opening line (`"env": {"A": "x"}`), a
+     block opened after other text (`}, "env": {`), two blocks on one line, or a key and brace on
+     separate lines all break it;
    - count (e) is above 0 (a headers helper is a command that prints header values);
    - count (f) + count (g) is above 0 (also report `SEC-secret-literal` with the count only);
    - the file has exactly one non-empty line (minified JSON: any line-number Grep would print
      values).
+
+   The structural skip of `env`, `headers` and helper lines (steps 2 to 4) is the guarantee. The
+   secret-shaped probes (f) and (g) are defence in depth for secrets typed into rules, hook
+   commands and args: they catch known shapes on a best-effort basis, not every secret. Not
+   covered, for example: a password passed as a separate argument (`-pSECRET`, `--password X`) or
+   a bare token with no known prefix. The report's coverage list says "inline secrets in rules and
+   commands checked by known shapes only".
 3. **Map the structure with lines that can't carry a value.** Run line-number Grep (`-n: true`,
    `output_mode: content`) only for these, never with `-A`, `-B` or `-C` context:
    - block openings: `^\s*("[^"]*"\s*:\s*)?[\[{]\s*$` (a key and a bracket, nothing else);
@@ -98,11 +109,20 @@ rotate if it is a credential".
 
 Glob for names first (`Makefile`, `justfile`, `package.json`, `pyproject.toml`, `tsconfig.json`,
 version pin files, `.pre-commit-config.yaml`, CI workflow files, `docs/adr/`). Presence is enough for
-most readiness checks. Only these sections are ever read:
+most readiness checks. Before reading any section of `package.json`, `pyproject.toml` or
+`tsconfig.json`, run this count-only probe over the whole file (it also matches `"KEY": "value"`
+lines, such as script values):
+
+`(?i)(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])`
+
+A hit means only section header names are read (the header Grep below, or the block map's key
+names for JSON), and the file is reported "not read: secret-shaped text". Otherwise only these
+sections are ever read:
 
 - `pyproject.toml`: `[project.scripts]`, `[tool.pytest*]` (such as `[tool.pytest.ini_options]`),
   `[tool.ruff]` and its subtables, `[tool.mypy]`, `[tool.pyright]`. Find section headers with a
-  line-number Grep for `^\[` (header lines hold only the section name); a section runs from its
+  line-number Grep for `^\[\[?[A-Za-z]` (header lines hold only the section name; array
+  continuation lines starting with `[` and a quote or digit don't match); a section runs from its
   header to the next one. Never read a section whose name contains `index`, `source`, `publish` or
   `registry` (package indexes and upload settings can carry credentials), and never read
   `[project]` itself.

@@ -299,21 +299,34 @@ NEGATION = re.compile(r'(?i)\b(never|not)\b')
 # (a test asserts each appears there). They must stay within syntax that Python re and ripgrep
 # share: no lookaround and no backreferences (test_documented_patterns_portable).
 VALUE_KEY = r'"(env|headers)"'
-VALUE_OPEN_EOL = r'"(env|headers)"\s*:\s*\{\s*$'
-VALUE_EMPTY = r'"(env|headers)"\s*:\s*\{\s*\}'
+# Both forms are anchored to the whole line: every line naming env/headers must be exactly one.
+VALUE_OPEN_EOL = r'^\s*"(env|headers)"\s*:\s*\{\s*$'
+VALUE_EMPTY = r'^\s*"(env|headers)"\s*:\s*\{\s*\},?\s*$'
 HELPER = (r'"(apiKeyHelper|awsAuthRefresh|gcpAuthRefresh|awsCredentialExport|otelHeadersHelper|'
           r'headersHelper)"')
 HEADERS_HELPER = r'"headersHelper"'
-_SECRET_SHAPES = (r'''bearer\s+[^\s$"'][^\s"']{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=[^\s$"'&;|)]'''
-                  r'|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}'
-                  r'|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}')
+# Secret shapes: defence in depth, best effort by known shapes (the structural skip is the guarantee).
+_ANY_QUOTE = r"""(\\?["'])?"""  # an optional, possibly escaped, quote before a value
+_SECRET_SHAPES = '|'.join([
+    r"""bearer\s+[^\s$"'\\][^\s"'\\]{11,}""",
+    r'\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=' + _ANY_QUOTE + r"""[^\s$"'&;|)\\]""",
+    r'\bAKIA[0-9A-Z]{16}\b', r'\bgithub_pat_[a-z0-9_]{20,}', r'\bglpat-[a-z0-9_-]{16,}',
+    r'\bnpm_[a-z0-9]{30,}', r'\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}',
+    r'://[^/\s:@]+:[^/\s@$][^/\s@]*@',
+    r'x-api-key\s*:\s*' + _ANY_QUOTE + r"""[^\s$"'\\]""",
+    r"""authorization\s*:\s*basic\s+[^\s$"'\\]""",
+])
+_STRING_BODY = r'([^"\\]|\\.)*'
 SECRET_IN_RULE = (r'(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*('
                   + _SECRET_SHAPES + ')')
-SECRET_IN_ELEMENT = r'(?i)^\s*"[^"]*(' + _SECRET_SHAPES + r')[^"]*",?\s*$'
+SECRET_IN_ELEMENT = (r'(?i)^\s*("' + _STRING_BODY + r'",\s*)*"' + _STRING_BODY + '(' + _SECRET_SHAPES
+                     + ')' + _STRING_BODY + r'"(,\s*"' + _STRING_BODY + r'")*,?\s*$')
+SECRET_IN_MANIFEST = r'(?i)(' + _SECRET_SHAPES + ')'
+TOML_HEADER = r'^\[\[?[A-Za-z]'
 BLOCK_OPEN = r'^\s*("[^"]*"\s*:\s*)?[\[{]\s*$'
 BLOCK_CLOSE = r'^\s*[\]}],?\s*$'
 DOCUMENTED_PATTERNS = (VALUE_KEY, VALUE_OPEN_EOL, VALUE_EMPTY, HELPER, HEADERS_HELPER, SECRET_IN_RULE,
-                       SECRET_IN_ELEMENT, BLOCK_OPEN, BLOCK_CLOSE)
+                       SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER, BLOCK_OPEN, BLOCK_CLOSE)
 SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
                 'luongnv89/claude-howto', 'hesreallyhim/awesome-claude-code',
                 'simonwillison.net/tags/claude-code', 'systima.ai/blog/claude-code-vs-opencode-token-overhead',
@@ -538,10 +551,31 @@ class LiteReferencesTests(unittest.TestCase):
             'minified': '{"model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
             'unpaired': '{\n  "permissions": {\n    "allow": []\n}',
             'headers helper': '{\n  "headersHelper": "/x.sh",\n  "model": "opus"\n}',
+            'block opened after other text': ('{\n  "permissions": {\n    "allow": []\n  }, "env": {\n'
+                                              '    "A": "VALUE"\n  }\n}'),
+            'value block and empty block on one line': ('{\n  "env": {"A": "VALUE"}, "headers": {},\n'
+                                                        '  "model": "opus"\n}'),
         }
         for label, text in layouts.items():
             with self.subTest(layout=label):
                 self.assertIsNotNone(simulate_settings_read(text)[0])
+
+    def test_manifest_probe_samples(self):
+        manifest = re.compile(SECRET_IN_MANIFEST)
+        for line in ('    "pub": "NPM_' + 'TOKEN=x npm publish",',
+                     'env = ["API_' + 'KEY=abc123"]',
+                     '    "release": "twine upload -u u -p x https://u:' + 'pw9@pypi.example.invalid"'):
+            with self.subTest(hit=line):
+                self.assertTrue(manifest.search(line))
+        for line in ('    "test": "pytest -q",', 'addopts = "-q"', 'key = "value"',
+                     '    "deploy": "API_KEY=$API_KEY ./deploy.sh",'):
+            with self.subTest(miss=line):
+                self.assertFalse(manifest.search(line))
+        header = re.compile(TOML_HEADER)
+        for line in ('[tool.ruff]', '[[tool.uv.index]]', '[project.scripts]'):
+            self.assertTrue(header.search(line), line)
+        for line in ('["a",', '[1, 2]', '  [tool.x]', '"[x]"'):
+            self.assertFalse(header.search(line), line)
 
     def test_helper_lines_skipped(self):
         text = '\n'.join(['{', '  "apiKeyHelper": "/opt/VALUE.sh",', '  "model": "opus",',
@@ -564,6 +598,12 @@ class LiteReferencesTests(unittest.TestCase):
             '  "headersHelper": "echo \'Authorization: Bear' + 'er abc123def456ghi\'",',
             '      "Bash(curl -u x:y https://h?api_' + 'key=zz9)",',
             '      "Bash(npm publish --otp 1 --registry r gl' + 'pat-' + 'b2' * 10 + ')",',
+            '      "Bash(PG' + "PASSWORD='hunter2' psql)\",",
+            '          "--env=PG' + 'PASSWORD=\\"hunter2\\"",',
+            '          "-H", "Authorization: Bear' + 'er abc123def456",',
+            '            "url": "https://deploy:' + 'pw9@hooks.example.invalid/x",',
+            '      "Bash(curl -H \\"X-Api-' + 'Key: abc\\" https://h)",',
+            '          "-H", "Authorization: Ba' + 'sic dXNlcjpwYXNz"',
         ]
         misses = [
             '      "Bash(npm run test:*)",',
@@ -574,6 +614,10 @@ class LiteReferencesTests(unittest.TestCase):
             '      "Bash(SOME_TOKEN=${SOME_TOKEN_VALUE} make deploy)",',
             '    "GITHUB_TOKEN": "abc",',
             '    "model": "opus",',
+            '      "Bash(SOME_TOKEN=\\"${SOME_TOKEN_VALUE}\\" make deploy)",',
+            '      "Bash(git clone https://github.com/a/b)",',
+            '      "Bash(psql postgres://app:$DB_PW@db/app)",',
+            '          "-H", "Authorization: Bearer $X",',
         ]
         for line in hits:
             with self.subTest(hit=line):
