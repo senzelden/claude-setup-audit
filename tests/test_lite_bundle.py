@@ -899,5 +899,97 @@ class ReferencesRedProofTests(unittest.TestCase):
         self.assertFalse(unsafe_mcp_line('`.mcp.json` is never opened, Read or Grepped.'))
 
 
+SKILL = LITE / 'skills/setup-audit-lite/SKILL.md'
+FULL_PLUGIN_GLOB = '~/.claude/plugins/cache/*/setup-audit/*/.claude-plugin/plugin.json'
+SNAPSHOT_FALLBACK_LINE = ('Official docs could not be fetched; this audit uses the bundled snapshot '
+                          'from <date> and may be out of date.')
+COMMUNITY_UNAVAILABLE_LINE = 'Community practice not gathered this run.'
+# The four hard limits from the spec ("Applying changes"), never applied even with approval.
+HARD_LIMITS = ('credentials and secret values', 'anything that loosens security',
+               'adding hooks, MCP servers or plugins',
+               'managed settings and files outside the chosen scope')
+LOG_FIELDS = ('file', 'scope', 'focus', 'why', 'before', 'after', 'measure', 'status')
+LOG_STATUSES = ('applied', 'handed-over', 'rolled-back', 'kept')
+# Files written for the workflow; they describe Claude's own tool use, so a Bash rule in them could
+# read as an instruction (the references from Task 2 quote Bash rules as audit examples instead).
+WORKFLOW_FILES = ('SKILL.md', 'references/report-format.md', 'references/applied-log.md')
+
+
+def flat(text):
+    """Text with line wrapping undone, so phrase checks don't depend on where a line breaks."""
+    return ' '.join(text.split())
+
+
+def skill_text():
+    return SKILL.read_text(encoding='utf-8')
+
+
+class SkillWorkflow(unittest.TestCase):
+    def test_skill_cites_every_reference(self):
+        text = skill_text()
+        names = sorted(p.name for p in REFS.iterdir() if p.is_file())
+        for name in ('report-format.md', 'applied-log.md'):
+            self.assertIn(name, names)
+        for name in names:
+            self.assertIn(name, text)
+
+    def test_skill_under_500_lines(self):
+        self.assertLess(len(skill_text().splitlines()), 500)
+
+    def test_hard_limits_listed(self):
+        text = flat(skill_text())
+        for limit in HARD_LIMITS:
+            self.assertIn(limit, text)
+
+    def test_snapshot_fallback_line(self):
+        self.assertIn(SNAPSHOT_FALLBACK_LINE, flat(skill_text()))
+
+    def test_community_unavailable_line(self):
+        self.assertIn(COMMUNITY_UNAVAILABLE_LINE, flat(skill_text()))
+
+    def test_mcp_paste_redaction(self):
+        self.assertIn('remove tokens, URLs with keys and arguments before pasting', flat(skill_text()))
+        report = flat(ref('report-format.md'))
+        self.assertIn('never repeats values, URLs or arguments from a pasted', report)
+
+    def test_rollback_never_forces(self):
+        text = ref('applied-log.md')
+        defined = re.findall(r'^- `([a-z-]+)`', text, re.M)
+        for field in LOG_FIELDS:
+            self.assertIn(field, defined)
+        self.assertIn('~/.claude/setup-audit-lite/applied.md', text)
+        self.assertRegex(flat(text), r'If the `after` text is no longer found, lite reports the '
+                                     r'mismatch and hands over the manual reversal; it never '
+                                     r'forces a write\.')
+
+    def test_log_statuses(self):
+        text = flat(ref('applied-log.md'))
+        for status in LOG_STATUSES:
+            self.assertIn('`%s`' % status, text)
+
+    def test_full_plugin_detection(self):
+        self.assertIn(FULL_PLUGIN_GLOB, skill_text())
+
+    def test_no_curl_fallback(self):
+        self.assertRegex(flat(skill_text()), r'(?i)never fall back to curl')
+        for rel in WORKFLOW_FILES:
+            with self.subTest(file=rel):
+                text = (LITE / 'skills/setup-audit-lite' / rel).read_text(encoding='utf-8')
+                self.assertNotIn('Bash(', text)
+        self.assertEqual([p for p in bundle_problems(LITE) if 'allowed-tools' in p], [])
+
+    def test_settings_never_edited(self):
+        text = flat(skill_text())
+        self.assertIn('Settings files are never Edited or Written', text)
+        self.assertIn('paste-ready edit', text)
+        self.assertIn('`handed-over`', flat(ref('applied-log.md')))
+
+    def test_workflow_files_have_no_urls(self):
+        for rel in WORKFLOW_FILES:
+            with self.subTest(file=rel):
+                text = (LITE / 'skills/setup-audit-lite' / rel).read_text(encoding='utf-8')
+                self.assertIsNone(URL.search(text))
+
+
 if __name__ == '__main__':
     unittest.main()
