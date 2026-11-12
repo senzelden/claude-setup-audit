@@ -42,7 +42,11 @@ share: no lookaround, no backreferences. For each file, in this order:
    - (g) secret-shaped text in a line made only of quoted strings separated by commas (array
      elements: allow rules, hook `args`), which never matches a `"KEY": "value"` line:
      `(?i)^\s*("([^"\\]|\\.)*",\s*)*"([^"\\]|\\.)*(bearer\s+[^\s$"'\\][^\s"'\\]{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=(\\?["'])?[^\s$"'&;|)\\]|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}|://[^/\s:@]+:[^/\s@$][^/\s@]*@|x-api-key\s*:\s*(\\?["'])?[^\s$"'\\]|authorization\s*:\s*basic\s+[^\s$"'\\])([^"\\]|\\.)*"(,\s*"([^"\\]|\\.)*")*,?\s*$`;
-   - (h) non-empty lines: `.` (the line count used below), and all lines: `^`.
+   - (h) non-empty lines: `.` (the line count used below), and all lines: `^`;
+   - (i) key names written with Unicode escapes (`"\u0065nv"` reads as `"env"` to a JSON parser,
+     but no probe above sees it): `"[^"]*\\u[0-9A-Fa-f]{4}[^"]*"\s*:`;
+   - (j) lines that leave a `{` open: `\{[^}]*$`;
+   - (k) openings the structure map can see: `^\s*("[^"]*"\s*:\s*)?\{\s*$`.
 
    A value starting with `$` (a `$VAR` or `${VAR}` reference, quoted or not) is not secret-shaped.
    The file is **not read** at all, and goes in the coverage list as "not read" with the probe that
@@ -53,6 +57,9 @@ share: no lookaround, no backreferences. For each file, in this order:
      block opened after other text (`}, "env": {`), two blocks on one line, or a key and brace on
      separate lines all break it;
    - count (e) is above 0 (a headers helper is a command that prints header values);
+   - count (i) is above 0 (an escaped key name could hide `env`, `headers` or a helper);
+   - count (j) differs from count (k): some object opens on a line that also carries other text
+     (`"A": {"n": 1,`), so step 3 could not map it and a value block could end early;
    - count (f) + count (g) is above 0 (also report `SEC-secret-literal` with the count only);
    - the file has exactly one non-empty line (minified JSON: any line-number Grep would print
      values).

@@ -323,10 +323,14 @@ SECRET_IN_ELEMENT = (r'(?i)^\s*("' + _STRING_BODY + r'",\s*)*"' + _STRING_BODY +
                      + ')' + _STRING_BODY + r'"(,\s*"' + _STRING_BODY + r'")*,?\s*$')
 SECRET_IN_MANIFEST = r'(?i)(' + _SECRET_SHAPES + ')'
 TOML_HEADER = r'^\[\[?[A-Za-z]'
+ESCAPED_KEY = r'"[^"]*\\u[0-9A-Fa-f]{4}[^"]*"\s*:'
+OPEN_BRACE_LINE = r'\{[^}]*$'
+MAPPED_BRACE_OPEN = r'^\s*("[^"]*"\s*:\s*)?\{\s*$'
 BLOCK_OPEN = r'^\s*("[^"]*"\s*:\s*)?[\[{]\s*$'
 BLOCK_CLOSE = r'^\s*[\]}],?\s*$'
 DOCUMENTED_PATTERNS = (VALUE_KEY, VALUE_OPEN_EOL, VALUE_EMPTY, HELPER, HEADERS_HELPER, SECRET_IN_RULE,
-                       SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER, BLOCK_OPEN, BLOCK_CLOSE)
+                       SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER, ESCAPED_KEY,
+                       OPEN_BRACE_LINE, MAPPED_BRACE_OPEN, BLOCK_OPEN, BLOCK_CLOSE)
 SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
                 'luongnv89/claude-howto', 'hesreallyhim/awesome-claude-code',
                 'simonwillison.net/tags/claude-code', 'systima.ai/blog/claude-code-vs-opencode-token-overhead',
@@ -432,6 +436,10 @@ def simulate_settings_read(text):
         return 'secret-shaped', []
     if count('.') == 1:
         return 'one non-empty line', []
+    if count(ESCAPED_KEY):
+        return 'unicode-escaped key name', []
+    if count(OPEN_BRACE_LINE) != count(MAPPED_BRACE_OPEN):
+        return 'object opened on a line with other text', []
     helper = count(HELPER) > 0
     stack, depth_of, in_value = [], {}, set()
     for number, line in enumerate(lines, 1):
@@ -553,6 +561,11 @@ class LiteReferencesTests(unittest.TestCase):
             'headers helper': '{\n  "headersHelper": "/x.sh",\n  "model": "opus"\n}',
             'block opened after other text': ('{\n  "permissions": {\n    "allow": []\n  }, "env": {\n'
                                               '    "A": "VALUE"\n  }\n}'),
+            'escaped env key, inline': '{\n  "\\u0065nv": {"A": "VALUE"},\n  "model": "opus"\n}',
+            'escaped env key, pretty': '{\n  "\\u0065nv": {\n    "A": "VALUE"\n  }\n}',
+            'escaped helper key': '{\n  "apiKey\\u0048elper": "echo VALUE",\n  "model": "opus"\n}',
+            'object opened mid-line inside env': ('{\n  "env": {\n    "A": {"n": 1,\n    "m": 2\n'
+                                                  '    },\n    "B": "VALUE" }\n}'),
             'value block and empty block on one line': ('{\n  "env": {"A": "VALUE"}, "headers": {},\n'
                                                         '  "model": "opus"\n}'),
         }
@@ -576,6 +589,68 @@ class LiteReferencesTests(unittest.TestCase):
             self.assertTrue(header.search(line), line)
         for line in ('["a",', '[1, 2]', '  [tool.x]', '"[x]"'):
             self.assertFalse(header.search(line), line)
+
+    def test_realistic_settings_stay_readable(self):
+        # The structure probes must not refuse an ordinary pretty-printed settings file.
+        text = '''{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opus",
+  "env": {
+    "A": "VALUE1"
+  },
+  "permissions": {
+    "allow": ["Bash(uv run pytest *)", "Bash(awk '{print $1}' *)"],
+    "deny": [
+      "Read(./.env)",
+      "Bash(git push --force *)"
+    ],
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh",
+            "onFailure": "block",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "echo hi" }] }]
+  },
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": ["pypi.org"]
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  }
+}'''
+        reason, read = simulate_settings_read(text)
+        self.assertIsNone(reason)
+        lines = text.splitlines()
+        self.assertFalse([n for n in read if 'VALUE' in lines[n - 1]])
+        self.assertTrue(any('onFailure' in lines[n - 1] for n in read))
+
+    def test_structure_probe_samples(self):
+        escaped, open_line, mapped = (re.compile(ESCAPED_KEY), re.compile(OPEN_BRACE_LINE),
+                                      re.compile(MAPPED_BRACE_OPEN))
+        self.assertTrue(escaped.search('  "\\u0065nv": {"A": "x"}'))
+        self.assertTrue(escaped.search('  "apiKey\\u0048elper": "echo x",'))
+        self.assertFalse(escaped.search('  "env": {'))
+        self.assertTrue(open_line.search('    "A": {"n": 1,'))
+        self.assertFalse(mapped.search('    "A": {"n": 1,'))
+        for line in ('{', '  "hooks": {', '      {'):
+            self.assertTrue(open_line.search(line) and mapped.search(line), line)
+        for line in ('"command": "${CLAUDE_PLUGIN_ROOT}/x.sh",', '"Bash(awk \'{print $1}\' *)",',
+                     '[{ "hooks": [{ "type": "command" }] }]'):
+            self.assertFalse(open_line.search(line), line)
 
     def test_helper_lines_skipped(self):
         text = '\n'.join(['{', '  "apiKeyHelper": "/opt/VALUE.sh",', '  "model": "opus",',
