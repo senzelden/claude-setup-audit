@@ -125,8 +125,9 @@ adds the project roots `~/.claude.json` lists, names only), and no project optio
 user which project files were not assessed instead of dropping them silently. It prints, per
 settings and MCP config file, key paths, value types, array lengths, `env` and `headers` key names
 and redacted permission rules, with a status (`ok`, `missing`, `not_json`, `symlink_refused`,
-`too_large`, `unreadable`), and never a value. It runs under both privacy modes, `metadata-only`
-included. Use it instead of Read on `settings.json`, `settings.local.json`, `.mcp.json`, managed
+`too_large`, `unreadable`), and never a value. It runs under both privacy modes; with
+`privacy=metadata-only` add `--metadata-only`, which replaces each permission rule with the
+collector's length marker. Use it instead of Read on `settings.json`, `settings.local.json`, `.mcp.json`, managed
 and plugin MCP files and `~/.claude.json`: **do not Read those files whole, even in this
 fallback.** If it fails too, report those files as not assessed. CLAUDE.md, memory and rules
 files may still be read with Read/Glob, subject to the never-open rule in Boundaries. A degraded

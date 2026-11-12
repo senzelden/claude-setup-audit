@@ -359,7 +359,12 @@ types, count, max length), `names` (the keys of `env` and `headers` objects, nev
 and per-project server-name lists. Strings are reported as a type only. Symlinks are not followed,
 files over 1 MB are not read, and the walk is capped (8 levels, 400 key paths, 50 array elements,
 200 rules); `truncated: true` marks a cut. It does not discover projects: pass the roots, or `--from-user-projects` for the roots
-`~/.claude.json` lists (`project_roots` and `not_assessed` in the output say what was read). It covers
+`~/.claude.json` lists (`project_roots` and `not_assessed` in the output say what was read; a listed
+root longer than 200 characters or that redaction would change is not read and is counted in
+`user_projects_omitted`, and `not_assessed` says so when `~/.claude.json` itself could not be read).
+`--metadata-only` replaces each rule string with the collector's `[metadata-only: N chars]` marker
+(`privacy` in the output names the mode), and every string of the output, keys included, passes
+`privacy.redact` once more before printing. It covers
 no worktree main-checkout local settings, no `.envrc`, transcripts, memory or CLAUDE.md. Claude does not Read settings or MCP files whole in
 that fallback.
 

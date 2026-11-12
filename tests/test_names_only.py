@@ -194,6 +194,72 @@ class ProjectSelection(Fake):
         self.assertFalse([e for e in result['files'] if e['scope'] == 'project'])
 
 
+class MetadataOnly(Fake):
+    def test_rule_strings_become_the_collectors_length_marker(self):
+        self.seed()
+        full = self.entry(self.run_tool(), os.path.join('.claude', 'settings.json'))
+        result = self.run_tool(metadata_only=True)
+        entry = self.entry(result, os.path.join('.claude', 'settings.json'))
+        rules = entry['rules']['permissions.allow']
+        self.assertEqual(rules, [names_only.privacy.marker('Bash(git status)'),
+                                 names_only.privacy.marker('Bash(curl -H "Authorization: Bearer '
+                                                           'abcdef0123456789abcdef0123" x)')])
+        self.assertTrue(all(names_only.privacy.MARKER_RE.match(r) for r in rules))
+        self.assertNotIn('git status', json.dumps(result))
+        self.assertNotIn('Read(./.env)', json.dumps(result))
+        self.assertIn('Bash(git status)', full['rules']['permissions.allow'])   # full mode keeps rule text
+        self.assertEqual((result['privacy'], self.run_tool()['privacy']), ('metadata-only', 'full'))
+        self.assertEqual(entry['names']['env'], ['ZQ_SETTINGS_ENV'])   # key names stay, as before
+
+    def test_cli_flag(self):
+        self.seed()
+        argv = ['names_only.py', '--claude-dir', self.claude, '--metadata-only']
+        with mock.patch.object(names_only, 'HOME', self.home), mock.patch.object(names_only, 'managed_directory',
+                                                                               return_value=self.managed), \
+                mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(io.StringIO()) as out:
+            names_only.main()
+        self.assertNotIn('git status', out.getvalue())
+        self.assertEqual(json.loads(out.getvalue())['privacy'], 'metadata-only')
+
+
+class FinalRedaction(Fake):
+    # Shapes privacy.redact catches but no vendor's push protection matches (not real key prefixes).
+    SK = 'sk-zqnamesonlycanary0000'
+    BEARER = 'Bearer abcdef0123456789abcdef0123'
+
+    def test_server_facts_and_name_lists_are_redacted(self):
+        self.write('.claude.json', {
+            'mcpServers': {'zqsrv': {'command': '/opt/bin/' + self.SK, 'type': self.BEARER}},
+            'projects': {self.root: {'enabledMcpjsonServers': ['ok', self.SK],
+                                     'mcpServers': {'p': {'command': self.SK}}}}})
+        self.write('repo/.mcp.json', {'mcpServers': {'q': {'command': self.SK, 'oauth': {'scopes': 'read ' + self.SK}}}})
+        text = json.dumps(self.run_tool())
+        self.assertNotIn('zqnamesonlycanary', text)
+        self.assertNotIn('abcdef0123456789abcdef0123', text)
+        self.assertIn('[REDACTED]', text)
+        self.assertIn('zqsrv', text)
+
+
+class DiscoveryGaps(Fake):
+    def test_overlong_listed_roots_are_counted_as_omitted(self):
+        long_root = os.path.join(self.home, 'x' * 120, 'y' * 120)
+        os.makedirs(long_root)
+        self.write('.claude.json', {'projects': {self.root: {}, long_root: {}}})
+        os.makedirs(self.root, exist_ok=True)
+        result = self.run_tool(roots=[], user_projects=True)
+        self.assertEqual(result['project_roots'], [self.root])
+        self.assertEqual(result['user_projects_omitted'], 1)
+
+    def test_unreadable_discovery_source_is_named_in_not_assessed(self):
+        self.write('.claude.json', '{"projects": ')
+        result = self.run_tool(roots=[], user_projects=True)
+        self.assertIn('~/.claude.json', result['not_assessed'])
+        self.assertIn('could not be read', result['not_assessed'])
+        self.assertNotIn('could not be read', self.run_tool(roots=[])['not_assessed'])
+        self.write('.claude.json', {'projects': {}})
+        self.assertNotIn('could not be read', self.run_tool(roots=[], user_projects=True)['not_assessed'])
+
+
 class Caps(Fake):
     def test_deep_nesting_is_capped(self):
         deep = cur = {}
