@@ -32,21 +32,35 @@ credential:
 
 ## Backups
 
-All backups go outside the project, to
-`~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`: the date is the entry heading's date, and
-the slug is the file's absolute path with every `/` replaced by `__` (so
-`/home/me/code/shop/CLAUDE.md` becomes `__home__me__code__shop__CLAUDE.md`). No backup is ever
-written next to the edited file or inside the project.
+All backups go outside the project. Each entry has its own backup, taken right before that
+entry's change, so two changes to the same file on the same day never share one:
 
-- Path A (files lite Read whole): lite Writes the backup from its full Read of the file, once per
-  file per day; an existing backup is never overwritten.
-- Path B (settings and other never-Read files): lite suggests a copy for the user to run,
-  `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`.
+`~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`
+
+- the date is the entry heading's date;
+- the check id is the heading's check id, with a `:` target slug written as `_`
+  (`SEC-risky-allow_git-push`);
+- the slug is the file's absolute path with every `/` replaced by `__` (so
+  `/home/me/code/shop/CLAUDE.md` becomes `__home__me__code__shop__CLAUDE.md`);
+- Glob for the path first (existence only). If it exists (the same check on the same file on the
+  same day), add `-2`, then `-3`, and so on. An existing backup is never overwritten.
+
+The chosen path goes into the entry's `backup` field. No backup is ever written next to the edited
+file or inside the project.
+
+- Path A (files lite Read whole): lite Writes the backup from a full Read of the file made right
+  before this entry's Edit.
+- Path B (settings and other never-Read files): lite suggests a copy for the user to run before
+  making the change,
+  `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`.
+- No backup (`backup: none`): changes to something on the never-opened list, and hand-overs the
+  user didn't copy first.
 
 The backups directory is on the never-opened list in `reading-rules.md`: lite never Reads or Greps
 it, not even with a count, because a copied settings file holds the same values as the original.
-When an entry becomes `kept` or `rolled-back`, offer to remove that entry's backup with
-`! rm <backup path>`, which the user runs: one file, never a directory.
+When an entry becomes `kept` or `rolled-back`, offer to remove that entry's own backup (the path
+in its `backup` field) with `! rm <backup path>`, which the user runs: one file, never a directory,
+and never another entry's backup.
 
 ## File layout
 
@@ -74,6 +88,7 @@ The title line, then entries, oldest first. Each entry:
   Use the release skill.
   ```
 
+- `backup`: ~/.claude/setup-audit-lite/backups/2026-11-12/COST-claude-md-size____home__me__code__shop__CLAUDE.md
 - `measure`: CLAUDE.md lines = 340
 - `status`: applied
 ````
@@ -82,7 +97,7 @@ The title line, then entries, oldest first. Each entry:
 
 The heading is `## <YYYY-MM-DD> <check-id>`: the date the change was applied or handed over and the
 check id from `checklist.md` (with a short target slug after a colon when one check produced several
-changes, e.g. `SEC-risky-allow:git-push`). Then these eight fields, in this order:
+changes, e.g. `SEC-risky-allow:git-push`). Then these nine fields, in this order:
 
 - `file`: the absolute path of the edited file, with `~` for the home directory.
 - `scope`: `user`, `project` or `local` (the settings scope or where the instruction file lives).
@@ -91,6 +106,7 @@ changes, e.g. `SEC-risky-allow:git-push`). Then these eight fields, in this orde
 - `why`: one line: the finding and what the change does. No values.
 - `before`: a fenced block with the exact text before the change, or `not shown (described in why)`.
 - `after`: a fenced block with the exact text after the change, or `not shown (described in why)`.
+- `backup`: the path of this entry's own backup (see "Backups"), or `none`.
 - `measure`: the before-measurement for the focus, as `<name> = <value>` (see "Measures" below), or
   `none` when the focus has no countable measure.
 - `status`: one of the statuses below.
@@ -183,9 +199,11 @@ Lite only rolls back entries in this log, one entry at a time, after the user pi
 1. Prefer the reverse Edit: if the `after` text occurs exactly once, one Edit from `after` to
    `before`, so later changes to the file survive. Re-Read the region to confirm.
 2. A full restore only when the reverse Edit can't apply and the file is otherwise unchanged:
-   `after` occurs more than once, and the user confirms they haven't edited the file since. Lite
-   never Reads the backup, so the restore is a copy for the user to run:
-   `! cp ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug> <file>`.
+   `after` occurs more than once, and the user confirms they haven't edited the file since. The
+   entry's backup holds the file as it was just before this entry's change, so restoring it also
+   undoes every later edit to the file: offer it only when no later entry on the same file is still
+   `applied`; otherwise use the reverse Edit or the manual reversal. Lite never Reads the backup,
+   so the restore is a copy for the user to run: `! cp <the entry's backup path> <file>`.
 3. If the `after` text is no longer found, lite reports the mismatch and hands over the manual
    reversal; it never forces a write. The same holds when `after` occurs more than once and the
    file has changed since: show both texts and say where the user should make the change.

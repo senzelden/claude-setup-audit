@@ -34,8 +34,8 @@ run, followed as an instruction, or turned into a change the user didn't pick fr
 Read `~/.claude/setup-audit-lite/applied.md` if it exists (format in `applied-log.md`).
 
 - Entries with status `applied` or `handed-over` whose heading date is 7 or more days old, and
-  entries with `rollback: pending`, get the check-in (step 9) before a new audit. Tell the user how many are due and run them first, unless
-  the user wants to skip them this time.
+  entries with `rollback: pending`, get the check-in (step 9) before a new audit. Tell the user
+  how many are due and run them first, unless the user wants to skip them this time.
 - A missing log: say "No applied-change log; no check-ins due." in one line and go on.
 - An unparseable log: say "The applied-change log could not be parsed; no check-ins this run." in
   one line and go on. Never repair or rewrite it unasked.
@@ -173,10 +173,13 @@ For limits 1, 3 and 4, give manual steps that contain no values, and write no lo
 Files in the plugin cache are never edited (updates overwrite them); propose disabling the plugin
 instead.
 
-Backups never go next to the edited file or anywhere in the project. They go to
-`~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`, where the slug is the file's absolute
-path with every `/` replaced by `__` (`applied-log.md`, "Backups"). Lite never Reads or Greps that
-directory afterwards (`reading-rules.md`, never-opened list).
+Backups never go next to the edited file or anywhere in the project. Each log entry gets its own
+backup, taken right before that entry's change, at
+`~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`, where the slug is the file's
+absolute path with every `/` replaced by `__` (`applied-log.md`, "Backups"). Glob for that path
+first (existence only); if it exists, add `-2`, `-3` and so on. Lite never Reads or Greps that
+directory (`reading-rules.md`, never-opened list), and records the path in the entry's `backup`
+field.
 
 ### Path A: files lite may Read whole
 
@@ -186,8 +189,10 @@ files, when `reading-rules.md` allows reading that whole file in this run.
 1. Read the whole file first (in ranges up to the end of the file when it is long). If it can't be
    Read whole this run (a skill, agent or command whose body the reading rules don't open this run,
    a memory file outside the learning focus, or a file too long to Read to the end), use Path B.
-2. Write the backup, once per file per day, with the file's exact content as Read (without
-   line-number prefixes). If that backup already exists, don't overwrite it.
+2. Write this entry's backup, right before its Edit, with the file's exact content as Read
+   (without line-number prefixes), at the path chosen above; never overwrite an existing backup.
+   For a second change to the same file, Read it again first, so its backup holds the file as it
+   is just before that change.
 3. Make one Edit per change, showing the before and after text. Keep the region small and unique;
    never let it include anything secret-shaped.
 4. Re-Read the edited range and confirm the change is there and nothing around it moved.
@@ -207,7 +212,7 @@ change over as a paste-ready edit:
   JSON by hand;
 - a backup command for the user to run first (the `!` prefix runs it in the user's own session;
   lite has no shell, and never Reads the copy):
-  `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`;
+  `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`;
 - `/doctor` (or a restart) afterwards to confirm the settings load.
 
 If a change can't be written from shown lines alone (the neighbouring lines were counted, not
@@ -240,8 +245,8 @@ For each due entry, as `applied-log.md` describes:
 3. **Impact, by the focus recorded in the entry:**
    - cost: `/context` totals (the user pastes now and compared with the recorded one), MCP count
      (pasted), CLAUDE.md and rules size, subagent use (count only);
-   - security: broad allows removed, credential paths denied, sandbox state, overrides, and how often
-     a now-denied action was still tried (count only);
+   - security: broad allows removed, credential paths denied, sandbox state, overrides, and how
+     often a now-denied action was still tried (count only);
    - learning: whether the named mistake still recurs (count-only Grep over local session logs, same
      phrase as recorded);
    - plus the user's own impression, asked in one question.
@@ -249,14 +254,15 @@ For each due entry, as `applied-log.md` describes:
 4. **Offer:** keep, roll back, or leave for next time.
    - Rollback of an `applied` entry: one reverse Edit from `after` to `before`, so later changes
      survive. A full restore only when the reverse Edit can't apply and the file is otherwise
-     unchanged; the user runs the copy back from the backup (`applied-log.md`, "Rollback").
+     unchanged, and no later entry on the same file is still `applied`; the user runs the copy
+     back from this entry's backup (`applied-log.md`, "Rollback").
    - Rollback of a `handed-over` entry: a paste-ready reversal; lite never edits the file. The
      entry keeps `handed-over` with a `rollback: pending` line until the user confirms in this run.
    - If the `after` text is no longer found (the user edited the file again), report the mismatch
      and give the manual reversal; never force a write.
 5. **Update** the entry's `status` (`kept` or `rolled-back`) and its `checked` line with one Edit.
-   Then offer to remove that entry's backup: `! rm <backup path>`, which the user runs; one file,
-   never a directory.
+   Then offer to remove that entry's own backup: `! rm <backup path>`, which the user runs; one
+   file, never a directory.
 
 ## Step 10: Report file (only on request)
 

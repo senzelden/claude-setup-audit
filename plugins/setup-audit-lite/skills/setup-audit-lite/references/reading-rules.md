@@ -18,7 +18,7 @@ exists; the report says "present, not read" and nothing more.
 - `.netrc`, `.npmrc`, `.pypirc`, `*.tfvars`, `*.pem`, private key files, `~/.ssh/`, `~/.aws/`, `~/.config/gh/` are never opened.
 - Session logs (`~/.claude/projects/**/*.jsonl`) are never Read; they are only Grepped with `output_mode: count` (see "Counting" below).
 - Hook scripts, skill scripts and other code files are never Read; Glob checks only that a path exists.
-- Lite's own backups directory (`~/.claude/setup-audit-lite/backups/`) is never opened, Read or Grepped, not even with a count: a copied settings file holds the same values as the original.
+- Lite's own backups directory (`~/.claude/setup-audit-lite/backups/`) is never opened, Read or Grepped, not even with a count: a copied settings file holds the same values as the original. Glob only checks whether a backup path is free before one is written.
 
 The MCP inventory comes only from `claude mcp list` or `/mcp` output that the user pastes (see
 "Pasted output"). Without a paste, MCP checks are reported as "not run: no pasted MCP list".

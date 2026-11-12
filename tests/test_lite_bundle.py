@@ -908,7 +908,7 @@ COMMUNITY_UNAVAILABLE_LINE = 'Community practice not gathered this run.'
 HARD_LIMITS = ('credentials and secret values', 'anything that loosens security',
                'adding hooks, MCP servers or plugins',
                'managed settings and files outside the chosen scope')
-LOG_FIELDS = ('file', 'scope', 'focus', 'why', 'before', 'after', 'measure', 'status')
+LOG_FIELDS = ('file', 'scope', 'focus', 'why', 'before', 'after', 'backup', 'measure', 'status')
 LOG_STATUSES = ('applied', 'handed-over', 'rolled-back', 'kept')
 # Files written for the workflow; they describe Claude's own tool use, so a Bash rule in them could
 # read as an instruction (the references from Task 2 quote Bash rules as audit examples instead).
@@ -925,6 +925,10 @@ def skill_text():
 
 
 BACKUPS_DIR = '~/.claude/setup-audit-lite/backups/'
+# One backup per log entry (never one shared per file and day), so restoring or removing one entry's
+# backup can't touch another entry.
+ENTRY_BACKUP = BACKUPS_DIR + '<YYYY-MM-DD>/<check-id>__<slug>'
+SHARED_BACKUP = re.compile(r'backups/<YYYY-MM-DD>/<slug>')
 COMMUNITY_RULE = 'community-only practice is never an appliable finding and never enters the apply list'
 RESTORE_RULE = ('A full restore only when the reverse Edit can\'t apply and the file is otherwise '
                 'unchanged')
@@ -985,6 +989,19 @@ def backup_problems(texts):
             problems.append('%s does not say lite adds its log and backups directory' % name)
     if '! rm <backup path>' not in texts['applied-log.md']:
         problems.append('applied-log.md does not offer removing the backup')
+    for name in ('SKILL.md', 'applied-log.md'):
+        text = texts[name]
+        if ENTRY_BACKUP not in text:
+            problems.append('%s does not use one backup per entry' % name)
+        if SHARED_BACKUP.search(text):
+            problems.append('%s shares a backup per file and day' % name)
+        flattened = flat(text)
+        if 'Glob for' not in flattened or 'existence only' not in flattened:
+            problems.append('%s does not say how the backup existence check works' % name)
+        if "entry's own backup" not in flattened:
+            problems.append('%s lets rm reach beyond the entry\'s own backup' % name)
+        if 'no later entry on the same file is still `applied`' not in flattened:
+            problems.append('%s restores over later applied entries' % name)
     return problems
 
 
@@ -1043,6 +1060,20 @@ class SkillWorkflowRedProof(unittest.TestCase):
         texts = workflow_texts()
         texts['SKILL.md'] += '\nWrite `<file>.bak-<YYYY-MM-DD>`.\n'
         self.assertIn('SKILL.md puts a backup next to the file', backup_problems(texts))
+
+    def test_shared_per_day_backup(self):
+        texts = workflow_texts()
+        for name in ('SKILL.md', 'applied-log.md'):
+            texts[name] = texts[name].replace('<check-id>__<slug>', '<slug>')
+        problems = backup_problems(texts)
+        self.assertIn('SKILL.md shares a backup per file and day', problems)
+        self.assertIn('applied-log.md does not use one backup per entry', problems)
+
+    def test_restore_over_later_entries(self):
+        texts = workflow_texts()
+        texts['applied-log.md'] = re.sub(r'no(\s+)later(\s+)entry', 'some entry',
+                                         texts['applied-log.md'])
+        self.assertIn('applied-log.md restores over later applied entries', backup_problems(texts))
 
     def test_backups_dir_not_never_opened(self):
         texts = workflow_texts()
