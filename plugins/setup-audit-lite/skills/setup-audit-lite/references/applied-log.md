@@ -4,9 +4,13 @@ Lite records every change it makes or hands over in one Markdown file, so a late
 on it, measure its effect and roll it back. The log is lite's own: it never reads or changes the
 full `setup-audit` plugin's ledger, and rollback only reverses entries in this file.
 
-Path: `~/.claude/setup-audit-lite/applied.md`. It is the only file lite adds to the user's setup.
-Claude Code asks before each write under `~/.claude`; if the user declines or the write is refused,
-say the log was not written and show the entry in the conversation so the user can keep it.
+Path: `~/.claude/setup-audit-lite/applied.md`. Lite adds nothing to the user's setup except its log
+and its backups directory under `~/.claude/setup-audit-lite/`. Claude Code asks before each write
+under `~/.claude`; if the user declines or the write is refused, say the log was not written and
+show the entry in the conversation so the user can keep it.
+
+When the log doesn't exist yet, the first entry creates it: Write the title line
+`# setup-audit-lite applied changes`, a blank line, then the entry. Later entries are appended.
 
 ## What never goes into the log
 
@@ -14,19 +18,39 @@ The log holds the same kind of text as the report: file paths, key names, rule t
 before and after text that lite was shown. It never holds a value lite was not shown, and never a
 credential:
 
-- For files lite may Read whole (CLAUDE.md, rules, skills, agents, commands, output styles, memory
+- For files lite Read whole (CLAUDE.md, rules, skills, agents, commands, output styles, memory
   files), `before` and `after` are the exact text of the edited region. If that region holds
   anything secret-shaped, don't edit it and don't log it; report it instead.
 - For settings files (handed over, never edited), `before` and `after` contain only lines that the
   line allowlist in `reading-rules.md` showed, plus the new lines lite proposes. A line that was
-  counted but not shown never appears, not even partly.
+  counted but not shown never appears, not even partly. A hand-over that could only be described
+  in words has `not shown (described in why)` in both fields.
+- For changes to something on the never-opened list (an MCP server removal), `before` and `after`
+  are `not shown (described in why)` and `why` names the server and the command or panel used.
 - Changes under hard limit 1 (credentials and secret values) get no log entry: the report gives the
   user manual steps without values.
 
+## Backups
+
+All backups go outside the project, to
+`~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`: the date is the entry heading's date, and
+the slug is the file's absolute path with every `/` replaced by `__` (so
+`/home/me/code/shop/CLAUDE.md` becomes `__home__me__code__shop__CLAUDE.md`). No backup is ever
+written next to the edited file or inside the project.
+
+- Path A (files lite Read whole): lite Writes the backup from its full Read of the file, once per
+  file per day; an existing backup is never overwritten.
+- Path B (settings and other never-Read files): lite suggests a copy for the user to run,
+  `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug>`.
+
+The backups directory is on the never-opened list in `reading-rules.md`: lite never Reads or Greps
+it, not even with a count, because a copied settings file holds the same values as the original.
+When an entry becomes `kept` or `rolled-back`, offer to remove that entry's backup with
+`! rm <backup path>`, which the user runs: one file, never a directory.
+
 ## File layout
 
-The file starts with one title line, `# setup-audit-lite applied changes`, followed by entries,
-oldest first. Each entry:
+The title line, then entries, oldest first. Each entry:
 
 ````markdown
 ## 2026-11-12 COST-claude-md-size
@@ -65,16 +89,18 @@ changes, e.g. `SEC-risky-allow:git-push`). Then these eight fields, in this orde
 - `focus`: the area whose weight the change served at apply time: `security`, `cost`, `learning`,
   `readiness` or `hygiene`. The check-in measures impact by this area.
 - `why`: one line: the finding and what the change does. No values.
-- `before`: a fenced block with the exact text before the change.
-- `after`: a fenced block with the exact text after the change.
+- `before`: a fenced block with the exact text before the change, or `not shown (described in why)`.
+- `after`: a fenced block with the exact text after the change, or `not shown (described in why)`.
 - `measure`: the before-measurement for the focus, as `<name> = <value>` (see "Measures" below), or
   `none` when the focus has no countable measure.
 - `status`: one of the statuses below.
 
-A check-in adds one more line after `status`:
+Lines a check-in adds after `status`:
 
 - `checked`: `<YYYY-MM-DD>: <name> = <value now>; <still in place | not found | overridden in
   <file>>; user: <the user's impression in a few words>`. A later check-in replaces it.
+- `rollback`: `pending`, while a handed-over reversal waits for the user (see "Rollback"). Removed
+  when the reversal is confirmed.
 
 Rules for `before` and `after`:
 
@@ -88,24 +114,32 @@ Rules for `before` and `after`:
 
 ## Statuses
 
-- `applied`: lite made the change with Edit, after writing a dated backup (`<file>.bak-<YYYY-MM-DD>`,
-  the heading's date) next to the file. Only for files lite may Read whole.
-- `handed-over`: a settings file or any other file lite never Reads whole. Lite gave the user a
-  paste-ready edit (JSON path, exact before and after lines, and the `/permissions` or `/config`
-  route where one exists); the user made the change, or will.
-- `rolled-back`: the change is no longer in place: reversed by lite at a check-in, reversed by hand,
-  or (for a hand-over) never made. The `checked` line says which.
+- `applied`: lite made the change with Edit, after writing the backup. Only for files lite Read
+  whole.
+- `handed-over`: a settings file, or anything else lite never Reads whole or never opens. Lite gave
+  the user a paste-ready edit (JSON path, exact before and after lines, and the `/permissions` or
+  `/config` route where one exists) or, for an MCP server, `claude mcp remove <name>` or the `/mcp`
+  panel; the user made the change, or will.
+- `rolled-back`: the change is no longer in place: reversed by lite at a check-in, reversed by the
+  user and confirmed, or (for a hand-over) never made. The `checked` line says which.
 - `kept`: the user confirmed at a check-in that the change stays. Kept entries get no more
   check-ins.
 
 ## Check-in
 
 Entries with status `applied` or `handed-over` whose heading date is 7 or more days old get a
-check-in at the start of the next run (the user can also ask for one any time). Per entry:
+check-in at the start of the next run, and so does any entry with `rollback: pending` (the user can
+also ask for a check-in any time). Per entry:
 
-1. **Still present.** Count-only Grep (`output_mode: count`) of each non-empty line of the `after`
-   text in `file`, with regex metacharacters escaped. Every line found means "still in place". For a
-   file lite may Read whole, Read the region instead and compare it exactly.
+1. **Still present.**
+   - A file lite may Read whole: Read the region and compare it exactly.
+   - Other files: count-only Grep (`output_mode: count`) of each non-empty line of the `after` text
+     in `file`, with regex metacharacters escaped. Every line found means "still in place".
+   - The check-in never Greps a file on the never-opened list, not even with a count. For those
+     (an MCP server removal), presence comes from a fresh names-only `claude mcp list` paste, or
+     from asking the user.
+   - An entry whose texts are `not shown (described in why)`: ask the user whether the change is
+     still in place.
 2. **Not overridden.** For a settings change, look for the same key or rule in the other scopes'
    settings files with the reading rules (count-only Grep for the key name, the allowlist for shown
    lines). A removed allow rule that is still present in another scope, or a key that a higher-
@@ -116,8 +150,9 @@ check-in at the start of the next run (the user can also ask for one any time). 
 4. **The user's impression:** ask in one question whether the change helped, got in the way or made
    no difference.
 5. **Decide:** keep (`kept`), roll back (below), or leave it for the next run (status unchanged).
-   Update the entry with one Edit (old text from its heading through its `status` line) and add or
-   replace the `checked` line.
+   Update the entry with one Edit (old text from its heading through its last line) and add or
+   replace the `checked` line. After `kept` or `rolled-back`, offer the `! rm` of that entry's
+   backup.
 
 ## Measures
 
@@ -143,24 +178,33 @@ Session logs are never Read; only counted, as `reading-rules.md` says.
 
 Lite only rolls back entries in this log, one entry at a time, after the user picks it.
 
-**Status `applied` (lite edited the file):**
+**Status `applied` (lite edited the file):** Read the whole file first.
 
-1. Read the file and its backup (`<file>.bak-<date>` from the heading). If the file equals the
-   backup with only this entry's `before` replaced by `after`, nothing else changed since: Write the
-   backup's content back over the file.
-2. Otherwise, if the `after` text occurs exactly once, reverse only this edit: one Edit from `after`
-   to `before`, so later changes to the file survive. Re-Read the region to confirm.
+1. Prefer the reverse Edit: if the `after` text occurs exactly once, one Edit from `after` to
+   `before`, so later changes to the file survive. Re-Read the region to confirm.
+2. A full restore only when the reverse Edit can't apply and the file is otherwise unchanged:
+   `after` occurs more than once, and the user confirms they haven't edited the file since. Lite
+   never Reads the backup, so the restore is a copy for the user to run:
+   `! cp ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<slug> <file>`.
 3. If the `after` text is no longer found, lite reports the mismatch and hands over the manual
-   reversal; it never forces a write. The same holds when `after` occurs more than once: show both
-   texts and say where the user should make the change.
+   reversal; it never forces a write. The same holds when `after` occurs more than once and the
+   file has changed since: show both texts and say where the user should make the change.
 
 **Status `handed-over` (a settings file or another never-Read file):** give a paste-ready reversal:
 the JSON path, the exact `after` lines to replace and the `before` lines to put back, and the
-`/permissions` or `/config` route where one exists. Lite never edits the file itself. At the next
-check-in, a count-only Grep of the `before` lines confirms the reversal.
+`/permissions` or `/config` route where one exists. For an entry described in words, describe the
+reversal in words. For an MCP server removal, say the user re-adds it from their own records (lite
+never saw its configuration; adding a server is hard limit 3, so lite gives no add command). Lite
+never edits the file itself.
 
-After a rollback set `status` to `rolled-back` and write the `checked` line. Suggest `/doctor` (or a
-restart) after any settings change so the user sees that the settings still load.
+The entry keeps status `handed-over` and gets a `rollback: pending` line until the user confirms,
+in the same run, that they made the reversal. Then confirm it: count-only Grep of each `before`
+line (all found means reversed), or the user's word for a file on the never-opened list or an entry
+described in words. Only then set `rolled-back` and remove the `rollback` line. If the user doesn't
+confirm in this run, the pending line stays and the next run checks it again.
+
+After a rollback write the `checked` line and suggest `/doctor` (or a restart) after any settings
+change so the user sees that the settings still load.
 
 ## Reading the log
 

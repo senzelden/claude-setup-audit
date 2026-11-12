@@ -924,6 +924,154 @@ def skill_text():
     return SKILL.read_text(encoding='utf-8')
 
 
+BACKUPS_DIR = '~/.claude/setup-audit-lite/backups/'
+COMMUNITY_RULE = 'community-only practice is never an appliable finding and never enters the apply list'
+RESTORE_RULE = ('A full restore only when the reverse Edit can\'t apply and the file is otherwise '
+                'unchanged')
+NEVER_OPENED_CHECKIN = 'The check-in never Greps a file on the never-opened list'
+
+
+def workflow_texts():
+    """The texts the workflow rules span, keyed by short name."""
+    return {'SKILL.md': skill_text(), 'report-format.md': ref('report-format.md'),
+            'applied-log.md': ref('applied-log.md'), 'sources.md': ref('sources.md'),
+            'reading-rules.md': ref('reading-rules.md')}
+
+
+def section(text, heading):
+    """Body of the Markdown section whose heading line starts with heading, up to the next heading
+    of the same or a higher level; '' when absent."""
+    level = len(heading) - len(heading.lstrip('#'))
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(heading):
+            body = []
+            for later in lines[i + 1:]:
+                hashes = len(later) - len(later.lstrip('#'))
+                if 0 < hashes <= level and later[hashes:hashes + 1] == ' ':
+                    break
+                body.append(later)
+            return '\n'.join(body)
+    return ''
+
+
+def community_only_problems(texts):
+    """R1: SKILL.md, report-format.md and sources.md all say community-only practices are never
+    appliable findings; report-format.md keeps them to the comparison, marked "by hand"."""
+    problems = ['%s lacks the community-only rule' % name
+                for name in ('SKILL.md', 'report-format.md', 'sources.md')
+                if COMMUNITY_RULE not in flat(texts[name])]
+    if 'suggestion, by hand' not in texts['report-format.md']:
+        problems.append('report-format.md template lacks the "by hand" community line')
+    return problems
+
+
+def backup_problems(texts):
+    """R2: backups live under ~/.claude/setup-audit-lite/backups/, never next to the file, and the
+    backups directory is on reading-rules.md's never-opened list."""
+    problems = []
+    for name in ('SKILL.md', 'applied-log.md'):
+        if BACKUPS_DIR not in texts[name]:
+            problems.append('%s does not name the backups directory' % name)
+    for name, text in texts.items():
+        if re.search(r'<file>\.bak-|\.bak-<', text):
+            problems.append('%s puts a backup next to the file' % name)
+    never_opened = section(texts['reading-rules.md'], '## Never opened')
+    if not any(BACKUPS_DIR.rstrip('/') in line and NEGATION.search(line)
+               for line in never_opened.splitlines() if line.startswith('- ')):
+        problems.append('backups directory missing from the never-opened list')
+    for name in ('SKILL.md', 'applied-log.md'):
+        if 'its log and its backups directory' not in flat(texts[name]):
+            problems.append('%s does not say lite adds its log and backups directory' % name)
+    if '! rm <backup path>' not in texts['applied-log.md']:
+        problems.append('applied-log.md does not offer removing the backup')
+    return problems
+
+
+def never_opened_checkin_problems(texts):
+    """R3: the check-in never Greps a never-opened file; presence then comes from a paste or the
+    user, and the hand-over uses claude mcp remove or /mcp."""
+    problems = []
+    for name in ('SKILL.md', 'applied-log.md'):
+        text = flat(texts[name])
+        if NEVER_OPENED_CHECKIN not in text:
+            problems.append('%s lacks the never-opened check-in rule' % name)
+        if 'names-only `claude mcp list` paste' not in text:
+            problems.append('%s lacks the names-only paste for presence' % name)
+        if 'claude mcp remove <name>' not in text:
+            problems.append('%s lacks the MCP removal hand-over' % name)
+    return problems
+
+
+def hard_limit_problems(skill):
+    """The four hard limits are numbered items under the Hard limits heading itself."""
+    body = section(skill, '### Hard limits')
+    items = re.findall(r'^\d\. (.+)$', body, re.M)
+    problems = []
+    for number, limit in enumerate(HARD_LIMITS, 1):
+        if not any(item.startswith(limit) for item in items[number - 1:number]):
+            problems.append('hard limit %d missing under the heading: %s' % (number, limit))
+    return problems
+
+
+def restore_problems(texts):
+    """F9: rollback prefers the reverse Edit; a full restore only when it can't apply and the file is
+    otherwise unchanged."""
+    problems = []
+    for name in ('SKILL.md', 'applied-log.md'):
+        text = flat(texts[name])
+        if RESTORE_RULE not in text:
+            problems.append('%s lacks the restore-only-if-unchanged rule' % name)
+    if 'Prefer the reverse Edit' not in texts['applied-log.md']:
+        problems.append('applied-log.md does not prefer the reverse Edit')
+    return problems
+
+
+class SkillWorkflowRedProof(unittest.TestCase):
+    """Each rule check fails when the documents are mutated to break that rule."""
+
+    def test_community_rule_removed(self):
+        for name in ('SKILL.md', 'report-format.md', 'sources.md'):
+            with self.subTest(file=name):
+                text = workflow_texts()[name]
+                broken = re.sub(r'never(\s+)an(\s+)appliable', 'sometimes an appliable', text)
+                texts = workflow_texts()
+                texts[name] = broken
+                self.assertTrue(community_only_problems(texts))
+
+    def test_backup_next_to_file(self):
+        texts = workflow_texts()
+        texts['SKILL.md'] += '\nWrite `<file>.bak-<YYYY-MM-DD>`.\n'
+        self.assertIn('SKILL.md puts a backup next to the file', backup_problems(texts))
+
+    def test_backups_dir_not_never_opened(self):
+        texts = workflow_texts()
+        texts['reading-rules.md'] = '\n'.join(
+            l for l in texts['reading-rules.md'].splitlines() if BACKUPS_DIR not in l)
+        self.assertIn('backups directory missing from the never-opened list', backup_problems(texts))
+
+    def test_checkin_greps_never_opened(self):
+        texts = workflow_texts()
+        texts['applied-log.md'] = texts['applied-log.md'].replace('never Greps', 'Greps')
+        self.assertIn('applied-log.md lacks the never-opened check-in rule',
+                      never_opened_checkin_problems(texts))
+
+    def test_hard_limit_outside_heading(self):
+        skill = skill_text()
+        body = section(skill, '### Hard limits')
+        moved = skill.replace(body, body.replace('2. anything that loosens security', '2. loosening'))
+        moved += '\n2. anything that loosens security\n'
+        self.assertIn('hard limit 2 missing under the heading: anything that loosens security',
+                      hard_limit_problems(moved))
+
+    def test_restore_without_unchanged_check(self):
+        texts = workflow_texts()
+        texts['applied-log.md'] = re.sub(r'and(\s+)the(\s+)file(\s+)is(\s+)otherwise(\s+)unchanged',
+                                         'whenever the user likes', texts['applied-log.md'])
+        self.assertIn('applied-log.md lacks the restore-only-if-unchanged rule',
+                      restore_problems(texts))
+
+
 class SkillWorkflow(unittest.TestCase):
     def test_skill_cites_every_reference(self):
         text = skill_text()
@@ -983,6 +1131,21 @@ class SkillWorkflow(unittest.TestCase):
         self.assertIn('Settings files are never Edited or Written', text)
         self.assertIn('paste-ready edit', text)
         self.assertIn('`handed-over`', flat(ref('applied-log.md')))
+
+    def test_community_only_never_appliable(self):
+        self.assertEqual(community_only_problems(workflow_texts()), [])
+
+    def test_backups_outside_project(self):
+        self.assertEqual(backup_problems(workflow_texts()), [])
+
+    def test_checkin_never_greps_never_opened(self):
+        self.assertEqual(never_opened_checkin_problems(workflow_texts()), [])
+
+    def test_hard_limits_under_heading(self):
+        self.assertEqual(hard_limit_problems(skill_text()), [])
+
+    def test_restore_only_if_unchanged(self):
+        self.assertEqual(restore_problems(workflow_texts()), [])
 
     def test_workflow_files_have_no_urls(self):
         for rel in WORKFLOW_FILES:

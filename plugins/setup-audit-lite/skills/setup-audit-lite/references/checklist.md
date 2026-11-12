@@ -254,7 +254,8 @@ section is central to the comparison: say which current recommendations the user
 
 Part of hygiene, always on. Proposals here prefer removing or merging over adding. A proposal to add
 a hook, skill, plugin or MCP server must say what it replaces or why nothing existing covers it.
-Lite never recommends installing a large bundle wholesale, and adds nothing itself except its log.
+Lite never recommends installing a large bundle wholesale, and adds nothing itself except its log
+and its backups directory under `~/.claude/setup-audit-lite/`.
 
 - `HYG-lite-clutter-skills` (low). Read: skill frontmatter (`name`, `description`, `when_to_use`)
   across user, project and plugin skills. Claims: `skills-description-purpose`,

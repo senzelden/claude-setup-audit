@@ -26,6 +26,9 @@ SKILL.md, step 10); it has the same content.
   labelled "snapshot <date>".
 - Community points are labelled "Community" with source name and page date; a practice no official
   page states is "community only".
+- A community-only practice is never an appliable finding and never enters the apply list. It
+  appears in "Comparison by topic", at most with a suggestion marked "by hand". Only findings from
+  `checklist.md` backed by an official quote or the snapshot go into "Findings" and can be applied.
 - A check that saw part of its input is "partial" with what was not shown; one that couldn't run is
   "not run" with the reason.
 
@@ -52,6 +55,8 @@ the docs (releases behind, recommendations the setup predates)>
 | | Official docs | Community | Yours |
 |---|---|---|---|
 | <point> | <quote or summary> (<page>, <date>, <label>) | <summary> (<source>, <page date>) or "—" | <file and key, never values> |
+
+Community only: <practice> (<source>, <page date>); suggestion, by hand: <one line, or none>
 
 Conflicts: <where official and community disagree, both named with source and date; any proposal
 follows the official side>
@@ -104,9 +109,11 @@ Run again after <date + 7 days>: invoke setup-audit-lite and it checks in on app
 
 ## The "Applies as" column
 
-Tells the user before they pick how each fix would be made:
+Tells the user before they pick how each fix would be made. Every row in "Findings" comes from
+`checklist.md`; community-only suggestions are not rows here and have no "Applies as" value.
 
-- **edit with backup**: a file lite may Read whole; lite writes a dated backup and makes one Edit.
+- **edit with backup**: a file lite may Read whole; lite writes a backup under
+  `~/.claude/setup-audit-lite/backups/` (never next to the file) and makes one Edit.
 - **paste-ready edit**: settings files and anything lite never Reads whole; lite gives the exact
   change and logs it as handed over.
 - **by hand (hard limit N)**: one of the four hard limits in SKILL.md; lite gives manual steps and
