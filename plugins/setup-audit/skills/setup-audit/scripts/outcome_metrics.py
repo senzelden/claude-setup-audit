@@ -81,15 +81,49 @@ def _family_complete(snapshot, family):
     return bool(rows) and all(s.get('status') == 'collected' and not s.get('omitted') for s in rows)
 
 
+# Settings files the collector could not read are dropped from the summaries (collect.load_json
+# returns None), so their rules would look removed. The inventory's coverage rows name such a file
+# for user settings.json and for project settings found from session working directories; only
+# reasons where the collector's own read also fails count (a symlink the inventory does not follow
+# is still read by the collector).
+SETTINGS_SCOPES = ('user', 'session_settings_candidate')
+SETTINGS_NAMES = ('settings.json', 'settings.local.json')
+UNREAD_REASONS = ('invalid_settings', 'read_failed', 'not_regular_file')
+
+
+def _settings_unread(snapshot):
+    sources = (snapshot.get('coverage') or {}).get('sources')
+    if not isinstance(sources, list):
+        return True
+    return any(isinstance(s, dict) and s.get('scope') in SETTINGS_SCOPES and s.get('status') == 'unavailable'
+               and s.get('reason') in UNREAD_REASONS
+               and str(s.get('source', '')).replace('\\', '/').rsplit('/', 1)[-1] in SETTINGS_NAMES
+               for s in sources)
+
+
 def _settings(snapshot):
-    """Every user and project settings summary, once per path (managed files are never edited)."""
-    found = list((snapshot.get('global') or {}).get('settings') or [])
-    for entry in (snapshot.get('projects') or {}).values():
-        found.extend(entry.get('settings') or [])
+    """(summaries once per path, complete) for every user and project settings file; managed files are
+    never edited. Incomplete when the settings lists are missing or malformed, a summary has no
+    permissions object, or coverage shows a settings file that was not read."""
+    glob_ = snapshot.get('global')
+    found = glob_.get('settings') if isinstance(glob_, dict) else None
+    if not isinstance(found, list):
+        return [], False
+    found, complete = list(found), not _settings_unread(snapshot)
+    projects = snapshot.get('projects')
+    for entry in (projects.values() if isinstance(projects, dict) else ()):
+        listed = entry.get('settings', []) if isinstance(entry, dict) else None
+        if isinstance(listed, list):
+            found.extend(listed)
+        else:
+            complete = False
     seen = {}
     for item in found:
-        seen.setdefault(item['path'], item)
-    return list(seen.values())
+        if isinstance(item, dict) and isinstance(item.get('path'), str) and isinstance(item.get('permissions'), dict):
+            seen.setdefault(item['path'], item)
+        else:
+            complete = False
+    return list(seen.values()), complete and isinstance(projects, dict)
 
 
 def _value(name, snapshot):
@@ -104,21 +138,27 @@ def _value(name, snapshot):
         ok = type(read) is int and type(write) is int and read >= 0 and write >= 0
         value = round(write / (read + write), 3) if ok and read + write else None
         return value, _family_complete(snapshot, 'transcripts')
-    settings = _settings(snapshot)
+    settings, read_all = _settings(snapshot)
+    if not settings and not read_all:
+        return None, False
     if name == 'allow_rule_count':
-        counts = [(s.get('permissions') or {}).get('allow_count') for s in settings]
-        complete = all(type(c) is int and c >= 0 for c in counts)
-        return (sum(counts) if complete else None), complete
-    rules, capped = set(), False
+        counts = [s['permissions'].get('allow_count') for s in settings]
+        typed = all(type(c) is int and c >= 0 for c in counts)
+        return (sum(counts) if typed else None), typed and read_all
+    rules, capped, shaped = set(), False, True
     for s in settings:
-        for flagged in ((s.get('permissions') or {}).get('risky') or {}).values():
+        risky = s['permissions'].get('risky')
+        if not isinstance(risky, dict):
+            shaped = False
+            continue
+        for flagged in risky.values():
             if not isinstance(flagged, list):
                 raise TypeError('risky rules must be a list')
             capped = capped or len(flagged) >= RISKY_CAP
             rules.update((s['path'], rule) for rule in flagged)
     # Metadata-only snapshots replace rule text with a length marker, so distinct rules can merge.
     masked = ((snapshot.get('coverage') or {}).get('privacy') or {}).get('mode') == 'metadata-only'
-    return len(rules), not (capped or masked)
+    return len(rules), read_all and shaped and not (capped or masked)
 
 
 def compute(selector, snapshot):

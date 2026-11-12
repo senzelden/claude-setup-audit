@@ -206,8 +206,22 @@ exactly. The window is the snapshot's: `window` metrics cover `window_days` endi
 |---|---|---|---|---|---|---|
 | `context_baseline_tokens_median` | `tokens` | `transcripts.context_baseline_tokens.median` | `measured` | window | the median of first main-thread request tokens per session | every `transcripts.*` coverage source is `collected` with nothing omitted |
 | `cache_write_share` | `ratio` | `transcripts.cache.write_tokens` | `measured` | window | `write_tokens / (read_tokens + write_tokens)`, 3 decimals; null without tokens | as above |
-| `allow_rule_count` | `rules` | `settings.permissions.allow_count` | `measured` | point | sum of `allow_count` over user and project settings files, once per path | every file has an integer `allow_count` |
-| `risky_allow_rule_count` | `rules` | `settings.permissions.risky` | `measured` | point | distinct (settings path, rule) pairs over every risky flag of those files | no flag list holds the collector's cap of 6 rules, and the snapshot is not metadata-only (masked rule text can merge) |
+| `allow_rule_count` | `rules` | `settings.permissions.allow_count` | `measured` | point | sum of `allow_count` over user and project settings files, once per path | settings read cleanly (below) and every file has an integer `allow_count` |
+| `risky_allow_rule_count` | `rules` | `settings.permissions.risky` | `measured` | point | distinct (settings path, rule) pairs over every risky flag of those files | settings read cleanly, every file has a `risky` object, no flag list holds the collector's cap of 6 rules, and the snapshot is not metadata-only (masked rule text can merge) |
+
+COST window metrics need complete transcript coverage: every `transcripts.*` coverage source
+`collected`, with no file cap hit and nothing omitted. Otherwise the row is `unknown` /
+`incomplete`.
+
+Settings are read cleanly when `global.settings` is a list, every project's `settings` is a list,
+every summary has a `permissions` object, and no coverage source shows a settings file that the
+collector could not read. The collector drops such a file from the summaries, so its rules would
+otherwise look removed. The coverage rows used are the inventory's: `scope` `user` (the user
+`settings.json`) or `session_settings_candidate` (project settings found from session working
+directories), status `unavailable`, reason `invalid_settings`, `read_failed` or `not_regular_file`.
+A symlink the inventory did not follow (`symlink_not_followed`) does not count: the collector reads
+through it. No coverage row exists for an unreadable user `settings.local.json` or for project
+settings found only through `--roots` or discovery, so a broken one of those is not detected.
 
 Permission prompts per session are not collected (transcripts record denials, not prompts), so no
 prompt metric exists.

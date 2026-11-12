@@ -108,14 +108,50 @@ class Metrics(unittest.TestCase):
         self.assertFalse(outcome_metrics.compute(RISKY, snapshot(risky=capped))["complete"])
         self.assertFalse(outcome_metrics.compute(RISKY, snapshot(mode="metadata-only"))["complete"])
 
+    def test_missing_settings_data_is_incomplete_not_zero(self):
+        no_list = snapshot()
+        del no_list["global"]["settings"]
+        bad_list = dict(snapshot(), **{"global": {"settings": "x"}})
+        no_perms = snapshot()
+        no_perms["global"]["settings"].append({"path": "~/.claude/settings.local.json"})
+        no_risky = snapshot()
+        no_risky["global"]["settings"][0]["permissions"] = {"allow_count": 12}
+        unread = snapshot()
+        unread["coverage"]["sources"].append({"source": "/home/u/.claude/settings.json", "scope": "user",
+                                              "status": "unavailable", "reason": "invalid_settings"})
+        unread_project = snapshot()
+        unread_project["coverage"]["sources"].append({"source": "/home/u/repo/.claude/settings.local.json",
+                                                      "scope": "session_settings_candidate",
+                                                      "status": "unavailable", "reason": "read_failed"})
+        cases = {"no settings list": (no_list, (RISKY, ALLOW)), "settings not a list": (bad_list, (RISKY, ALLOW)),
+                 "item without permissions": (no_perms, (RISKY, ALLOW)), "permissions without risky": (no_risky, (RISKY,)),
+                 "user settings unread": (unread, (RISKY, ALLOW)),
+                 "project settings unread": (unread_project, (RISKY, ALLOW))}
+        for name, (snap, selectors) in cases.items():
+            for sel in selectors:
+                with self.subTest(name, metric=sel["name"]):
+                    self.assertFalse(outcome_metrics.compute(sel, snap)["complete"])
+        # a symlinked settings file the inventory did not follow was still read by the collector
+        linked = snapshot()
+        linked["coverage"]["sources"].append({"source": "/home/u/.claude/settings.json", "scope": "user",
+                                              "status": "not_checked", "reason": "symlink_not_followed"})
+        self.assertTrue(outcome_metrics.compute(RISKY, linked)["complete"])
+
+    def test_unread_settings_make_a_drop_unknown(self):
+        unread = snapshot(at="2026-10-05T00:00:00Z", risky={})
+        unread["coverage"]["sources"].append({"source": "/home/u/.claude/settings.json", "scope": "user",
+                                              "status": "unavailable", "reason": "invalid_settings"})
+        rows, _ = ledger.evaluate(dict(version=1, entries=[outcome_entry()]), unread,
+                                  report(generated="2026-10-05T00:00:00Z"), "r")
+        self.assertEqual((rows[0]["verdict"], rows[0]["reason"]), ("unknown", "incomplete"))
+
     def test_unknown_selector_or_missing_collection_time_is_none(self):
         self.assertIsNone(outcome_metrics.compute(dict(RISKY, unit="files"), snapshot()))
         self.assertIsNone(outcome_metrics.compute(dict(RISKY, name="tokens"), snapshot()))
         no_time = snapshot()
         del no_time["generated_utc"]
         self.assertIsNone(outcome_metrics.compute(RISKY, no_time))
-        for bad in ([], None, "x", {}, dict(snapshot(), generated_utc="junk"),
-                    dict(snapshot(), global_=1, **{"global": {"settings": "x"}})):
+        for bad in ([], None, "x", {}, dict(snapshot(), generated_utc="junk"), dict(snapshot(), window_days=0)):
             self.assertIsNone(outcome_metrics.compute(RISKY, bad))
 
 

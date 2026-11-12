@@ -474,7 +474,8 @@ doesn't nag.
 
 Run `python3 ${CLAUDE_SKILL_DIR}/scripts/ledger.py remove --ledger <ledger> --all` (a dry run)
 and show the user every row. `--all` covers every entry not already `removed`, including
-`superseded` ones, so the plan may list them. Apply only after approval, with
+`superseded` ones, so the plan may list them; it skips report-only outcome entries
+(`outcome_only: true`), which are never removed. Apply only after approval, with
 `--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`. List `modified` rows for manual
 review and never edit them. Statuses and reasons are in `references/ledger.md`.
 
