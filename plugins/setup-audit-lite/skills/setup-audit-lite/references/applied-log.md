@@ -53,8 +53,9 @@ file or inside the project.
 - Path B (settings and other never-Read files): lite suggests a copy for the user to run before
   making the change,
   `! mkdir -p ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD> && cp <file> ~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`.
-- No backup (`backup: none`): changes to something on the never-opened list, and hand-overs the
-  user didn't copy first.
+- No backup (`backup: none`): changes to something on the never-opened list, and hand-overs whose
+  suggested copy isn't there: after the user says they ran it, Glob the suggested path (existence
+  only); if nothing is there, record `none`.
 
 The backups directory is on the never-opened list in `reading-rules.md`: lite never Reads or Greps
 it, not even with a count, because a copied settings file holds the same values as the original.
@@ -202,7 +203,7 @@ Lite only rolls back entries in this log, one entry at a time, after the user pi
    `after` occurs more than once, and the user confirms they haven't edited the file since. The
    entry's backup holds the file as it was just before this entry's change, so restoring it also
    undoes every later edit to the file: offer it only when no later entry on the same file is still
-   `applied`; otherwise use the reverse Edit or the manual reversal. Lite never Reads the backup,
+   in place (any status but `rolled-back`); otherwise use the reverse Edit or the manual reversal. Lite never Reads the backup,
    so the restore is a copy for the user to run: `! cp <the entry's backup path> <file>`.
 3. If the `after` text is no longer found, lite reports the mismatch and hands over the manual
    reversal; it never forces a write. The same holds when `after` occurs more than once and the

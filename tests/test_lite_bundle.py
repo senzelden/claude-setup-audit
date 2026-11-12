@@ -1000,7 +1000,7 @@ def backup_problems(texts):
             problems.append('%s does not say how the backup existence check works' % name)
         if "entry's own backup" not in flattened:
             problems.append('%s lets rm reach beyond the entry\'s own backup' % name)
-        if 'no later entry on the same file is still `applied`' not in flattened:
+        if 'no later entry on the same file is still in place (any status but `rolled-back`)' not in flattened:
             problems.append('%s restores over later applied entries' % name)
     return problems
 

@@ -254,7 +254,8 @@ For each due entry, as `applied-log.md` describes:
 4. **Offer:** keep, roll back, or leave for next time.
    - Rollback of an `applied` entry: one reverse Edit from `after` to `before`, so later changes
      survive. A full restore only when the reverse Edit can't apply and the file is otherwise
-     unchanged, and no later entry on the same file is still `applied`; the user runs the copy
+     unchanged, and no later entry on the same file is still in place (any status but
+     `rolled-back`); the user runs the copy
      back from this entry's backup (`applied-log.md`, "Rollback").
    - Rollback of a `handed-over` entry: a paste-ready reversal; lite never edits the file. The
      entry keeps `handed-over` with a `rollback: pending` line until the user confirms in this run.
