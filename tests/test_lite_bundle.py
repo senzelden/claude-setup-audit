@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import re
@@ -281,6 +282,221 @@ class RedProofTests(unittest.TestCase):
         problems = self.violate(mutate)
         self.assertNamed(problems, 'manifest key icon')
         self.assertNamed(problems, 'manifest key mcpServers')
+
+
+REFS = LITE / 'skills/setup-audit-lite/references'
+FULL_CHECKLIST = ROOT / 'plugins/setup-audit/skills/setup-audit/references/checklist.md'
+CHECK_ID = re.compile(r'(SEC|COST|LRN|RDY|HYG)-[a-z0-9-]+')
+LITE_ONLY_IDS = {'HYG-lite-clutter-skills', 'HYG-lite-clutter-hooks', 'HYG-lite-clutter-overlap'}
+SNAPSHOT_MAX_AGE_DAYS = 120
+SNAPSHOT_ENTRY = re.compile(r'^- `(?P<key>[a-z0-9-]+)` — (?P<quote>.+) — page `(?P<page>[a-z0-9-]+)`$')
+# Statuses in stale-strings.md that mark a string as still fine to see in a page.
+NOT_STALE_STATUSES = {'old style, still valid', 'current again'}
+MCP_OR_GLOBAL_CONFIG_INSTRUCTION = re.compile(r'(?i)\b(read|grep|open)\b.*(\.mcp\.json|\.claude\.json)')
+NEGATION = re.compile(r'(?i)\b(never|not)\b')
+# Count-only probes in reading-rules.md. The plan's `\{[^}\s]` missed `"env": { "A": "x" }`.
+INLINE_VALUE_BLOCK = r'"(env|headers)"\s*:\s*\{\s*[^}\s]'
+NEXT_LINE_VALUE_BLOCK = r'"(env|headers)"\s*:\s*$'
+SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
+                'luongnv89/claude-howto', 'hesreallyhim/awesome-claude-code',
+                'simonwillison.net/tags/claude-code', 'systima.ai/blog/claude-code-vs-opencode-token-overhead',
+                'blakecrosley.com/guides/claude-code')
+
+
+def checklist_ids(text):
+    """(ids outside the Lite-only section, ids inside it), from backticked tokens."""
+    outside, inside = set(), set()
+    section = None
+    for line in text.splitlines():
+        if line.startswith('## '):
+            section = line[3:].strip()
+        for token in re.findall(r'`([^`]+)`', line):
+            if CHECK_ID.fullmatch(token):
+                (inside if section == 'Lite-only' else outside).add(token)
+    return outside, inside
+
+
+def unknown_ids(lite_text, full_text):
+    """Lite ids (outside Lite-only) that the full checklist doesn't define."""
+    full = {m.group() for m in CHECK_ID.finditer(full_text)}
+    return sorted(checklist_ids(lite_text)[0] - full)
+
+
+def snapshot_age_problem(text, today):
+    """None when the first line is 'Snapshot date: YYYY-MM-DD' within the age limit."""
+    first = text.splitlines()[0] if text else ''
+    match = re.fullmatch(r'Snapshot date: (\d{4}-\d{2}-\d{2})', first)
+    if not match:
+        return 'first line is not "Snapshot date: YYYY-MM-DD": %r' % first
+    age = (today - datetime.date.fromisoformat(match.group(1))).days
+    if age < 0 or age > SNAPSHOT_MAX_AGE_DAYS:
+        return 'snapshot is %d days old (limit %d): refresh it' % (age, SNAPSHOT_MAX_AGE_DAYS)
+    return None
+
+
+def snapshot_entries(text):
+    return [m.groupdict() for m in map(SNAPSHOT_ENTRY.match, text.splitlines()) if m]
+
+
+def stale_rows(text):
+    """Rows of the `| string | status | since | replacement |` table, backticks stripped."""
+    rows = []
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        if len(cells) != 4 or not cells[0].startswith('`'):
+            continue
+        rows.append({'string': cells[0].strip('`'), 'status': cells[1], 'since': cells[2],
+                     'replacement': cells[3]})
+    return rows
+
+
+def stale_in_snapshot(stale_text, snapshot_text):
+    """(string, claim key) pairs where a stale string appears in a snapshot quote."""
+    hits = []
+    for row in stale_rows(stale_text):
+        if row['status'] in NOT_STALE_STATUSES:
+            continue
+        for entry in snapshot_entries(snapshot_text):
+            if row['string'] in entry['quote']:
+                hits.append((row['string'], entry['key']))
+    return hits
+
+
+def mcp_instruction_problems(root):
+    """Lines that tell Claude to read, grep or open MCP config or ~/.claude.json without a negation."""
+    problems = []
+    for path in sorted(Path(root).rglob('*')):
+        if path.suffix.lower() not in TEXT_EXTENSIONS or path.is_symlink() or not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+            if MCP_OR_GLOBAL_CONFIG_INSTRUCTION.search(line) and not NEGATION.search(line):
+                problems.append('%s:%d' % (path.relative_to(root), number))
+    return problems
+
+
+def ref(name):
+    return (REFS / name).read_text(encoding='utf-8')
+
+
+class LiteReferencesTests(unittest.TestCase):
+    def test_lite_ids_subset_of_full(self):
+        outside, _ = checklist_ids(ref('checklist.md'))
+        self.assertGreater(len(outside), 10)
+        self.assertEqual(unknown_ids(ref('checklist.md'), FULL_CHECKLIST.read_text(encoding='utf-8')), [])
+
+    def test_checklist_sections(self):
+        headings = re.findall(r'^## (.+)$', ref('checklist.md'), re.M)
+        self.assertEqual(headings, ['Security (SEC-)', 'Cost & context (COST-)', 'Learning (LRN-)',
+                                    'Agent readiness (RDY-)', 'Hygiene (HYG-)',
+                                    'New features (adopt)', 'Lite-only'])
+
+    def test_lite_only_ids_present(self):
+        _, inside = checklist_ids(ref('checklist.md'))
+        self.assertEqual(inside, LITE_ONLY_IDS)
+
+    def test_checklist_claim_keys_in_snapshot(self):
+        text = ref('checklist.md')
+        cited = set()
+        for group in re.findall(r'Claims?:\s+((?:`[a-z0-9-]+`(?:,\s+)?)+)', text):
+            cited |= set(re.findall(r'`([a-z0-9-]+)`', group))
+        keys = {e['key'] for e in snapshot_entries(ref('docs-snapshot.md'))}
+        self.assertGreater(len(cited), 30)
+        self.assertEqual(sorted(cited - keys), [])
+        # Every check bullet names its claims (or says "Claims: none").
+        for bullet in re.split(r'\n(?=- `)', text):
+            match = re.match(r'- `([A-Z]+-[a-z0-9-]+)`', bullet)
+            if match:
+                self.assertRegex(bullet, r'Claims:\s+(`|none)', match.group(1))
+
+    def test_snapshot_dated_and_fresh(self):
+        self.assertIsNone(snapshot_age_problem(ref('docs-snapshot.md'), datetime.date.today()))
+
+    def test_snapshot_entries_well_formed(self):
+        text = ref('docs-snapshot.md')
+        entries = snapshot_entries(text)
+        self.assertGreaterEqual(len(entries), 20)
+        keys = [e['key'] for e in entries]
+        self.assertEqual(len(keys), len(set(keys)))
+        bullet_lines = [l for l in text.splitlines() if l.startswith('- `')]
+        self.assertEqual(len(bullet_lines), len(entries))
+
+    def test_snapshot_has_no_stale_string_as_current(self):
+        self.assertEqual(stale_in_snapshot(ref('stale-strings.md'), ref('docs-snapshot.md')), [])
+
+    def test_stale_strings_table(self):
+        rows = {r['string']: r for r in stale_rows(ref('stale-strings.md'))}
+        for name in ('includeCoAuthoredBy', 'ignorePatterns', 'TaskOutput', 'taskOutputMaxChars',
+                     'Write(', '/output-style'):
+            self.assertIn(name, rows)
+        self.assertEqual(rows['Bash(x:*)']['status'], 'old style, still valid')
+        for row in rows.values():
+            if row['status'] not in NOT_STALE_STATUSES:
+                self.assertRegex(row['since'], r'^\d+\.\d+\.\d+$', row)
+
+    def test_reading_rules_cover_inline_and_minified(self):
+        text = ref('reading-rules.md')
+        self.assertIn(INLINE_VALUE_BLOCK, text)
+        self.assertIn(NEXT_LINE_VALUE_BLOCK, text)
+        self.assertIn('output_mode: count', text)
+        self.assertIn('one non-empty line', text)
+        self.assertIn(r'"(env|headers)"\s*:\s*\{\s*$', text)
+        self.assertIn('not read', text)
+        for helper in ('apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper'):
+            self.assertIn(helper, text)
+
+    def test_inline_probe_catches_spaced_and_tight_blocks(self):
+        # Review Focus 1: the count-only probe must fire on every one-line value block and stay
+        # quiet on openings whose values sit on later lines (those are mapped by line number).
+        inline, next_line = re.compile(INLINE_VALUE_BLOCK), re.compile(NEXT_LINE_VALUE_BLOCK)
+        for line in ('"env": {"A": "x"}', '"env": { "A": "x" },', '"headers":{"X":"y"}',
+                     '{"env": {"A": "x"}, "model": "opus"}'):
+            self.assertTrue(inline.search(line), line)
+        for line in ('"env": {', '  "env": {  ', '"env": {}', '"env": { },', '"headers": {}'):
+            self.assertFalse(inline.search(line), line)
+        self.assertTrue(next_line.search('  "env":'))
+        self.assertFalse(next_line.search('  "env": {'))
+
+    def test_reading_rules_forbid_mcp_and_claude_json(self):
+        lines = ref('reading-rules.md').splitlines()
+        for name in ('.mcp.json', '.claude.json', '.envrc', '.credentials.json'):
+            self.assertTrue(any(name in l and NEGATION.search(l) for l in lines), name)
+        self.assertEqual(mcp_instruction_problems(LITE), [])
+
+    def test_sources_lists_seed_allowlist(self):
+        text = ref('sources.md')
+        for source in SEED_SOURCES:
+            self.assertIn(source, text)
+        self.assertIsNone(CREDENTIAL_SOURCE.search(text))
+
+    def test_only_sources_has_urls_among_references(self):
+        with_urls = sorted(p.name for p in REFS.glob('*.md') if URL.search(p.read_text(encoding='utf-8')))
+        self.assertEqual(with_urls, ['sources.md'])
+
+
+class ReferencesRedProofTests(unittest.TestCase):
+    def test_made_up_id_fails_subset(self):
+        text = ref('checklist.md').replace('## Cost & context (COST-)',
+                                           '- `SEC-not-a-real-check` (high)\n\n## Cost & context (COST-)')
+        self.assertEqual(unknown_ids(text, FULL_CHECKLIST.read_text(encoding='utf-8')),
+                         ['SEC-not-a-real-check'])
+
+    def test_old_snapshot_fails_freshness(self):
+        text = re.sub(r'^Snapshot date: .*', 'Snapshot date: 2026-01-01', ref('docs-snapshot.md'))
+        self.assertIsNotNone(snapshot_age_problem(text, datetime.date.today()))
+
+    def test_stale_string_in_quote_detected(self):
+        text = ref('docs-snapshot.md') + '- `x-claim` — set includeCoAuthoredBy to false — page `settings`\n'
+        self.assertIn(('includeCoAuthoredBy', 'x-claim'), stale_in_snapshot(ref('stale-strings.md'), text))
+
+    def test_mcp_read_instruction_detected(self):
+        tmp = tempfile.TemporaryDirectory(prefix='lite-redproof-')
+        self.addCleanup(tmp.cleanup)
+        copy = Path(tmp.name) / 'lite'
+        shutil.copytree(LITE, copy, symlinks=True)
+        (copy / 'notes.md').write_text('Read .mcp.json to list servers.\nGrep ~/.claude.json for x.\n')
+        problems = mcp_instruction_problems(copy)
+        self.assertIn('notes.md:1', problems)
+        self.assertIn('notes.md:2', problems)
 
 
 if __name__ == '__main__':
