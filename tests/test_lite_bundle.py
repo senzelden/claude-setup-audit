@@ -292,11 +292,28 @@ SNAPSHOT_MAX_AGE_DAYS = 120
 SNAPSHOT_ENTRY = re.compile(r'^- `(?P<key>[a-z0-9-]+)` — (?P<quote>.+) — page `(?P<page>[a-z0-9-]+)`$')
 # Statuses in stale-strings.md that mark a string as still fine to see in a page.
 NOT_STALE_STATUSES = {'old style, still valid', 'current again'}
-MCP_OR_GLOBAL_CONFIG_INSTRUCTION = re.compile(r'(?i)\b(read|grep|open)\b.*(\.mcp\.json|\.claude\.json)')
+READ_VERB = re.compile(r'(?i)\b(read|grep|open)\b')
+MCP_OR_GLOBAL_CONFIG_FILE = re.compile(r'\.mcp\.json|\.claude\.json')
 NEGATION = re.compile(r'(?i)\b(never|not)\b')
-# Count-only probes in reading-rules.md. The plan's `\{[^}\s]` missed `"env": { "A": "x" }`.
-INLINE_VALUE_BLOCK = r'"(env|headers)"\s*:\s*\{\s*[^}\s]'
-NEXT_LINE_VALUE_BLOCK = r'"(env|headers)"\s*:\s*$'
+# Probes and structure patterns of the value-free algorithm in reading-rules.md, copied verbatim
+# (a test asserts each appears there). They must stay within syntax that Python re and ripgrep
+# share: no lookaround and no backreferences (test_documented_patterns_portable).
+VALUE_KEY = r'"(env|headers)"'
+VALUE_OPEN_EOL = r'"(env|headers)"\s*:\s*\{\s*$'
+VALUE_EMPTY = r'"(env|headers)"\s*:\s*\{\s*\}'
+HELPER = (r'"(apiKeyHelper|awsAuthRefresh|gcpAuthRefresh|awsCredentialExport|otelHeadersHelper|'
+          r'headersHelper)"')
+HEADERS_HELPER = r'"headersHelper"'
+_SECRET_SHAPES = (r'''bearer\s+[^\s$"'][^\s"']{11,}|\b[a-z0-9_]*(pass|token|secret|key)[a-z0-9_]*=[^\s$"'&;|)]'''
+                  r'|\bAKIA[0-9A-Z]{16}\b|\bgithub_pat_[a-z0-9_]{20,}|\bglpat-[a-z0-9_-]{16,}'
+                  r'|\bnpm_[a-z0-9]{30,}|\b(sk|ghp|gho|ghs|ghu|xox[abpr])[-_][a-z0-9_-]{16,}')
+SECRET_IN_RULE = (r'(?i)(Bash\(|PowerShell\(|"(command|url|args|[A-Za-z]*Helper)"\s*:).*('
+                  + _SECRET_SHAPES + ')')
+SECRET_IN_ELEMENT = r'(?i)^\s*"[^"]*(' + _SECRET_SHAPES + r')[^"]*",?\s*$'
+BLOCK_OPEN = r'^\s*("[^"]*"\s*:\s*)?[\[{]\s*$'
+BLOCK_CLOSE = r'^\s*[\]}],?\s*$'
+DOCUMENTED_PATTERNS = (VALUE_KEY, VALUE_OPEN_EOL, VALUE_EMPTY, HELPER, HEADERS_HELPER, SECRET_IN_RULE,
+                       SECRET_IN_ELEMENT, BLOCK_OPEN, BLOCK_CLOSE)
 SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
                 'luongnv89/claude-howto', 'hesreallyhim/awesome-claude-code',
                 'simonwillison.net/tags/claude-code', 'systima.ai/blog/claude-code-vs-opencode-token-overhead',
@@ -362,16 +379,67 @@ def stale_in_snapshot(stale_text, snapshot_text):
     return hits
 
 
+def unsafe_mcp_line(line):
+    """True when a line pairs read/grep/open with MCP config or ~/.claude.json and no negation comes
+    before the first verb or before the first file name ("Read .mcp.json if it is not empty")."""
+    verb, name = READ_VERB.search(line), MCP_OR_GLOBAL_CONFIG_FILE.search(line)
+    if not (verb and name):
+        return False
+    negation = NEGATION.search(line)
+    return not (negation and (negation.start() < verb.start() or negation.start() < name.start()))
+
+
 def mcp_instruction_problems(root):
-    """Lines that tell Claude to read, grep or open MCP config or ~/.claude.json without a negation."""
+    """Lines that tell Claude to read, grep or open MCP config or ~/.claude.json."""
     problems = []
     for path in sorted(Path(root).rglob('*')):
         if path.suffix.lower() not in TEXT_EXTENSIONS or path.is_symlink() or not path.is_file():
             continue
         for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-            if MCP_OR_GLOBAL_CONFIG_INSTRUCTION.search(line) and not NEGATION.search(line):
+            if unsafe_mcp_line(line):
                 problems.append('%s:%d' % (path.relative_to(root), number))
     return problems
+
+
+def simulate_settings_read(text):
+    """Run the reading-rules algorithm on a settings file's text, as Grep and Read would.
+
+    Returns (reason, []) when the file is "not read", else (None, [line numbers read]).
+    """
+    lines = text.splitlines()
+
+    def count(pattern):
+        return sum(1 for line in lines if re.search(pattern, line))
+
+    if count(VALUE_KEY) != count(VALUE_OPEN_EOL) + count(VALUE_EMPTY):
+        return 'value on an opening line or split key', []
+    if count(HEADERS_HELPER):
+        return 'headers helper', []
+    if count(SECRET_IN_RULE) + count(SECRET_IN_ELEMENT):
+        return 'secret-shaped', []
+    if count('.') == 1:
+        return 'one non-empty line', []
+    helper = count(HELPER) > 0
+    stack, depth_of, in_value = [], {}, set()
+    for number, line in enumerate(lines, 1):
+        depth_of[number] = len(stack)
+        if stack and stack[-1][1]:
+            in_value.add(number)
+        if re.search(BLOCK_OPEN, line):
+            if stack and stack[-1][1]:
+                return 'opening inside a value block', []
+            stack.append((line.rstrip()[-1], bool(re.search(VALUE_OPEN_EOL, line))))
+            if stack[-1][1]:
+                in_value.add(number)
+        elif re.search(BLOCK_CLOSE, line):
+            if not stack or {'{': '}', '[': ']'}[stack[-1][0]] != line.strip().rstrip(',')[0]:
+                return 'unpaired structure', []
+            stack.pop()
+    if stack:
+        return 'unpaired structure', []
+    read = [n for n in range(1, len(lines) + 1)
+            if n not in in_value and (not helper or depth_of[n] >= 2)]
+    return None, read
 
 
 def ref(name):
@@ -435,26 +503,84 @@ class LiteReferencesTests(unittest.TestCase):
 
     def test_reading_rules_cover_inline_and_minified(self):
         text = ref('reading-rules.md')
-        self.assertIn(INLINE_VALUE_BLOCK, text)
-        self.assertIn(NEXT_LINE_VALUE_BLOCK, text)
+        for pattern in DOCUMENTED_PATTERNS:
+            self.assertIn('`%s`' % pattern, text)
         self.assertIn('output_mode: count', text)
         self.assertIn('one non-empty line', text)
-        self.assertIn(r'"(env|headers)"\s*:\s*\{\s*$', text)
         self.assertIn('not read', text)
-        for helper in ('apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper'):
-            self.assertIn(helper, text)
+        self.assertIn('depth 2 or deeper', text)
+        self.assertIn('root object', text)
 
-    def test_inline_probe_catches_spaced_and_tight_blocks(self):
-        # Review Focus 1: the count-only probe must fire on every one-line value block and stay
-        # quiet on openings whose values sit on later lines (those are mapped by line number).
-        inline, next_line = re.compile(INLINE_VALUE_BLOCK), re.compile(NEXT_LINE_VALUE_BLOCK)
-        for line in ('"env": {"A": "x"}', '"env": { "A": "x" },', '"headers":{"X":"y"}',
-                     '{"env": {"A": "x"}, "model": "opus"}'):
-            self.assertTrue(inline.search(line), line)
-        for line in ('"env": {', '  "env": {  ', '"env": {}', '"env": { },', '"headers": {}'):
-            self.assertFalse(inline.search(line), line)
-        self.assertTrue(next_line.search('  "env":'))
-        self.assertFalse(next_line.search('  "env": {'))
+    def test_documented_patterns_portable(self):
+        # Grep runs ripgrep, Python runs these tests: keep to the shared syntax.
+        text = ref('reading-rules.md')
+        for token in ('(?=', '(?!', '(?<', '\\1'):
+            self.assertNotIn(token, text)
+        for pattern in DOCUMENTED_PATTERNS:
+            re.compile(pattern)
+
+    def test_value_blocks_never_read(self):
+        clean = '\n'.join(['{', '  "model": "opus",', '  "env": {', '    "A": "VALUE1",',
+                           '    "B": "VALUE2"', '  },', '  "headers": {},', '  "permissions": {',
+                           '    "allow": [', '      "Bash(uv run pytest -q)"', '    ]', '  }', '}'])
+        reason, read = simulate_settings_read(clean)
+        self.assertIsNone(reason)
+        lines = clean.splitlines()
+        self.assertFalse([n for n in read if 'VALUE' in lines[n - 1]])
+        self.assertIn(10, read)  # the allow rule
+        self.assertIn(2, read)   # a top-level scalar, no helper present
+        layouts = {
+            'tight inline': '{\n  "env": {"A": "VALUE"},\n  "model": "opus"\n}',
+            'spaced inline': '{\n  "env": { "A": "VALUE" },\n  "model": "opus"\n}',
+            'brace on next line': '{\n  "env":\n  {\n    "A": "VALUE"\n  }\n}',
+            'key alone, colon on next line': '{\n  "env"\n  : {\n    "A": "VALUE"\n  }\n}',
+            'nested object in env': '{\n  "env": {\n    "A": {\n      "B": "VALUE"\n    }\n  }\n}',
+            'minified': '{"model": "opus", "permissions": {"allow": ["Bash(ls *)"]}}',
+            'unpaired': '{\n  "permissions": {\n    "allow": []\n}',
+            'headers helper': '{\n  "headersHelper": "/x.sh",\n  "model": "opus"\n}',
+        }
+        for label, text in layouts.items():
+            with self.subTest(layout=label):
+                self.assertIsNotNone(simulate_settings_read(text)[0])
+
+    def test_helper_lines_skipped(self):
+        text = '\n'.join(['{', '  "apiKeyHelper": "/opt/VALUE.sh",', '  "model": "opus",',
+                          '  "permissions": {', '    "deny": [', '      "Read(./.env)"', '    ]',
+                          '  }', '}'])
+        reason, read = simulate_settings_read(text)
+        self.assertIsNone(reason)
+        self.assertNotIn(2, read)
+        self.assertNotIn(3, read)  # every depth-1 line is skipped when a helper is present
+        self.assertIn(6, read)
+
+    def test_secret_probe_samples(self):
+        # Fixture secrets are assembled at run time so they never look like real vendor keys.
+        rule, element = re.compile(SECRET_IN_RULE), re.compile(SECRET_IN_ELEMENT)
+        hits = [
+            '      "Bash(PG' + 'PASSWORD=hunter2 psql -h db)",',
+            '      "Bash(aws s3 ls --key AK' + 'IA' + 'Q' * 16 + ')",',
+            '      "Bash(gh api -H x github' + '_pat_' + 'a1' * 12 + ')",',
+            '          "Authorization: Bear' + 'er abcdef123456",',
+            '  "headersHelper": "echo \'Authorization: Bear' + 'er abc123def456ghi\'",',
+            '      "Bash(curl -u x:y https://h?api_' + 'key=zz9)",',
+            '      "Bash(npm publish --otp 1 --registry r gl' + 'pat-' + 'b2' * 10 + ')",',
+        ]
+        misses = [
+            '      "Bash(npm run test:*)",',
+            '      "Bash(git commit:*)",',
+            '      "Bash(uv run pytest -q)",',
+            '            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-token.sh",',
+            '      "Bash(curl -H \\"Authorization: Bearer $ANTHROPIC_API_KEY\\" https://h)",',
+            '      "Bash(SOME_TOKEN=${SOME_TOKEN_VALUE} make deploy)",',
+            '    "GITHUB_TOKEN": "abc",',
+            '    "model": "opus",',
+        ]
+        for line in hits:
+            with self.subTest(hit=line):
+                self.assertTrue(rule.search(line) or element.search(line))
+        for line in misses:
+            with self.subTest(miss=line):
+                self.assertFalse(rule.search(line) or element.search(line))
 
     def test_reading_rules_forbid_mcp_and_claude_json(self):
         lines = ref('reading-rules.md').splitlines()
@@ -497,6 +623,12 @@ class ReferencesRedProofTests(unittest.TestCase):
         problems = mcp_instruction_problems(copy)
         self.assertIn('notes.md:1', problems)
         self.assertIn('notes.md:2', problems)
+
+    def test_negation_must_precede_verb_or_file(self):
+        self.assertTrue(unsafe_mcp_line('Read .mcp.json if it is not empty.'))
+        self.assertTrue(unsafe_mcp_line('Open `~/.claude.json`; it is not secret.'))
+        self.assertFalse(unsafe_mcp_line('Never Read .mcp.json.'))
+        self.assertFalse(unsafe_mcp_line('`.mcp.json` is never opened, Read or Grepped.'))
 
 
 if __name__ == '__main__':
