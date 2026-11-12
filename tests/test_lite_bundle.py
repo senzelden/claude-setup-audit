@@ -12,7 +12,9 @@ LITE = ROOT / 'plugins/setup-audit-lite'
 # Plugin directory rules for the Markdown-only edition (non-Verified orgs: no scripts, no tool
 # grants beyond read-only, no image or font references, no credential source next to a URL).
 ALLOWED_EXTENSIONS = {'.md', '.txt', '.json', '.yaml', '.yml', '.png', '.jpg', '.jpeg', '.gif',
-                      '.webp', '.ico'}
+                      '.webp'}
+MAX_TEXT_BYTES = 256 * 1024
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 TEXT_EXTENSIONS = {'.md', '.txt', '.json', '.yaml', '.yml'}
 ALLOWED_TOOLS = {'Read', 'Grep', 'Glob', 'LS'}
 FORBIDDEN_NAMES = {'package.json', 'package-lock.json', 'pyproject.toml', 'poetry.lock', 'uv.lock',
@@ -20,23 +22,36 @@ FORBIDDEN_NAMES = {'package.json', 'package-lock.json', 'pyproject.toml', 'poetr
                    '.mcp.json'}
 FORBIDDEN_DIRS = {'hooks', 'bin', 'workflows', 'scripts'}
 FORBIDDEN_MANIFEST_KEYS = {'icon', 'hooks', 'mcpServers', 'mods', 'modules'}
-IMAGE_OR_FONT_PATH = re.compile(r'\.(png|jpe?g|gif|webp|woff2?|ttf|otf|ico)\b', re.I)
+IMAGE_OR_FONT_PATH = re.compile(r'\.(png|jpe?g|gif|webp|svg|avif|bmp|ico|woff2?|ttf|otf|eot)\b', re.I)
 CREDENTIAL_SOURCE = re.compile(
-    r'\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b'
+    r'(?i:\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b)'
     r'|\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY)[A-Z0-9_]*\b|\b[A-Z0-9_]+_KEY\b')
 URL = re.compile(r'https?://')
 
 
 def frontmatter(text):
+    """Top-level keys mapped to their inline value plus any indented or '- ' continuation lines."""
     match = re.match(r'---\n(.*?)\n---\n', text, re.S)
     if not match:
         return None
     fields = {}
+    key = None
     for line in match.group(1).splitlines():
-        key, sep, value = line.partition(':')
-        if sep and not line.startswith((' ', '\t')):
-            fields[key.strip()] = value.strip()
+        if line.startswith((' ', '\t', '- ')) and key is not None:
+            fields[key] += ' ' + line.strip()
+            continue
+        name, sep, value = line.partition(':')
+        if sep:
+            key = name.strip()
+            fields[key] = value.strip()
     return fields
+
+
+def tool_tokens(value):
+    """Tool names in an allowed-tools value: inline, flow list or block list."""
+    cleaned = re.sub(r'(^|\s)- ', ' ', value)
+    cleaned = re.sub(r'[\[\],"\']', ' ', cleaned)
+    return cleaned.split()
 
 
 def bundle_problems(root):
@@ -63,6 +78,8 @@ def bundle_problems(root):
                 problems.append('package-manager config: %s' % rel)
             if ext not in ALLOWED_EXTENSIONS:
                 problems.append('disallowed file type: %s' % rel)
+            if ext not in IMAGE_EXTENSIONS and path.stat().st_size > MAX_TEXT_BYTES:
+                problems.append('larger than 256 KiB: %s' % rel)
             with open(path, 'rb') as handle:
                 if handle.read(2) == b'#!':
                     problems.append('starts with #!: %s' % rel)
@@ -82,13 +99,16 @@ def bundle_problems(root):
                 else:
                     for key in sorted(FORBIDDEN_MANIFEST_KEYS & set(manifest)):
                         problems.append('manifest key %s: %s' % (key, rel))
-            if name == 'SKILL.md':
+            if ext == '.md':
                 fields = frontmatter(text)
                 if fields is None:
-                    problems.append('missing frontmatter: %s' % rel)
+                    if name == 'SKILL.md':
+                        problems.append('missing frontmatter: %s' % rel)
                     continue
+                if 'hooks' in fields:
+                    problems.append('frontmatter hooks key in %s' % rel)
                 tools = fields.get('allowed-tools', '')
-                for tool in tools.split():
+                for tool in tool_tokens(tools):
                     if tool not in ALLOWED_TOOLS:
                         problems.append('allowed-tools entry %r not allowed in %s' % (tool, rel))
                 for bad in ('${', '//', '://'):
@@ -103,7 +123,7 @@ class LiteBundleTests(unittest.TestCase):
 
     def test_allowed_tools_exact(self):
         fields = frontmatter((LITE / 'skills/setup-audit-lite/SKILL.md').read_text(encoding='utf-8'))
-        tools = set(fields['allowed-tools'].split())
+        tools = set(tool_tokens(fields['allowed-tools']))
         self.assertTrue(tools)
         self.assertLessEqual(tools, ALLOWED_TOOLS)
         self.assertEqual(fields['name'], 'setup-audit-lite')
@@ -117,15 +137,22 @@ class LiteBundleTests(unittest.TestCase):
     def test_listed_in_marketplace(self):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
         entries = {p['name']: p for p in market['plugins']}
+        names = [p['name'] for p in market['plugins']]
+        self.assertEqual(len(names), len(set(names)))
         self.assertEqual(entries['setup-audit-lite']['source'], './plugins/setup-audit-lite')
-        self.assertEqual(entries['setup-audit']['source'], './plugins/setup-audit')
-        self.assertTrue(entries['setup-audit']['description'].startswith('Audit Claude Code configuration'))
+        # The entry as on main when lite was added (hard-coded so a fresh checkout needs no git).
+        self.assertEqual(entries['setup-audit'], {
+            'name': 'setup-audit',
+            'source': './plugins/setup-audit',
+            'description': 'Audit Claude Code configuration and usage against current docs, generate '
+                           'readable reports, and apply approved fixes with backups and verification.'})
 
 
 class RedProofTests(unittest.TestCase):
     def violate(self, mutate):
-        tmp = tempfile.mkdtemp(prefix='lite-redproof-')
-        copy = Path(tmp) / 'lite'
+        tmp = tempfile.TemporaryDirectory(prefix='lite-redproof-')
+        self.addCleanup(tmp.cleanup)
+        copy = Path(tmp.name) / 'lite'
         shutil.copytree(LITE, copy, symlinks=True)
         mutate(copy)
         return bundle_problems(copy)
@@ -164,7 +191,7 @@ class RedProofTests(unittest.TestCase):
         def mutate(root):
             (root / 'hooks').mkdir()
             (root / 'hooks/hooks.json').write_text('{"hooks": {}}\n')
-        self.assertNamed(self.violate(mutate), 'hooks')
+        self.assertIn('forbidden directory: hooks', self.violate(mutate))
 
     def test_bin_dir(self):
         self.assertNamed(self.violate(lambda r: (r / 'bin').mkdir()), 'forbidden directory: bin')
@@ -178,9 +205,17 @@ class RedProofTests(unittest.TestCase):
         self.assertNamed(problems, 'symlink: link.md')
 
     def test_credential_source_with_url(self):
+        for sample in ('.claude.json', '.envrc', '.credentials.json', 'direnv', 'DIRENV', '.ENVRC',
+                       'GITHUB_TOKEN', 'MY_SECRET', 'DB_PASSWORD', 'X_API_KEY', 'SIGNING_KEY'):
+            with self.subTest(sample=sample):
+                problems = self.violate(lambda r: (r / 'notes.md').write_text(
+                    'Never open %s. See https://example.invalid\n' % sample))
+                self.assertNamed(problems, 'paired with URL in notes.md')
+
+    def test_lowercase_key_word_is_not_a_credential_name(self):
         problems = self.violate(lambda r: (r / 'notes.md').write_text(
-            'Never open .envrc. See https://example.invalid\n'))
-        self.assertNamed(problems, 'paired with URL in notes.md')
+            'The key idea. See https://example.invalid\n'))
+        self.assertEqual(problems, [])
 
     def test_credential_source_without_url_is_fine(self):
         problems = self.violate(lambda r: (r / 'notes.md').write_text('Never open .envrc.\n'))
@@ -189,6 +224,52 @@ class RedProofTests(unittest.TestCase):
     def test_image_reference(self):
         problems = self.violate(lambda r: (r / 'notes.md').write_text('![x](icon.png)\n'))
         self.assertNamed(problems, 'image or font path: notes.md')
+
+    def test_directory_symlink(self):
+        problems = self.violate(lambda r: os.symlink('skills', r / 'linkdir'))
+        self.assertNamed(problems, 'symlink: linkdir')
+
+    def test_oversized_text_file(self):
+        problems = self.violate(lambda r: (r / 'big.md').write_text('x' * (300 * 1024)))
+        self.assertNamed(problems, 'larger than 256 KiB: big.md')
+
+    def test_ico_file_not_allowed(self):
+        problems = self.violate(lambda r: (r / 'a.ico').write_bytes(b'\x00\x00\x01\x00'))
+        self.assertNamed(problems, 'disallowed file type: a.ico')
+
+    def test_image_reference_extensions(self):
+        for ext in ('png', 'svg', 'avif', 'bmp', 'eot', 'ico', 'woff2'):
+            with self.subTest(ext=ext):
+                problems = self.violate(lambda r: (r / 'notes.md').write_text('see x.%s\n' % ext))
+                self.assertNamed(problems, 'image or font path: notes.md')
+
+    def test_frontmatter_allowed_tools_forms(self):
+        forms = {
+            'block list': 'allowed-tools:\n  - Read\n  - Bash\n',
+            'flow list': 'allowed-tools: [Read, Bash]\n',
+            'quoted flow list': 'allowed-tools: ["Read", "Bash"]\n',
+            'unindented block list': 'allowed-tools:\n- Read\n- Bash\n',
+        }
+        for label, line in forms.items():
+            with self.subTest(form=label):
+                def mutate(root, line=line):
+                    path = root / 'skills/setup-audit-lite/SKILL.md'
+                    text = path.read_text(encoding='utf-8')
+                    path.write_text(re.sub(r'allowed-tools:.*\n', line, text, count=1))
+                self.assertNamed(self.violate(mutate), "allowed-tools entry 'Bash' not allowed")
+
+    def test_frontmatter_hooks_key(self):
+        def mutate(root):
+            path = root / 'skills/setup-audit-lite/SKILL.md'
+            text = path.read_text(encoding='utf-8')
+            path.write_text(text.replace('---\n\n', 'hooks:\n  PreToolUse:\n    - x\n---\n\n', 1))
+        self.assertNamed(self.violate(mutate), 'frontmatter hooks key')
+
+    def test_allowed_tools_checked_in_any_markdown(self):
+        def mutate(root):
+            (root / 'commands').mkdir()
+            (root / 'commands/x.md').write_text('---\nallowed-tools: Bash\n---\nbody\n')
+        self.assertNamed(self.violate(mutate), "allowed-tools entry 'Bash' not allowed in commands/x.md")
 
     def test_manifest_keys(self):
         def mutate(root):
