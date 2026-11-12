@@ -87,6 +87,7 @@ REASONS = (
     'expect_file_missing', 'not_applied_other_target_failed', 'changed_since_plan', 'backup_failed',
     'write_failed', 'verify_failed', 'backup_dir_symlink', 'backup_dir_unusable',
     'unknown_credential_field', 'inject_hosts_required', 'inject_host_invalid', 'inject_host_not_allowed',
+    'widens_credential_injection',
 )
 MAX_OPS_BYTES = 1024 * 1024
 MAX_TARGET_BYTES = 8 * 1024 * 1024
@@ -196,6 +197,32 @@ def inject_hosts(path, value):
     if path not in ('sandbox.credentials.files', 'sandbox.credentials.envVars'):
         return []
     return [h for e in value if e.get('mode') == 'mask' for h in e.get('injectHosts', ())]
+
+
+ALLOWED_DOMAINS = 'sandbox.network.allowedDomains'
+
+
+def unscoped_mask(doc):
+    """True when doc holds a mask credential entry without (or with an empty) injectHosts.
+
+    sandboxing "Mask credentials" (fetched 2026-11-11): the proxy substitutes such an entry's real
+    value on requests to every host in network.allowedDomains, which merges across scopes. Shape
+    only: no name, path or value is returned.
+    """
+    creds = _get(doc, ['sandbox', 'credentials'])
+    if not isinstance(creds, dict):
+        return False
+    return any(isinstance(e, dict) and e.get('mode') == 'mask' and not e.get('injectHosts')
+               for key in ('files', 'envVars') if isinstance(creds.get(key), list) for e in creds[key])
+
+
+def user_unscoped_mask():
+    """unscoped_mask of the user settings.json; True (fail closed) when it exists but cannot be checked."""
+    try:
+        raw, _ = _read(os.path.join(os.path.normpath(collect.CLAUDE), 'settings.json'))
+        return raw is not None and unscoped_mask(_parse(raw))
+    except (OpsError, RecursionError):
+        return True
 
 
 def validate_value(path, value, scope):
@@ -347,7 +374,7 @@ def _remove(doc, parts):
         del chain[depth - 1][parts[depth - 1]]
 
 
-def plan_ops(doc, ops, scope):
+def plan_ops(doc, ops, scope, masked_elsewhere=False):
     new, rows, warnings = copy.deepcopy(doc), [], []
     for o in ops:
         parts = o['path'].split('.')
@@ -379,11 +406,18 @@ def plan_ops(doc, ops, scope):
     # Judged against the file as it was before this batch: adding a host to allowedDomains is a
     # separate apply the user approves on its own, never part of the batch that masks a credential.
     allowed = _get(doc, ['sandbox', 'network', 'allowedDomains'])
-    allowed = set(allowed) if isinstance(allowed, list) else set()
+    allowed = {h for h in allowed if isinstance(h, str)} if isinstance(allowed, list) else set()
     for o, row in zip(ops, rows):
         if row['status'] == 'planned' and o['op'] == 'set' and any(
                 allowed_domains_form(h) not in allowed for h in inject_hosts(o['path'], o['value'])):
             row.update(status='rejected', reason='inject_host_not_allowed')
+    # Adding a host to allowedDomains also hands it every unscoped mask credential (this file's or,
+    # since allowedDomains merges across scopes, user settings'): refuse until the mask names hosts.
+    if masked_elsewhere or unscoped_mask(doc):
+        for o, row in zip(ops, rows):
+            if (row['status'] == 'planned' and o['op'] == 'set' and o['path'] == ALLOWED_DOMAINS
+                    and set(o['value']) - allowed):
+                row.update(status='rejected', reason='widens_credential_injection')
     return new, rows, warnings
 
 
@@ -443,7 +477,9 @@ def plan_target(target):
         p.update(exists=raw is not None, _identity=identity,
                  file_sha256='absent' if raw is None else 'sha256:' + hashlib.sha256(raw).hexdigest(),
                  reformat=raw is not None and raw != dump(doc).encode('utf-8'))
-        new, rows, warnings = plan_ops(doc, target['ops'], scope)
+        widens = path != os.path.join(os.path.normpath(collect.CLAUDE), 'settings.json') and any(
+            o['op'] == 'set' and o['path'] == ALLOWED_DOMAINS for o in target['ops'])
+        new, rows, warnings = plan_ops(doc, target['ops'], scope, widens and user_unscoped_mask())
         p.update(ops=rows, warnings=([{'path': None, 'warning': 'shared_project_file'}] if scope == 'project' else [])
                  + warnings)
         if any(r['status'] == 'rejected' for r in rows):

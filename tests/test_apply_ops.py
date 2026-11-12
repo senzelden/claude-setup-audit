@@ -643,6 +643,68 @@ class Run(FakeHome):
         self.assertFalse([k for t in out['targets'] for k in t if k.startswith('_')])
 
 
+class CredentialWidening(FakeHome):
+    """sandboxing.md (2026-11-11): a mask entry with no injectHosts is injected on every allowed domain."""
+    ops, target = Run.ops, Run.target
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.home, 'b', '.claude'))
+    DOMAINS = ['a.example.com']
+    WIDER = ['a.example.com', 'b.example.com']
+
+    def user(self, *entries, key='envVars'):
+        doc = {'sandbox': {'network': {'allowedDomains': list(self.DOMAINS)}}}
+        if entries:
+            doc['sandbox']['credentials'] = {key: list(entries)}
+        return self.write('.claude/settings.json', apply_ops.dump(doc))
+
+    def widen(self, file='~/.claude/settings.json', value=None, expect=None):
+        out = apply_ops.run(self.ops(self.target(file, op('sandbox.network.allowedDomains', value or self.WIDER,
+                                                          expect or {'value': self.DOMAINS}))))
+        return out, [r['reason'] for r in out['targets'][0]['ops']]
+
+    def test_widening_is_refused_when_the_target_has_an_unscoped_mask(self):
+        self.user({'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'})
+        out, reasons = self.widen()
+        self.assertEqual((out['ok'], reasons), (False, ['widens_credential_injection']))
+        self.assertNotIn('ZQ_WIDE_TOKEN', json.dumps(out))
+        self.user({'path': '~/.zq-cred', 'mode': 'mask', 'injectHosts': []}, key='files')  # empty counts as none
+        self.assertEqual(self.widen()[1], ['widens_credential_injection'])
+
+    def test_widening_another_scope_is_refused_when_user_settings_hold_an_unscoped_mask(self):
+        self.user({'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'})
+        out, reasons = self.widen('~/b/.claude/settings.local.json', expect={'absent': True})
+        self.assertEqual((out['ok'], reasons), (False, ['widens_credential_injection']))
+        self.assertNotIn('ZQ_WIDE_TOKEN', json.dumps(out))
+        proj = self.write('p/.claude/settings.json', apply_ops.dump({}))
+        out, reasons = self.widen(proj, expect={'absent': True})
+        self.assertEqual(reasons, ['widens_credential_injection'])
+
+    def test_unreadable_user_settings_fail_closed_for_another_scope(self):
+        self.write('.claude/settings.json', '{"sandbox": ')
+        out, reasons = self.widen('~/b/.claude/settings.local.json', expect={'absent': True})
+        self.assertEqual(reasons, ['widens_credential_injection'])
+
+    def test_no_mask_or_scoped_mask_or_narrowing_is_still_allowed(self):
+        self.user()
+        self.assertTrue(self.widen()[0]['ok'])
+        self.assertTrue(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[0]['ok'])
+        self.user({'name': 'ZQ_GH', 'mode': 'mask', 'injectHosts': ['a.example.com']},
+                  {'name': 'ZQ_DENY', 'mode': 'deny'})
+        self.assertTrue(self.widen()[0]['ok'])
+        self.assertTrue(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[0]['ok'])
+        os.remove(os.path.join(self.claude, 'settings.json'))   # no user settings at all
+        self.assertTrue(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[0]['ok'])
+        self.user({'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'})
+        out, _ = self.widen(value=['a.example.com'], expect={'value': self.DOMAINS + ['c.example.com']})
+        self.assertNotEqual(_, ['widens_credential_injection'])   # precondition aside, a subset never widens
+        self.write('.claude/settings.json', apply_ops.dump({'sandbox': {
+            'network': {'allowedDomains': self.WIDER},
+            'credentials': {'envVars': [{'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'}]}}}))
+        self.assertTrue(self.widen(value=['a.example.com'], expect={'value': self.WIDER})[0]['ok'])
+
+
 class Cli(FakeHome):
     SCRIPT = os.path.join(SCRIPTS, 'apply_ops.py')
 

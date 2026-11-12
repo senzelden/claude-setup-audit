@@ -430,7 +430,10 @@ Table, effects and estimate: `references/cache-effects.md`.
    before/after (and say so when `reformat` is true), copy each target's `file_sha256` into its
    `expect_file`, then rerun with `--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`.
    On `precondition_mismatch`, show the reported current value; re-plan only if the approved
-   change still makes sense. Never replace a refused or failed op with Write/Edit. Enable it
+   change still makes sense. On `widens_credential_injection`, tell the user that a masked
+   credential without `injectHosts` would be sent to the added host, and that they need to add
+   `injectHosts` to that mask entry (a separate approved apply) before widening
+   `allowedDomains`. Never replace a refused or failed op with Write/Edit. Enable it
    last (a separate ops file after the other sandbox keys) and probe it afterwards: a write
    outside the project should be blocked, and package caches the user needs should be writable
    (`sandbox.filesystem.allowWrite`). Once the sandbox is on it protects settings files, so a
