@@ -142,12 +142,13 @@ Hosted validation passed all eight jobs at `1167473`:
 
 ## Next candidates, separately scoped
 
-- **No credential reads (0.14.0; restored in 0.15.0)**: restored for the repo marketplace; the
-  entry below is history. the audit no longer opens `~/.claude.json`, reads
-  `.envrc` contents, or reads env, header or OAuth values and names. This answers the directory's
-  "reads a credential" hold. Open question: user and local MCP coverage would need a supported
-  non-credential source (for example output the user pastes from `claude mcp list`); until then
-  the coverage limitation points the user to that command.
+- **No credential reads (0.14.0; restored in 0.15.0)**: 0.15.0 restored these readers for the repo
+  marketplace, so the rest of this entry is history. In 0.14.0 the audit stopped opening
+  `~/.claude.json`, reading `.envrc` contents, and reading env, header or OAuth values and names,
+  which answered the directory's "reads a credential" hold. The open question then was that user
+  and local MCP coverage would need a supported non-credential source (for example output the user
+  pastes from `claude mcp list`); until then the coverage limitation pointed the user to that
+  command.
 
 - **MCP inventory (removed in 0.14.5; restored in 0.15.0)**: the readers, `SEC-mcp-exposure` and
   `HYG-mcp-config` are back. History: the project `.mcp.json`, managed MCP and plugin MCP
@@ -157,7 +158,8 @@ Hosted validation passed all eight jobs at `1167473`:
   earlier MCP inventory items below are history. Tool-call and connection-failure counts stay.
   Follow-up (0.14.5 review): a hostile plugin manifest can still point `hooks`, `agents` or
   `commands` at its own MCP file, which would then be read as a component; refusing it needs a
-  file-name rule in extensions.py, which the bundle guard currently forbids by name.
+  file-name rule in extensions.py. Still open; the bundle guard stopped forbidding MCP file names
+  when 0.15.0 restored the MCP readers, so nothing blocks adding that rule.
 
 - **No-credential-reads follow-ups** (deferred from the 0.14.0 review): the whole-file Read in the
   collector-failure fallback is closed by `scripts/names_only.py` (0.15.0); about 12
@@ -285,8 +287,10 @@ catch the Verified-organization rules.
 ## Deferred follow-ups (from 0.15.0 review)
 
 - Coverage row for an unreadable user `settings.local.json` and for project settings reached only
-  through `--roots`, so outcome point metrics can detect them.
-- `names_only.py --from-user-projects`: hint when `~/.claude.json` is unreadable.
+  through `--roots`. Outcome point metrics already detect such a file through the settings basis
+  (0.15.0 fix round: `unknown` / `settings_files_changed`); the coverage row would also name it.
+- Done in the 0.15.0 fix round: `names_only.py --from-user-projects` says in `not_assessed` when
+  `~/.claude.json` is unreadable.
 - The spawn guard does not see launches through `getattr` or `__import__`.
 
 Resolved 2026-10-19: 0.10.0 is live in the built-in Anthropic plugin directory as
