@@ -431,9 +431,9 @@ Table, effects and estimate: `references/cache-effects.md`.
    `expect_file`, then rerun with `--apply --backup-dir ~/.claude/backups/setup-audit-<timestamp>/`.
    On `precondition_mismatch`, show the reported current value; re-plan only if the approved
    change still makes sense. On `widens_credential_injection`, tell the user that a masked
-   credential without `injectHosts` would be sent to the added host, and that they need to add
-   `injectHosts` to that mask entry (a separate approved apply) before widening
-   `allowedDomains`. Never replace a refused or failed op with Write/Edit. Enable it
+   credential without `injectHosts` (in that file, user or managed settings) would reach the newly
+   allowed destinations, and that they need to add `injectHosts` to that mask entry (a separate
+   approved apply, or their administrator for managed settings) before widening network access. Never replace a refused or failed op with Write/Edit. Enable it
    last (a separate ops file after the other sandbox keys) and probe it afterwards: a write
    outside the project should be blocked, and package caches the user needs should be writable
    (`sandbox.filesystem.allowWrite`). Once the sandbox is on it protects settings files, so a

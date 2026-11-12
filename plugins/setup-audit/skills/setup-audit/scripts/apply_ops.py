@@ -199,7 +199,48 @@ def inject_hosts(path, value):
     return [h for e in value if e.get('mode') == 'mask' for h in e.get('injectHosts', ())]
 
 
-ALLOWED_DOMAINS = 'sandbox.network.allowedDomains'
+# Ops that let sandboxed traffic reach more destinations (raw sandboxing.md and settings-reference.md,
+# fetched 2026-11-11). While an unscoped mask exists they are refused (widens_credential_injection):
+# - allowedDomains: the proxy substitutes an unscoped mask on every allowed host ("Mask credentials");
+# - deniedDomains: an entry blocks a host even under a broader allowed wildcard, so dropping one
+#   admits it;
+# - strictAllowlist: on, hosts outside the allowlist are refused instead of prompted or (bypass mode)
+#   allowed, and a repository's allowedDomains are ignored ("Locks that apply ...");
+# - httpProxyPort / socksProxyPort: once a port applies, allowedDomains, deniedDomains and
+#   strictAllowlist stop applying to that traffic ("Custom proxy configuration");
+# - allowUnixSockets, allowMachLookup (entries) and allowAllUnixSockets, allowLocalBinding,
+#   enableWeakerNetworkIsolation (true): reach services outside the sandbox, listed among the keys a
+#   repository cannot loosen under an admin-required sandbox ("Security limitations", "Repository
+#   settings under an admin-required sandbox").
+EGRESS_ADD_LISTS = frozenset({'sandbox.network.allowedDomains', 'sandbox.network.allowUnixSockets',
+                              'sandbox.network.allowMachLookup'})
+EGRESS_TRUE_BOOLS = frozenset({'sandbox.network.allowAllUnixSockets', 'sandbox.network.allowLocalBinding',
+                               'sandbox.enableWeakerNetworkIsolation'})
+EGRESS_PORTS = frozenset({'sandbox.network.httpProxyPort', 'sandbox.network.socksProxyPort'})
+DENIED_DOMAINS, STRICT_ALLOWLIST = 'sandbox.network.deniedDomains', 'sandbox.network.strictAllowlist'
+EGRESS_KEYS = EGRESS_ADD_LISTS | EGRESS_TRUE_BOOLS | EGRESS_PORTS | {DENIED_DOMAINS, STRICT_ALLOWLIST}
+
+
+def _strings(value):
+    return {x for x in value if isinstance(x, str)} if isinstance(value, list) else set()
+
+
+def relaxes_egress(o, doc):
+    """True when op o, judged against doc before the batch, lets sandboxed traffic reach more."""
+    path = o['path']
+    if path not in EGRESS_KEYS:
+        return False
+    before = _get(doc, path.split('.'))
+    value = o.get('value')
+    if path in EGRESS_ADD_LISTS:
+        return o['op'] == 'set' and bool(set(value) - _strings(before))
+    if path == DENIED_DOMAINS:
+        return bool(_strings(before) - (set() if o['op'] == 'remove' else set(value)))
+    if path == STRICT_ALLOWLIST:
+        return before is True and (o['op'] == 'remove' or value is not True)
+    if path in EGRESS_TRUE_BOOLS:
+        return o['op'] == 'set' and value is True and before is not True
+    return o['op'] == 'set' and (before is _MISSING or value != before)  # proxy ports
 
 
 def unscoped_mask(doc):
@@ -216,13 +257,51 @@ def unscoped_mask(doc):
                for key in ('files', 'envVars') if isinstance(creds.get(key), list) for e in creds[key])
 
 
-def user_unscoped_mask():
-    """unscoped_mask of the user settings.json; True (fail closed) when it exists but cannot be checked."""
+def _source_unscoped_mask(path):
+    """unscoped_mask of one settings source read the way collect_managed_settings reads it (through a
+    symlink, nonblocking, regular files only, bounded). False when absent; True (fail closed) when it
+    exists but cannot be read or parsed."""
     try:
-        raw, _ = _read(os.path.join(os.path.normpath(collect.CLAUDE), 'settings.json'))
-        return raw is not None and unscoped_mask(_parse(raw))
-    except (OpsError, RecursionError):
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return os.path.lexists(path)  # a dangling symlink cannot be checked
+    except OSError:
         return True
+    try:
+        with os.fdopen(fd, 'rb') as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return True
+            raw = f.read(MAX_TARGET_BYTES + 1)
+        return len(raw) > MAX_TARGET_BYTES or unscoped_mask(_parse(raw))
+    except (OpsError, OSError, RecursionError):
+        return True
+
+
+def user_settings_path():
+    return os.path.join(os.path.normpath(collect.CLAUDE), 'settings.json')
+
+
+def user_unscoped_mask():
+    """_source_unscoped_mask of the user settings.json."""
+    return _source_unscoped_mask(user_settings_path())
+
+
+def managed_unscoped_mask():
+    """Any unscoped mask in managed-settings.json or managed-settings.d/*.json (collect's file set);
+    True (fail closed) when one of them, or the drop-in directory, exists but cannot be read."""
+    base = collect.managed_directory()
+    if base is None:
+        return False
+    if _source_unscoped_mask(os.path.join(base, 'managed-settings.json')):
+        return True
+    directory = os.path.join(base, 'managed-settings.d')
+    try:
+        names = sorted(n for n in os.listdir(directory) if not n.startswith('.') and n.endswith('.json'))
+    except FileNotFoundError:
+        return os.path.lexists(directory)
+    except OSError:
+        return True
+    return any(_source_unscoped_mask(os.path.join(directory, n)) for n in names)
 
 
 def validate_value(path, value, scope):
@@ -411,12 +490,12 @@ def plan_ops(doc, ops, scope, masked_elsewhere=False):
         if row['status'] == 'planned' and o['op'] == 'set' and any(
                 allowed_domains_form(h) not in allowed for h in inject_hosts(o['path'], o['value'])):
             row.update(status='rejected', reason='inject_host_not_allowed')
-    # Adding a host to allowedDomains also hands it every unscoped mask credential (this file's or,
-    # since allowedDomains merges across scopes, user settings'): refuse until the mask names hosts.
+    # Widening egress also hands the new destinations every unscoped mask credential (this file's,
+    # or user or managed settings', since network settings merge across scopes): refuse until the
+    # mask names its hosts.
     if masked_elsewhere or unscoped_mask(doc):
         for o, row in zip(ops, rows):
-            if (row['status'] == 'planned' and o['op'] == 'set' and o['path'] == ALLOWED_DOMAINS
-                    and set(o['value']) - allowed):
+            if row['status'] == 'planned' and relaxes_egress(o, doc):
                 row.update(status='rejected', reason='widens_credential_injection')
     return new, rows, warnings
 
@@ -477,9 +556,11 @@ def plan_target(target):
         p.update(exists=raw is not None, _identity=identity,
                  file_sha256='absent' if raw is None else 'sha256:' + hashlib.sha256(raw).hexdigest(),
                  reformat=raw is not None and raw != dump(doc).encode('utf-8'))
-        widens = path != os.path.join(os.path.normpath(collect.CLAUDE), 'settings.json') and any(
-            o['op'] == 'set' and o['path'] == ALLOWED_DOMAINS for o in target['ops'])
-        new, rows, warnings = plan_ops(doc, target['ops'], scope, widens and user_unscoped_mask())
+        # Other sources are read only when an op touches an egress key; the target is its own doc.
+        egress = any(o['path'] in EGRESS_KEYS for o in target['ops'])
+        elsewhere = egress and (managed_unscoped_mask()
+                                or (path != user_settings_path() and user_unscoped_mask()))
+        new, rows, warnings = plan_ops(doc, target['ops'], scope, elsewhere)
         p.update(ops=rows, warnings=([{'path': None, 'warning': 'shared_project_file'}] if scope == 'project' else [])
                  + warnings)
         if any(r['status'] == 'rejected' for r in rows):

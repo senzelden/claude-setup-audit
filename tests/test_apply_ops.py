@@ -26,6 +26,14 @@ def sha(path):
     return 'sha256:' + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def no_managed(case):
+    """Point managed settings at an absent fake directory, so egress checks never read the machine's."""
+    patcher = mock.patch.object(apply_ops.collect, 'managed_directory',
+                                return_value=os.path.join(case.home, 'no-managed'))
+    patcher.start()
+    case.addCleanup(patcher.stop)
+
+
 def reason(fn, *args):
     try:
         fn(*args)
@@ -525,6 +533,7 @@ class Run(FakeHome):
         self.a = self.write('a/.claude/settings.local.json', apply_ops.dump({'sandbox': {'enabled': False}}))
         self.b = self.write('b/.claude/settings.local.json', apply_ops.dump({}))
         self.backups = os.path.join(self.home, 'backups')
+        no_managed(self)
 
     def ops(self, *targets):
         return json.dumps({'version': 1, 'targets': list(targets)}).encode()
@@ -650,6 +659,7 @@ class CredentialWidening(FakeHome):
     def setUp(self):
         super().setUp()
         os.makedirs(os.path.join(self.home, 'b', '.claude'))
+        no_managed(self)
     DOMAINS = ['a.example.com']
     WIDER = ['a.example.com', 'b.example.com']
 
@@ -703,6 +713,116 @@ class CredentialWidening(FakeHome):
             'network': {'allowedDomains': self.WIDER},
             'credentials': {'envVars': [{'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'}]}}}))
         self.assertTrue(self.widen(value=['a.example.com'], expect={'value': self.WIDER})[0]['ok'])
+
+
+class CredentialWideningSources(CredentialWidening):
+    """Unscoped masks also come from managed settings, and other network keys relax egress too."""
+
+    def setUp(self):
+        super().setUp()
+        self.managed = os.path.join(self.home, 'managed')
+        patcher = mock.patch.object(apply_ops.collect, 'managed_directory', return_value=self.managed)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def managed_file(self, rel, content):
+        return self.write(os.path.join('managed', rel), content if isinstance(content, str) else apply_ops.dump(content))
+
+    MASK = {'sandbox': {'credentials': {'envVars': [{'name': 'ZQ_MANAGED_TOKEN', 'mode': 'mask'}]}}}
+
+    def test_managed_unscoped_mask_refuses_widening_for_user_and_other_targets(self):
+        self.user()
+        self.assertTrue(self.widen()[0]['ok'])
+        self.managed_file('managed-settings.json', self.MASK)
+        out, reasons = self.widen()   # the user target itself is checked against managed settings
+        self.assertEqual((out['ok'], reasons), (False, ['widens_credential_injection']))
+        self.assertNotIn('ZQ_MANAGED_TOKEN', json.dumps(out))
+        self.assertEqual(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[1],
+                         ['widens_credential_injection'])
+
+    def test_managed_drop_in_unscoped_mask_refuses_widening(self):
+        self.user()
+        self.managed_file('managed-settings.d/50-zq.json', self.MASK)
+        self.assertEqual(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[1],
+                         ['widens_credential_injection'])
+        scoped = {'sandbox': {'credentials': {'envVars': [
+            {'name': 'ZQ_MANAGED_TOKEN', 'mode': 'mask', 'injectHosts': ['a.example.com']}]}}}
+        self.managed_file('managed-settings.d/50-zq.json', scoped)
+        self.assertTrue(self.widen()[0]['ok'])
+
+    def test_unreadable_managed_source_fails_closed(self):
+        self.user()
+        self.managed_file('managed-settings.json', '{"sandbox": ')
+        self.assertEqual(self.widen()[1], ['widens_credential_injection'])
+        os.remove(os.path.join(self.managed, 'managed-settings.json'))
+        self.managed_file('managed-settings.d/10-bad.json', '[1')
+        self.assertEqual(self.widen()[1], ['widens_credential_injection'])
+        os.remove(os.path.join(self.managed, 'managed-settings.d', '10-bad.json'))
+        self.assertTrue(self.widen()[0]['ok'])
+        os.symlink(os.path.join(self.home, 'nowhere.json'), os.path.join(self.managed, 'managed-settings.json'))
+        self.assertEqual(self.widen()[1], ['widens_credential_injection'])   # dangling: cannot be checked
+
+    def test_symlinked_user_settings_are_read_through_for_the_check(self):
+        real = self.write('dotfiles/settings.json', apply_ops.dump({'sandbox': {'credentials': {
+            'envVars': [{'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'}]}}}))
+        os.symlink(real, os.path.join(self.claude, 'settings.json'))
+        self.assertEqual(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[1],
+                         ['widens_credential_injection'])
+        Path(real).write_text(apply_ops.dump({}))
+        self.assertTrue(self.widen('~/b/.claude/settings.local.json', expect={'absent': True})[0]['ok'])
+
+    RELAXING = [
+        # (path, doc value before or None for absent, op kind, new value)
+        ('sandbox.network.deniedDomains', ['evil.example.com'], 'remove', None),
+        ('sandbox.network.deniedDomains', ['evil.example.com', 'x.example.com'], 'set', ['x.example.com']),
+        ('sandbox.network.strictAllowlist', True, 'set', False),
+        ('sandbox.network.strictAllowlist', True, 'remove', None),
+        ('sandbox.network.allowAllUnixSockets', None, 'set', True),
+        ('sandbox.network.allowLocalBinding', False, 'set', True),
+        ('sandbox.enableWeakerNetworkIsolation', None, 'set', True),
+        ('sandbox.network.allowUnixSockets', ['/run/a.sock'], 'set', ['/run/a.sock', '/run/b.sock']),
+        ('sandbox.network.allowMachLookup', None, 'set', ['com.example.zq']),
+        ('sandbox.network.httpProxyPort', None, 'set', 8080),
+        ('sandbox.network.socksProxyPort', 8081, 'set', 8082),
+    ]
+    TIGHTENING = [
+        ('sandbox.network.deniedDomains', ['evil.example.com'], 'set', ['evil.example.com', 'x.example.com']),
+        ('sandbox.network.deniedDomains', None, 'set', ['evil.example.com']),
+        ('sandbox.network.strictAllowlist', False, 'set', True),
+        ('sandbox.network.allowAllUnixSockets', True, 'set', False),
+        ('sandbox.network.allowLocalBinding', True, 'remove', None),
+        ('sandbox.network.allowUnixSockets', ['/run/a.sock', '/run/b.sock'], 'set', ['/run/a.sock']),
+        ('sandbox.network.httpProxyPort', 8080, 'remove', None),
+    ]
+
+    def relax(self, path, before, kind, value, masked):
+        doc = {}
+        if before is not None:
+            apply_ops._set(doc, path.split('.'), before)
+        if masked:
+            doc.setdefault('sandbox', {})['credentials'] = {'envVars': [{'name': 'ZQ_WIDE_TOKEN', 'mode': 'mask'}]}
+        self.write('.claude/settings.json', apply_ops.dump(doc))
+        expect = {'absent': True} if before is None else {'value': before}
+        out = apply_ops.run(self.ops(self.target('~/.claude/settings.json', op(path, value, expect, kind))))
+        return [r['reason'] for r in out['targets'][0]['ops']]
+
+    def test_other_egress_relaxing_ops_are_refused_while_an_unscoped_mask_exists(self):
+        for case in self.RELAXING:
+            with self.subTest(case=case):
+                self.assertEqual(self.relax(*case, masked=True), ['widens_credential_injection'])
+                self.assertEqual(self.relax(*case, masked=False), [''])
+
+    def test_tightening_ops_stay_allowed_with_an_unscoped_mask(self):
+        for case in self.TIGHTENING:
+            with self.subTest(case=case):
+                self.assertEqual(self.relax(*case, masked=True), [''])
+
+    def test_relaxing_another_scope_is_refused_by_a_managed_mask(self):
+        self.user()
+        self.managed_file('managed-settings.json', self.MASK)
+        out = apply_ops.run(self.ops(self.target('~/b/.claude/settings.local.json',
+                                                 op('sandbox.network.allowLocalBinding', True))))
+        self.assertEqual([r['reason'] for r in out['targets'][0]['ops']], ['widens_credential_injection'])
 
 
 class Cli(FakeHome):

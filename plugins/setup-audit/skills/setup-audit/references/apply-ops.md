@@ -89,14 +89,31 @@ Value kinds: `bool`; `str_list` (array of non-empty strings); `path_list` (same,
   is a separate apply the user approves on its own, so a batch that adds the host and the masked
   credential together is refused. A wildcard allowed-domain entry does not count. Raw docs checked 2026-11-11 (settings-reference
   `sandbox.credentials.envVars`/`files`, sandboxing "Mask credentials").
-- A `set` of `sandbox.network.allowedDomains` that adds a host not already in that file's list is
-  refused (`widens_credential_injection`) while any `mask` entry without (or with an empty)
-  `injectHosts` exists in the target file or, for a project or local target, in user
-  `settings.json` (allowedDomains merges across scopes, and the proxy substitutes such an entry's
-  real value on requests to every allowed host; sandboxing "Mask credentials", fetched 2026-11-11).
-  User `settings.json` is checked by shape only, never echoed; when it exists but cannot be read or
-  parsed the op is refused the same way (fail closed). Narrowing or keeping the list is allowed. To
-  proceed, first add `injectHosts` to that mask entry (its own approved apply), then widen.
+- While any `mask` entry without (or with an empty) `injectHosts` exists, an op that lets sandboxed
+  traffic reach more destinations is refused (`widens_credential_injection`): the proxy substitutes
+  such an entry's real value on requests to every host in `allowedDomains`, and network settings
+  merge across scopes (sandboxing "Mask credentials", fetched 2026-11-11). The mask is looked for in
+  the target file, in user `settings.json` (for a project or local target) and in managed settings
+  (`managed-settings.json` and each `managed-settings.d/*.json`, the collector's file set), each
+  read by shape only through a symlink as the collector reads it and never echoed. A source that
+  exists but cannot be read or parsed (including a dangling symlink or an unlistable
+  `managed-settings.d`) counts as holding one (fail closed). Judged against the target file before
+  the batch, the refused ops are:
+  - `sandbox.network.allowedDomains`, `allowUnixSockets`, `allowMachLookup`: a `set` that adds an
+    entry the file does not list;
+  - `sandbox.network.deniedDomains`: a `remove`, or a `set` that drops a listed entry (a denied
+    entry blocks a host even under a broader allowed wildcard);
+  - `sandbox.network.strictAllowlist`: a `remove` or a non-`true` `set` while it is `true` (off,
+    hosts outside the allowlist are prompted for or, in bypass mode, allowed, and a repository's
+    `allowedDomains` apply again);
+  - `sandbox.network.httpProxyPort`, `socksProxyPort`: a `set` to a new port (once a port applies,
+    `allowedDomains`, `deniedDomains` and `strictAllowlist` stop applying to that traffic, sandboxing
+    "Custom proxy configuration");
+  - `sandbox.network.allowAllUnixSockets`, `allowLocalBinding`, `sandbox.enableWeakerNetworkIsolation`:
+    a `set` to `true` while not `true` (listed in sandboxing among the network keys that loosen the
+    sandbox).
+  Narrowing, keeping or tightening them is allowed. To proceed, first add `injectHosts` to the mask
+  entry (its own approved apply, or the administrator's for managed settings), then widen.
 - `credential_env`: the same with `name` instead of `path` and no `maskDuplicates`. `extract`
   together with `decode` is `invalid_value`, as is `decode` with an `onExtractNoMatch` other than
   `warn`.
@@ -177,7 +194,7 @@ a target's `status` is `applied` and `verified` is `true`; never claim success f
 - `inject_hosts_required`: a `mask` credential entry has no (or an empty) `injectHosts`.
 - `inject_host_invalid`: an `injectHosts` entry is not an exact host (wildcard, scheme, path, port, userinfo, upper case, non-canonical IPv6).
 - `inject_host_not_allowed`: an `injectHosts` host is not already listed verbatim in `sandbox.network.allowedDomains` of the same file before the batch's ops.
-- `widens_credential_injection`: a `set` of `sandbox.network.allowedDomains` adds a host while a `mask` entry without `injectHosts` exists in the target file or user `settings.json` (or user `settings.json` cannot be checked); add `injectHosts` to the mask entry first.
+- `widens_credential_injection`: the op widens sandbox egress (allowedDomains, deniedDomains, strictAllowlist, proxy ports, Unix sockets, Mach lookup, local binding, weaker network isolation; list above) while a `mask` entry without `injectHosts` exists in the target file, user `settings.json` or managed settings (or one of them cannot be checked); add `injectHosts` to the mask entry first.
 - `precondition_mismatch`: the `expect` precondition does not hold; the row shows the redacted current value and `current_sha256` so the change can be re-planned.
 - `absent`: `remove` of a key that does not exist.
 - `type_conflict`: an intermediate path element exists but is not an object.
