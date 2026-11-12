@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-12
+
+### Fixed
+
+- `collect.py` read some files of the audited repo without the checks it uses elsewhere. A
+  project's `.mcp.json`, `package.json`, `mise.toml`, devcontainer, compose, workflow and other
+  readiness files were opened with a plain `open()`. So a symlink could point the collector at a
+  file outside the repo, a named pipe could hang the audit, and `.mcp.json` had no size limit and
+  crashed when `mcpServers` was not an object. These reads now refuse symlinks (the file and any
+  directory between the repo root and it), read only regular files, open with `O_NONBLOCK`, stay
+  bounded (1 MiB for JSON, 200 kB for text) and treat anything other than a JSON object as empty.
+  Only names were ever taken from these files, never values. Found by an automated security
+  review after the 0.15.0 push.
+
+### Validation and limits
+
+- 1107 regression tests pass, including 13 new ones in `tests/test_untrusted_reads.py` (symlink
+  out of the repo, symlinked directory, FIFO, oversized and wrong-shape JSON, plus regular files
+  still read). They failed before the fix. One full-suite run in five had a single failure that
+  did not recur; the failing test was not identified.
+- Files read from `~/.claude` (installed plugins, stats cache, session metadata) still use the
+  plain loader; they are the user's own state, not the audited repo's.
+
 ## [0.15.0] - 2026-11-12
 
 On 2026-11-10 and 2026-11-11 the plugin directory added rules that only Verified organizations
@@ -1115,7 +1138,14 @@ Found in the first end-to-end run, before this release was tagged:
 - **The audit no longer needs arbitrary-code permission.** Ad-hoc `python3 -c` snapshot reads are
   replaced by the pre-allowed, read-only `query_snapshot.py`.
 
-[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/senzelden/claude-setup-audit/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.7...v0.15.0
+[0.14.7]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.5...v0.14.7
+[0.14.5]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.4...v0.14.5
+[0.14.4]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.3...v0.14.4
+[0.14.3]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.2...v0.14.3
+[0.14.2]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/senzelden/claude-setup-audit/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.3...v0.14.0
 [0.13.3]: https://github.com/senzelden/claude-setup-audit/compare/v0.13.2...v0.13.3

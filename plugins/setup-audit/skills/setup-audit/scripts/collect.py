@@ -889,7 +889,8 @@ def collect_projects(roots):
                 if "/.worktrees/" in dirpath or "/worktrees/" in dirpath:
                     entry["is_worktree_copy"] = True
             if ".mcp.json" in filenames:
-                entry["mcp_servers"] = sorted((load_json(os.path.join(dirpath, ".mcp.json")) or {}).get("mcpServers", {}).keys())
+                servers = _read_json_object(dirpath, ".mcp.json").get("mcpServers")
+                entry["mcp_servers"] = sorted(servers) if isinstance(servers, dict) else []
             cdir = os.path.join(dirpath, ".claude")
             if os.path.isdir(cdir):
                 entry["settings"] = [s for s in (summarize_settings(os.path.join(cdir, n))
@@ -1711,13 +1712,51 @@ def _ts(value):
         return None
 
 
-def _read(root, rel, limit=200_000):
-    path = os.path.join(root, rel)
+UNTRUSTED_JSON_LIMIT = 1024 * 1024
+
+
+def _read_bytes(root, rel, limit):
+    """Up to limit+1 bytes of a file inside an audited repo, or None.
+
+    Repo files are untrusted: symlinks (the file or any directory between root and it) are not
+    followed, only regular files are read, and O_NONBLOCK keeps a FIFO from blocking the open.
+    """
+    parts = os.path.normpath(rel).split(os.sep)
+    if os.path.isabs(rel) or ".." in parts:
+        return None
+    cur = root
+    for part in parts[:-1]:
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            return None
     try:
-        with open(path, errors="replace") as f:
-            return f.read(limit)
+        fd = os.open(os.path.join(root, rel), os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
-        return ""
+        return None
+    try:
+        with os.fdopen(fd, "rb") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return None
+            return f.read(limit + 1)
+    except OSError:
+        return None
+
+
+def _read(root, rel, limit=200_000):
+    raw = _read_bytes(root, rel, limit)
+    return raw[:limit].decode("utf-8", "replace") if raw else ""
+
+
+def _read_json_object(root, rel, limit=UNTRUSTED_JSON_LIMIT):
+    """A bounded JSON object from an audited repo; {} when absent, refused, oversized or not an object."""
+    raw = _read_bytes(root, rel, limit)
+    if not raw or len(raw) > limit:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def env_declarations(root):
@@ -1890,7 +1929,7 @@ def app_caching(root, max_files=4000):
 def readiness(root):
     """Agent-readiness signals for one repo: can Claude set up, run, verify and understand it cheaply?"""
     exists = lambda *names: [n for n in names if os.path.exists(os.path.join(root, n))]  # noqa: E731
-    pkg = load_json(os.path.join(root, "package.json")) or {}
+    pkg = _read_json_object(root, "package.json")
     pkg_text = json.dumps(pkg)
     pyproject = _read(root, "pyproject.toml")
     makefile = _read(root, "Makefile") + _read(root, "makefile") + _read(root, "justfile") + _read(root, "Justfile")
