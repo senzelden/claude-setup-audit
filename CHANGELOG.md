@@ -61,7 +61,9 @@ removed for the directory scan. A Markdown-only plugin for the directory is the 
   `RDY-env-secret-backend` asks every run and reports unset, set-but-empty or set, never a value.
 - Docs re-checked on 2026-11-11: new scope key `permissions.denyInsteadOfPrompting`, new ignored
   env names (`CLAUDE_CODE_OAUTH_*`, `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`), and a
-  `tool.check` mod can approve past `deny` rules where no managed policy applies.
+  `tool.check` mod can approve past `deny` rules unless managed settings, a `managed-mcp.json` file
+  or a Team/Enterprise `/login` session apply, the cases in which the built-in guard also loads
+  (mods-admin "Know what happens by default").
 - The root README describes the names-only reads accurately.
 
 ### Fixed
@@ -71,6 +73,22 @@ removed for the directory scan. A Markdown-only plugin for the directory is the 
 - An http hook header value no longer decides `plugin_relative`.
 - `mcp_configured_but_unused` also covers local, managed and plugin servers.
 - A repo root with glob characters in its name finds its compose file.
+- `apply_ops.py` refuses an op that widens sandbox egress (adds to `allowedDomains`,
+  `allowUnixSockets` or `allowMachLookup`, drops a `deniedDomains` entry, turns `strictAllowlist`
+  off, sets a proxy port, or turns on `allowAllUnixSockets`, `allowLocalBinding` or
+  `enableWeakerNetworkIsolation`) while a `mask` credential entry without `injectHosts` exists in
+  the target file, user `settings.json` or managed settings (`widens_credential_injection`; fails
+  closed when one of them cannot be read). Such an entry is substituted on every allowed host.
+- Outcome point metrics (`allow_rule_count`, `risky_allow_rule_count`) store which settings files
+  the baseline counted (`settings_basis`, path hashes) and are `unknown` (`settings_files_changed`)
+  when one is no longer counted, for example a project that dropped out of `scope=all` or an
+  unreadable file; baselines without it give `unknown` (`no_settings_basis`).
+- `names_only.py --metadata-only` replaces permission rule strings with the collector's length
+  marker; SKILL.md passes it under `privacy=metadata-only`.
+- `names_only.py` redacts its whole output once more, so server facts and server-name lists cannot
+  carry a secret-shaped string; listed roots longer than 200 characters are counted in
+  `user_projects_omitted`, and `not_assessed` says when `~/.claude.json` could not be read for
+  `--from-user-projects`.
 
 ### Tests
 
@@ -81,11 +99,13 @@ removed for the directory scan. A Markdown-only plugin for the directory is the 
 
 ### Validation and limits
 
-- 1066 regression tests pass. Strict `claude plugin validate` results are in the release commit
+- 1094 regression tests pass. Strict `claude plugin validate` results are in the release commit
   report. No paid evals were run and the restored eval cases were not run.
 - `claude plugin validate --profile directory` does not catch the Verified-organization rules.
 - Outcome verdicts compare counts and do not prove the fix caused the change. Unreadable user
-  `settings.local.json` and `--roots` project settings have no coverage row yet.
+  `settings.local.json` and `--roots` project settings have no coverage row yet; the settings basis
+  makes such a file give `unknown` instead of a verdict. A partial prune (for example 3 to 2 rules)
+  is `not_dropped`.
 
 ## [0.14.7] - 2026-11-10
 
