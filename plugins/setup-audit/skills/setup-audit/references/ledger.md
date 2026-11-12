@@ -131,6 +131,8 @@ them with the baseline and writes one `trend.ledger` row per active entry.
 | `not_dropped` | `rate_above_half` | rate is above half the baseline rate |
 | `quiet` | `quiet` | 30 days or more since the fix, zero matches now and in the previous usable observation |
 | `unknown` | `incomparable`, `incomplete`, `no_baseline` | counts missing, from another scope or selector, incomplete, or no baseline sessions |
+| `unknown` | `no_settings_basis` | point-in-time catalog metric whose baseline has no `settings_basis` (recorded before it existed) |
+| `unknown` | `settings_files_changed` | point-in-time catalog metric: a settings file counted at baseline is not counted now (project out of the snapshot, file missing or unread) |
 
 The thresholds are 5 post-fix sessions, 3 baseline matched sessions and 30 quiet days. Metric
 selectors need a report window that starts after the fix. Observations are persisted only when
@@ -206,8 +208,8 @@ exactly. The window is the snapshot's: `window` metrics cover `window_days` endi
 |---|---|---|---|---|---|---|
 | `context_baseline_tokens_median` | `tokens` | `transcripts.context_baseline_tokens.median` | `measured` | window | the median of first main-thread request tokens per session | every `transcripts.*` coverage source is `collected` with nothing omitted |
 | `cache_write_share` | `ratio` | `transcripts.cache.write_tokens` | `measured` | window | `write_tokens / (read_tokens + write_tokens)`, 3 decimals; null without tokens | as above |
-| `allow_rule_count` | `rules` | `settings.permissions.allow_count` | `measured` | point | sum of `allow_count` over user and project settings files, once per path | settings read cleanly (below) and every file has an integer `allow_count` |
-| `risky_allow_rule_count` | `rules` | `settings.permissions.risky` | `measured` | point | distinct (settings path, rule) pairs over every risky flag of those files | settings read cleanly, every file has a `risky` object, no flag list holds the collector's cap of 6 rules, and the snapshot is not metadata-only (masked rule text can merge) |
+| `allow_rule_count` | `rules` | `settings.permissions.allow_count` | `measured` | point | sum of `allow_count` over user and project settings files, once per path; `dropped` needs at most half the baseline, so a partial prune (for example 3 to 2) is `not_dropped` | settings read cleanly (below) and every file has an integer `allow_count` |
+| `risky_allow_rule_count` | `rules` | `settings.permissions.risky` | `measured` | point | distinct (settings path, rule) pairs over every risky flag of those files; a partial prune (for example 3 to 2) is `not_dropped`, as above | settings read cleanly, every file has a `risky` object, no flag list holds the collector's cap of 6 rules, and the snapshot is not metadata-only (masked rule text can merge) |
 
 COST window metrics need complete transcript coverage: every `transcripts.*` coverage source
 `collected`, with no file cap hit and nothing omitted. Otherwise the row is `unknown` /
@@ -221,7 +223,19 @@ otherwise look removed. The coverage rows used are the inventory's: `scope` `use
 directories), status `unavailable`, reason `invalid_settings`, `read_failed` or `not_regular_file`.
 A symlink the inventory did not follow (`symlink_not_followed`) does not count: the collector reads
 through it. No coverage row exists for an unreadable user `settings.local.json` or for project
-settings found only through `--roots` or discovery, so a broken one of those is not detected.
+settings found only through `--roots` or discovery, so coverage alone does not detect a broken one
+of those; the settings basis below does.
+
+**Settings basis.** A point metric sums over whichever settings files the snapshot holds, so a
+project that drops out of a `scope=all` collection, or a file the collector could not read, would
+otherwise look like removed rules. Its value therefore carries `settings_basis`: the sorted SHA-256
+hex digests of the snapshot paths it counted (hashes, never the paths). The baseline stores it, and
+the verdict is `unknown` / `settings_files_changed` unless the current snapshot counts every
+baseline file again (extra files are fine). A file deleted by the fix itself also gives `unknown`.
+With `--hash-paths` the paths are per-salt tags, so a snapshot hashed differently from the baseline
+gives `unknown` rather than a false verdict. Baselines recorded without the field (0.14.x ledgers,
+or entries recorded before this check) still load and give `unknown` / `no_settings_basis` for
+point metrics; record a new entry to measure them. Observations do not store the basis.
 
 Permission prompts per session are not collected (transcripts record denials, not prompts), so no
 prompt metric exists.
@@ -250,7 +264,7 @@ catalog metric's exact labels is computed from the snapshot too.
 The verdict rules are those of metric selectors: value at most half the baseline is `dropped`;
 `window` metrics are `too_early` until the snapshot window starts after `applied_at`, `point`
 metrics until a snapshot is collected after it; scope or window change, a missing value or
-collection time make the row `unknown`. The report shows each metric row under "Outcome of applied
+collection time, or a changed settings basis (`point` metrics) make the row `unknown`. The report shows each metric row under "Outcome of applied
 fixes" with the finding id, applied date, baseline and current value with their windows, the
 verdict and the caveat that a verdict is a comparison of counts, not proof that the fix caused the
 change. In scope `all`, a project discovered since the baseline adds its settings to the counts.

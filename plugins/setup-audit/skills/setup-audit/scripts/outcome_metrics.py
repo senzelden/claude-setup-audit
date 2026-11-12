@@ -4,6 +4,7 @@ Each metric is read from fields the collector already writes, by one fixed rule,
 produce comparable values and the model never supplies a value. Names, labels, sources and the
 finding checks each metric may measure are documented in references/ledger.md. Stdlib only.
 """
+import hashlib
 import math
 from datetime import datetime, timezone
 
@@ -126,6 +127,19 @@ def _settings(snapshot):
     return list(seen.values()), complete and isinstance(projects, dict)
 
 
+# Point metrics sum over whatever settings files a snapshot holds, so a project that drops out of
+# scope=all, or a file the collector could not read with no coverage row naming it, would look like
+# removed rules. The baseline therefore records which files it counted (as SHA-256 hashes of their
+# snapshot paths, never the paths), and ledger.verdict compares only while every one is counted again.
+SETTINGS_BASIS = 'settings_basis'
+
+
+def settings_basis(snapshot):
+    """Sorted, unique SHA-256 hex digests of the settings paths a point metric counts."""
+    settings, _ = _settings(snapshot)
+    return sorted({hashlib.sha256(s['path'].encode('utf-8')).hexdigest() for s in settings})
+
+
 def _value(name, snapshot):
     """(value, complete) for one catalog metric; raises on malformed snapshot shapes."""
     transcripts = snapshot.get('transcripts') or {}
@@ -174,7 +188,10 @@ def compute(selector, snapshot):
             return None
         start = at if row['kind'] == 'point' else at - days * 86400
         value, complete = _value(selector['name'], snapshot)
-        return {'from': iso(start), 'to': iso(at), 'value': value if _finite(value) else None,
-                'complete': bool(complete)}
+        out = {'from': iso(start), 'to': iso(at), 'value': value if _finite(value) else None,
+               'complete': bool(complete)}
+        if row['kind'] == 'point':
+            out[SETTINGS_BASIS] = settings_basis(snapshot)
+        return out
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError, OSError):
         return None

@@ -33,6 +33,7 @@ ID_RE = re.compile(r'L-\d{8}-\d{1,4}\Z')
 INDEX_RE = re.compile(r'(0|[1-9][0-9]*)\Z')
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 MIN_SESSIONS, MIN_BASELINE, QUIET_DAYS = 5, 3, 30
+MAX_BASIS = 10000  # settings files a point metric's baseline may record
 ENTRY_FIELDS = {'id', 'applied_at', 'run', 'finding_id', 'pattern', 'mechanism', 'state',
                 'supersedes', 'selector', 'scope', 'baseline', 'edits', 'observations'}
 # Report-only outcome entries (0.15.0) add `outcome_only: true`; entries written by 0.14.x have no
@@ -112,7 +113,14 @@ def validate_selector(selector):
 
 def validate_counts(counts, metric, extra=frozenset()):
     require(isinstance(counts, dict), 'invalid counts')
-    require(set(counts) == (METRIC_FIELDS if metric else COUNT_FIELDS) | set(extra), 'invalid count fields')
+    fields = (METRIC_FIELDS if metric else COUNT_FIELDS) | set(extra)
+    basis = metric and outcome_metrics.SETTINGS_BASIS in counts and not extra  # baselines only
+    require(set(counts) == fields | ({outcome_metrics.SETTINGS_BASIS} if basis else set()), 'invalid count fields')
+    if basis:
+        hashes = counts[outcome_metrics.SETTINGS_BASIS]
+        require(isinstance(hashes, list) and len(hashes) <= MAX_BASIS
+                and all(isinstance(h, str) and SHA_RE.match(h) for h in hashes)
+                and hashes == sorted(set(hashes)), 'invalid settings basis')
     epoch(counts['from'])
     epoch(counts['to'])
     require(type(counts['complete']) is bool, 'invalid completeness flag')
@@ -259,6 +267,13 @@ def verdict(entry, current, scope, previous):
         if row is not None and row['kind'] == 'point':
             if epoch(current['to']) < epoch(entry['applied_at']):
                 return 'too_early', 'collected_before_fix'
+            # Entries recorded before the basis existed cannot show which files they counted.
+            basis = base.get(outcome_metrics.SETTINGS_BASIS)
+            if not isinstance(basis, list):
+                return 'unknown', 'no_settings_basis'
+            now_basis = current.get(outcome_metrics.SETTINGS_BASIS)
+            if not isinstance(now_basis, list) or not set(basis) <= set(now_basis):
+                return 'unknown', 'settings_files_changed'
         elif epoch(current['from']) < epoch(entry['applied_at']):
             return 'too_early', 'window_overlaps_fix'
         if base['value'] is None or current['value'] is None:
@@ -662,7 +677,7 @@ def evaluate(book, snapshot, report, run):
             row.update(_metric_detail(item, now))
         rows.append(row)
         if now is not None and verdict_now != 'unknown':
-            observation = {k: v for k, v in now.items() if k != 'selector_sha'}
+            observation = {k: v for k, v in now.items() if k not in ('selector_sha', outcome_metrics.SETTINGS_BASIS)}
             observation.update(run=run, verdict=verdict_now, reason=reason)
             item['observations'] = earlier + [observation]
     return rows, validate(book)

@@ -56,13 +56,22 @@ def report(finding="SEC-risky-allow:global", check="SEC-risky-allow", status="ap
                 applied=[dict(id=finding, status=status, backups=list(backups))] if status else [])
 
 
+def path_hashes(*paths):
+    import hashlib
+    return sorted(hashlib.sha256(p.encode("utf-8")).hexdigest() for p in paths)
+
+
+# The settings files snapshot() counts, as a point metric's baseline records them.
+BASIS = path_hashes("~/.claude/settings.json", "~/repo/.claude/settings.local.json")
+
+
 def outcome_entry(selector=RISKY, baseline=None, **changes):
     item = dict(id="L-20260901-1", applied_at=APPLIED, run="2026-09-01-audit",
                 finding_id="SEC-risky-allow:global", pattern="Broad allow rules removed",
                 mechanism="setting", state="active", supersedes=None, selector=dict(selector),
                 scope=dict(SCOPE),
                 baseline=baseline or {"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T10:00:00Z",
-                                      "value": 2, "complete": True},
+                                      "value": 2, "complete": True, "settings_basis": list(BASIS)},
                 edits=[], observations=[], outcome_only=True)
     item.update(changes)
     return item
@@ -91,7 +100,7 @@ class Metrics(unittest.TestCase):
         risky = outcome_metrics.compute(RISKY, snap)
         # three flagged entries, two distinct (file, rule) pairs
         self.assertEqual(risky, {"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T10:00:00Z",
-                                 "value": 2, "complete": True})
+                                 "value": 2, "complete": True, "settings_basis": BASIS})
         self.assertEqual(outcome_metrics.compute(ALLOW, snap)["value"], 15)
 
     def test_windowed_metrics_span_the_snapshot_window(self):
@@ -182,7 +191,8 @@ class Record(FakeHomeCase):
         self.assertTrue(item["outcome_only"])
         self.assertEqual((item["mechanism"], item["edits"], item["applied_at"]), ("setting", [], APPLIED))
         self.assertEqual(item["baseline"], {"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T10:00:00Z",
-                                            "value": 2, "complete": True})
+                                            "value": 2, "complete": True, "settings_basis": BASIS})
+        self.assertNotIn("~/repo", json.dumps(item))   # the basis holds path hashes, not paths
         # the model-written report metric with the same name is never the source of the value
         rep = report()
         rep["metrics"] = {"risky_allow_rule_count": dict(value=99, **{k: RISKY[k] for k in ("basis", "unit", "source")})}
@@ -328,6 +338,71 @@ class Verdicts(unittest.TestCase):
                                            "to": "2026-09-01T10:00:00Z"})
         report_state.validate_report(dict(report(), trend=dict(comparable=False, reason="x", metrics={},
                                                                 findings={}, ledger=rows)), strict=False)
+
+
+class SettingsBasis(unittest.TestCase):
+    """Point metrics compare only when the current snapshot still counts every baseline file."""
+
+    def evaluate(self, entry, snap):
+        return ledger.evaluate(dict(version=1, entries=[entry]), snap, report(generated="2026-10-05T00:00:00Z"),
+                               "2026-10-05-audit")
+
+    def later(self, **kw):
+        return snapshot(at="2026-10-05T00:00:00Z", risky={}, allow=1, **kw)
+
+    def assert_unknown(self, entry, snap, reason):
+        for sel in (RISKY, ALLOW):
+            e = dict(entry, selector=dict(sel))
+            rows, book = self.evaluate(e, snap)
+            self.assertEqual((rows[0]["verdict"], rows[0]["reason"]), ("unknown", reason), sel["name"])
+            self.assertEqual(book["entries"][0]["observations"], [])
+
+    def test_window_metrics_carry_no_basis(self):
+        self.assertNotIn("settings_basis", outcome_metrics.compute(CONTEXT, snapshot()))
+
+    def test_comparable_when_every_baseline_file_is_still_counted(self):
+        rows, book = self.evaluate(outcome_entry(), self.later())
+        self.assertEqual(rows[0]["verdict"], "dropped")
+        self.assertNotIn("settings_basis", book["entries"][0]["observations"][0])
+        more = self.later()
+        more["projects"]["~/other"] = {"settings": [{"path": "~/other/.claude/settings.json",
+                                                     "permissions": {"allow_count": 0, "risky": {}}}]}
+        self.assertEqual(self.evaluate(outcome_entry(), more)[0][0]["verdict"], "dropped")  # superset is fine
+
+    def test_project_dropping_out_of_the_snapshot_is_unknown(self):
+        gone = self.later()
+        gone["projects"] = {}
+        self.assert_unknown(outcome_entry(), gone, "settings_files_changed")
+
+    def test_unreadable_project_file_without_coverage_row_is_unknown(self):
+        # collect.load_json drops an unreadable settings.local.json found through --roots; no coverage
+        # row names it, so only the missing path shows the file was not counted
+        unread = self.later()
+        unread["projects"]["~/repo"]["settings"] = []
+        self.assert_unknown(outcome_entry(), unread, "settings_files_changed")
+
+    def test_entries_recorded_without_a_basis_are_unknown(self):
+        legacy = {"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T10:00:00Z", "value": 2, "complete": True}
+        self.assert_unknown(outcome_entry(baseline=legacy), self.later(), "no_settings_basis")
+        ledger.validate(dict(version=1, entries=[outcome_entry(baseline=legacy)]))   # still loads
+
+    def test_hashed_path_snapshot_degrades_to_unknown(self):
+        hashed = self.later()
+        hashed["global"]["settings"][0]["path"] = "h:0123456789ab"
+        hashed["projects"] = {"h:ba9876543210": {"settings": [{"path": "h:ba9876543210",
+                                                              "permissions": {"allow_count": 0, "risky": {}}}]}}
+        self.assert_unknown(outcome_entry(), hashed, "settings_files_changed")
+        broken = self.later()
+        broken["global"]["settings"][0]["path"] = 7   # malformed: incomplete, never a crash
+        rows, _ = self.evaluate(outcome_entry(), broken)
+        self.assertEqual(rows[0]["verdict"], "unknown")
+
+    def test_malformed_basis_is_refused_on_load(self):
+        for bad in ("x", ["zz"], [BASIS[1], BASIS[0]], [BASIS[0], BASIS[0]]):
+            with self.subTest(bad=bad):
+                base = dict(outcome_entry()["baseline"], settings_basis=bad)
+                with self.assertRaises(ledger.LedgerError):
+                    ledger.validate(dict(version=1, entries=[outcome_entry(baseline=base)]))
 
 
 class ReportOnly(unittest.TestCase):
