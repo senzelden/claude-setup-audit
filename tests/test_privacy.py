@@ -464,8 +464,9 @@ class EndToEnd(PatchedHome):
     def test_metadata_mode_keeps_structure(self):
         full, meta = self.snapshots()
         # Same dict keys, list lengths, kept paths and kept values everywhere except `coverage`, which
-        # records the mode itself.
-        full, meta = ({k: v for k, v in snap.items() if k != 'coverage'} for snap in (full, meta))
+        # records the mode itself, and the collection timestamps: the two runs can straddle a second.
+        skip = {'coverage', 'generated', 'generated_utc'}
+        full, meta = ({k: v for k, v in snap.items() if k not in skip} for snap in (full, meta))
         self.assertEqual(shape(full), shape(meta))
         self.assertEqual(self.kept(full), self.kept(meta))
         self.assertTrue(self.kept(meta))
