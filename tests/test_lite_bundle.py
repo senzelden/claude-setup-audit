@@ -1288,7 +1288,7 @@ REQUIRED_PHRASES = (
     ('I1 distinctive patterns', 'applied-log.md', 'an `added` pattern counts 0 there before the change, '
                                                   'a `removed` pattern counts 1'),
     ('I2 marker list', 'reading-rules.md', 'with `output_mode: files_with_matches` for the marker '
-                                           '`setup-audit-lite`'),
+                                           '`setup-audit-lite/applied.md`'),
     ('I2 subtraction', 'reading-rules.md', 'the number of files in the first list that are not in the second'),
     ('I2 measure format', 'applied-log.md', '`sessions with "<phrase>" = 12 (setup-audit-lite sessions excluded)`'),
     ('I2 learning check', 'checklist.md#LRN-enforce', "lite's own sessions left out"),
@@ -1548,3 +1548,32 @@ class SkillWorkflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SessionMarker(unittest.TestCase):
+    """The session marker must be written only by a lite run, never by the skill listing that
+    Claude Code puts in every session log: the bare plugin name would exclude nearly every session."""
+
+    MARKER = re.compile(r'for the marker\s+`([^`]+)`')
+
+    def marker(self, text):
+        found = self.MARKER.search(text)
+        self.assertIsNotNone(found, 'no session marker documented')
+        return found.group(1)
+
+    def check(self, text):
+        marker = self.marker(text)
+        skill = (LITE / 'skills/setup-audit-lite/SKILL.md').read_text(encoding='utf-8')
+        description = skill.split('---')[1]
+        return [] if marker not in description and marker not in ('setup-audit-lite', 'setup-audit') \
+            else ['marker appears in the skill listing: %s' % marker]
+
+    def test_marker_is_the_log_path(self):
+        text = (LITE / 'skills/setup-audit-lite/references/reading-rules.md').read_text(encoding='utf-8')
+        self.assertEqual(self.marker(text), 'setup-audit-lite/applied.md')
+        self.assertEqual(self.check(text), [])
+
+    def test_bare_plugin_name_is_refused(self):
+        text = 'Grep them for the marker `setup-audit-lite`: every lite session has it.'
+        self.assertNotEqual(self.check(text), [])
+

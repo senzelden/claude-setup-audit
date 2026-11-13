@@ -203,7 +203,7 @@ Recorded at apply time in `measure`, compared at the check-in. All counts, never
 
 Session-log measures count sessions, not hits, and leave out every session that ran lite (the apply
 session, the current one and earlier audits), as `reading-rules.md`, "Counting", describes: the
-files that match the phrase minus the files that match `setup-audit-lite`, both from
+files that match the phrase minus the files that match `setup-audit-lite/applied.md`, both from
 `files_with_matches`.
 
 - **cost:** the `/context` total the user pastes at apply time and again at the check-in; the MCP

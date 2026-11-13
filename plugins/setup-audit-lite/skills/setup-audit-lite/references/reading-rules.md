@@ -200,13 +200,16 @@ phrase it was asked to measure (the user named the mistake there, and lite searc
 plain count would grow with every audit. One approach, always the same:
 
 1. Grep `~/.claude/projects/**/*.jsonl` with `output_mode: files_with_matches` for the phrase.
-2. Grep the same files with `output_mode: files_with_matches` for the marker `setup-audit-lite`:
-   every session that ran lite, including the apply session and the current one, contains it.
+2. Grep the same files with `output_mode: files_with_matches` for the marker
+   `setup-audit-lite/applied.md`: every lite run reads that log in its first step, so every session
+   that ran lite, including the apply session and the current one, contains the path. Don't use the
+   bare plugin name: Claude Code lists installed skills in every session log, so it matches nearly
+   every session once lite is installed.
 3. The measure is the number of files in the first list that are not in the second. The lists are
    session file names, never content.
 
 Record it as `sessions with "<phrase>" = <n> (setup-audit-lite sessions excluded)`. Sessions where
-the user only mentioned lite by name are excluded too, and a session where the mistake happened
+the user only quoted the log path are excluded too, and a session where the mistake happened
 before lite ran in it is not counted; the comparison stays "counts compared, not proof".
 
 ## Pasted output
