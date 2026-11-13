@@ -89,7 +89,8 @@ one of these, say the full plugin covers it.
   code from outside the repo or plugin, or match every tool with a slow command); `http` hooks send
   each matching event's JSON to a URL (flag an unfamiliar host and a wide matcher; a URL with a
   path is counted, not shown, so the host is then unknown: "partial"; the `headers` block is not
-  shown); `prompt` and `agent` hooks are another model call; an
+  shown); a command hook whose command isn't shown (exec-form `args`, a command with `\"` or another
+  backslash, or a secret-probe hit) makes the check "partial" for that hook; `prompt` and `agent` hooks are another model call; an
   `mcp_tool` hook is as trustworthy as its server. A `PreToolUse` or `PermissionRequest` hook that
   exists to block something fails open unless it sets `"onFailure": "block"` (Claude Code 2.1.295+);
   propose that for guards only, never for loggers or formatters. If managed settings exist and don't
@@ -122,6 +123,8 @@ one of these, say the full plugin covers it.
   pasted `/context`; otherwise counts only, labelled "not measured". Record the numbers for the
   check-in.
 - `COST-model-default` (medium). Read: the `model` key in settings files and agent frontmatter.
+  Frontmatter comes from the single-line key Grep in `reading-rules.md` ("Skills, agents and
+  commands"); a file with inline `mcpServers` or `hooks` is "not read", so the check is "partial".
   Claims: `costs-model-choice`, `model-opusplan`. A top-tier model as the default for mostly routine
   work. Options: `opusplan`, a cheaper default with switching per task, or cheaper subagents
   (`COST-subagents`). Ask about the work before proposing.
@@ -134,7 +137,8 @@ one of these, say the full plugin covers it.
   `memory-index-limit`. Over 200 lines: entries past the limit don't load. Bytes aren't measured
   (lite can't size a file), so say "lines only".
 - `COST-skill-listing` (low). Read: skill frontmatter (`description`, `when_to_use`) for user,
-  project and plugin skills; `skillListingBudgetFraction` key. Claims: `skills-listing-budget`,
+  project and plugin skills, by the single-line key Grep (multi-line values are "partial");
+  `skillListingBudgetFraction` key. Claims: `skills-listing-budget`,
   `skills-desc-cap`. Many skills or long descriptions crowd the listing, and an overflowing listing
   drops descriptions. Confirm with a pasted `/context` before claiming overflow; otherwise note
   "possible".
@@ -143,7 +147,9 @@ one of these, say the full plugin covers it.
   text to every session's context. Name the plugin or file; size isn't measured without a pasted
   `/context`.
 - `COST-subagents` (low). Read: frontmatter of agent definitions (`~/.claude/agents/`,
-  `.claude/agents/`, plugin agents). Claims: `subagent-model-frontmatter`, `costs-subagent-haiku`,
+  `.claude/agents/`, plugin agents). Frontmatter comes from the single-line key Grep in `reading-rules.md` ("Skills, agents and
+  commands"); a file with inline `mcpServers` or `hooks` is "not read", so the check is "partial".
+  Claims: `subagent-model-frontmatter`, `costs-subagent-haiku`,
   `bp-subagents-cost`. Agents for routine tasks with no `model:` (they follow the main model) or a
   top-tier model. Fix: `model: haiku` or `sonnet` in that agent's frontmatter.
 - `COST-cache-health` (low). Read: `promptCacheTtl`, `subagentPromptCacheTtl`, `idleCompaction` key
@@ -157,7 +163,8 @@ one of these, say the full plugin covers it.
 Only when the user names a repeated mistake. No automatic discovery.
 
 - `LRN-enforce` (medium). Read: CLAUDE.md files and rules for a line about the named mistake;
-  count-only Grep of session logs for a fixed phrase of it. Claims: `bp-enforce-rules`,
+  sessions whose log holds a fixed phrase of it, with lite's own sessions left out
+  (`reading-rules.md`, "Counting"). Claims: `bp-enforce-rules`,
   `bp-emphasis`. The rule exists but the mistake still recurs: propose a hook or deny rule rather
   than stronger wording. No rule yet: the lightest place that will hold (CLAUDE.md line, path-scoped
   rule, then hook).
@@ -165,8 +172,8 @@ Only when the user names a repeated mistake. No automatic discovery.
   (user and project CLAUDE.md, rules, `AGENTS.md`, skills). Claims: `memory-consistency`,
   `memory-agents-md-default`. Two surfaces disagree. Propose one canonical statement. An `AGENTS.md`
   next to a CLAUDE.md isn't read by default, so don't call that conflict active without saying so.
-- `LRN-effectiveness` (info). Read: lite's own `applied.md` log and the same count-only Grep as at
-  apply time. Claims: none. At the check-in, compare counts before and after the change; label it
+- `LRN-effectiveness` (info). Read: lite's own `applied.md` log and the same session count as at
+  apply time (lite's own sessions left out, so audits don't raise it). Claims: none. At the check-in, compare counts before and after the change; label it
   "counts compared, not proof".
 
 ## Agent readiness (RDY-)
@@ -201,10 +208,12 @@ Always on.
 
 - `HYG-settings-shape` (medium; high when the key is `permissions` or `hooks`). Read: the
   allowlisted lines and counts from the reading rules. Claims: `settings-strict-json`,
-  `settings-error`, `settings-warning`, `settings-status`. A value of the wrong type (a `deny` entry
-  that isn't a string, `permissions` that isn't an object) or a comment line (count `^\s*//`).
-  Lite can't parse the file, so brace pairing and trailing commas are "not run": Claude Code skips
-  the entry or the file; ask the user to check `/status` or `claude doctor`.
+  `settings-error`, `settings-warning`, `settings-status`. Run: comment lines (count `^\s*//`),
+  which strict JSON rejects. Not run, because lite sees only allowlisted lines and can't parse the
+  file: values of the wrong type (a `deny` entry that isn't a string, `permissions` that isn't an
+  object), brace pairing and trailing commas. Report those as "not run: lite does not parse
+  settings" and ask the user to check `/status` or `claude doctor`; Claude Code skips the entry or
+  the file.
 - `HYG-scope-ignored` (low). Read: key names per settings file; the Scope column of the fetched
   `settings-reference` page. Claims: `settings-repo-ignored-keys`, `settings-default-mode-scope`. A
   key in a file where Claude Code ignores it (for example `permissions.defaultMode: auto` in a
@@ -214,7 +223,10 @@ Always on.
   ignored env variables are "not run".
 - `HYG-missing-hook-script` (high on `PreToolUse`, low otherwise). Read: the script path in each hook
   command; Glob for it (expand `$CLAUDE_PROJECT_DIR` and the plugin root by hand). Claims:
-  `hooks-mistyped-path`. A hook that points at a missing file never does its job.
+  `hooks-mistyped-path`. A hook that points at a missing file never does its job. "Partial" for
+  hooks whose command isn't shown: exec-form hooks whose script path sits in `args` (counted, never
+  shown), commands containing `\"` or another backslash, and commands counted after a secret-probe
+  hit.
 - `HYG-dead-refs` (low). Read: paths named in CLAUDE.md files; Glob for each. Claims: none. Paths
   that don't exist. Skip generated or ignored paths.
 - `HYG-one-off-rules` (low). Read: count of `permissions.allow` entries. Claims:
@@ -225,7 +237,8 @@ Always on.
   from another machine. Entries that are counted but not shown (secret or split-line probe hit, or
   not path-shaped) make the check "partial".
 - `HYG-hook-duplicates` (low; medium when a plugin and a settings file both carry it). Read: hooks
-  in all settings files and plugins. Claims: `hooks-dedup`. The same handler in several settings
+  in all settings files and plugins; hooks whose command isn't shown (exec-form `args`, `\"` in the
+  command) can't be compared, so the check is "partial" for them. Claims: `hooks-dedup`. The same handler in several settings
   files runs once (clutter); a plugin's copy runs separately (double cost and side effects). Fix: drop
   the settings copy when a plugin provides the hook.
 - `HYG-shadowed-allow` (low). Read: allow, ask and deny lists across all scopes. Claims:
@@ -258,11 +271,13 @@ Lite never recommends installing a large bundle wholesale, and adds nothing itse
 and its backups directory under `~/.claude/setup-audit-lite/`.
 
 - `HYG-lite-clutter-skills` (low). Read: skill frontmatter (`name`, `description`, `when_to_use`)
-  across user, project and plugin skills. Claims: `skills-description-purpose`,
+  across user, project and plugin skills, by the single-line key Grep (multi-line values and files
+  with inline `mcpServers` or `hooks` are "partial"). Claims: `skills-description-purpose`,
   `skills-listing-budget`. Skills whose descriptions trigger on the same requests, so Claude picks
   one at random or both crowd the listing. Fix: merge, or disable the weaker one.
 - `HYG-lite-clutter-hooks` (low; medium when they conflict). Read: hooks on the same event and
-  matcher across settings and plugins. Claims: `hooks-dedup`, `perm-hooks-dont-bypass`. Hooks that
+  matcher across settings and plugins ("partial" for hooks whose command isn't shown: exec-form
+  `args`, `\"` in the command). Claims: `hooks-dedup`, `perm-hooks-dont-bypass`. Hooks that
   duplicate each other (two formatters, two loggers) or conflict (one approves what another blocks).
   Fix: keep one.
 - `HYG-lite-clutter-overlap` (low). Read: `enabledPlugins` names, plugin component lists (Glob), and

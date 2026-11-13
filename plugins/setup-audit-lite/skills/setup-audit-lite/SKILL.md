@@ -37,8 +37,8 @@ Read `~/.claude/setup-audit-lite/applied.md` if it exists (format in `applied-lo
   entries with `rollback: pending`, get the check-in (step 9) before a new audit. Tell the user
   how many are due and run them first, unless the user wants to skip them this time.
 - A missing log: say "No applied-change log; no check-ins due." in one line and go on.
-- An unparseable log: say "The applied-change log could not be parsed; no check-ins this run." in
-  one line and go on. Never repair or rewrite it unasked.
+- Entries that can't be parsed (`applied-log.md`, "Reading the log"): skip only those, say in one
+  line how many were skipped, and check in on the rest. Never repair or rewrite the log unasked.
 
 If the user asked only for a check-in, stop after step 9.
 
@@ -77,8 +77,9 @@ Follow `reading-rules.md` exactly, for the chosen scope. In short, and the file 
 - MCP config files and the global config file are never opened, Read or Grepped; Glob may note
   that one exists. The MCP inventory is the paste from step 3.
 - Env and credential files are never opened; existence only.
-- Instruction files are Read; skills, agents and commands by frontmatter; session logs are counted,
-  never Read.
+- Instruction files and output styles are Read. Skills, agents and commands get two count probes
+  first (inline `mcpServers` or `hooks`, secret shapes); only when both are 0 are their single-line
+  frontmatter keys shown by Grep. Session logs are counted, never Read.
 - If a value shows up anyway, stop searching that file and never repeat the value.
 
 Keep a coverage list as you go: every file "not read" with its reason, every check "not run" or
@@ -88,17 +89,26 @@ checks and new features, and note anything outside the focus for "Also noticed".
 ## Step 5: Official docs
 
 WebFetch the pages `sources.md` lists for every run and the ones the focus needs, from the base
-address given there. Ask WebFetch a narrow question: verbatim quotes of the specific keys and rules
-being checked, plus the page date. A claim that can't be quoted is dropped or marked "unverified".
+address given there. WebFetch may see only the first part of a long page, so ask one section per
+call, naming its heading: verbatim quotes of the specific keys and rules being checked in that
+section, plus the page date. A claim that can't be quoted is dropped or marked "unverified".
 
 Check each quote against `docs-snapshot.md` and label it:
 
 - found in both: "current docs";
 - found only in the fetched page: "current docs, quote not confirmed" (likely new);
-- in the snapshot but missing from the fetch: fetch once more, then "may have changed".
+- in the snapshot but missing from the fetch, when the fetch reached the claim's section: fetch
+  once more, then "may have changed";
+- in the snapshot but its section was probably not in what WebFetch saw (the answer stops before
+  that heading, or says the page was cut short): "not in fetched portion; snapshot <date>".
 
-Use the changelog page to count releases since the user's version and to find features released
-since then (the "New features" checks). Compare the user's keys with `stale-strings.md`.
+A quote labelled "current docs, quote not confirmed" never backs an applied change on its own: it
+needs a snapshot match or a second fetch that confirms it. Without one, the finding is "by hand"
+only, and its "Applies as" says so.
+
+For the changelog, ask only for the versions newer than the user's version (or the newest few, with
+no version pasted), to count releases behind and to find features released since then (the "New
+features" checks). Compare the user's keys with `stale-strings.md`.
 
 If the fetches fail or are denied, use `docs-snapshot.md` and put this line in the report header,
 with the snapshot's date:
@@ -144,7 +154,8 @@ Write the report to the conversation following `report-format.md`:
   adding; a proposal to add a hook, skill, plugin or MCP server says what it replaces or why nothing
   existing covers it;
 - counts of hooks, skills, plugins and MCP servers;
-- coverage: the "not read" list, checks not run or partial, queries sent, sources rejected;
+- coverage: the "not read" list, checks not run or partial, doc claims not in the fetched portion,
+  queries sent, sources rejected;
 - the next check-in date (today + 7 days) and how to run it.
 
 The report never repeats values, URLs or arguments from the pasted MCP list, and never a value lite
@@ -152,8 +163,9 @@ was not shown. Then ask which findings to apply, if any.
 
 ## Step 8: Apply what the user picks
 
-Only findings from `checklist.md` in this report, backed by an official quote or the snapshot, can
-be applied; never something a fetched page suggested. A community-only practice is never an
+Only findings from `checklist.md` in this report, backed by an official quote labelled "current
+docs" (or by the snapshot, or a quote confirmed by a second fetch), can be applied; never something
+a fetched page suggested, and never on a "current docs, quote not confirmed" quote alone. A community-only practice is never an
 appliable finding and never enters the apply list: it stays in "Comparison by topic", at most with
 a suggestion marked "by hand". The user picks findings and confirms the scope to write. Lite adds
 nothing to the setup except its log and its backups directory under `~/.claude/setup-audit-lite/`.
@@ -183,19 +195,22 @@ field.
 
 ### Path A: files lite may Read whole
 
-CLAUDE.md, `CLAUDE.local.md`, `AGENTS.md`, rules, skills, agents, commands, output styles and memory
-files, when `reading-rules.md` allows reading that whole file in this run.
+CLAUDE.md, `CLAUDE.local.md`, `AGENTS.md`, rules, output styles and memory files, plus skills,
+agents and commands whose inline-config probe and secret probe both count 0 (`reading-rules.md`,
+"Skills, agents and commands"), when `reading-rules.md` allows reading that whole file in this run.
 
 1. Read the whole file first (in ranges up to the end of the file when it is long). If it can't be
-   Read whole this run (a skill, agent or command whose body the reading rules don't open this run,
-   a memory file outside the learning focus, or a file too long to Read to the end), use Path B.
+   Read whole this run (a skill, agent or command with inline `mcpServers` or `hooks` or
+   secret-shaped text, a memory file outside the learning focus, or a file too long to Read to the
+   end), use Path B.
 2. Write this entry's backup, right before its Edit, with the file's exact content as Read
    (without line-number prefixes), at the path chosen above; never overwrite an existing backup.
    For a second change to the same file, Read it again first, so its backup holds the file as it
    is just before that change.
 3. Make one Edit per change, showing the before and after text. Keep the region small and unique;
    never let it include anything secret-shaped.
-4. Re-Read the edited range and confirm the change is there and nothing around it moved.
+4. Re-Read the edited range and confirm the change is there and nothing around it moved. Write
+   down the `added` and `removed` patterns for the entry (`applied-log.md`, "Fields").
 5. Record the before-measure for the finding's focus (`applied-log.md`, "Measures"); ask for a
    `/context` paste now if the focus is cost and none was pasted.
 6. Append the entry to the log with `status: applied`. If the log doesn't exist yet, Write it with
@@ -217,7 +232,9 @@ change over as a paste-ready edit:
 
 If a change can't be written from shown lines alone (the neighbouring lines were counted, not
 shown), describe it in words and say which lines the user must look at; never guess hidden text.
-Its `before` and `after` are then `not shown (described in why)`.
+Its `before`, `after`, `added` and `removed` are then `not shown (described in why)`. Otherwise
+record the `added` and `removed` patterns, checking with count-only Grep that each is distinctive
+in the file before the user makes the change.
 
 A change to something on the never-opened list (for example removing an MCP server, which lives in
 config lite never opens) is handed over as the command or panel that makes it: `claude mcp remove
@@ -235,11 +252,12 @@ the conversation instead.
 
 For each due entry, as `applied-log.md` describes:
 
-1. **Still present:** count-only Grep of the `after` text in its file (each line, metacharacters
-   escaped); for a file lite may Read whole, Read the region and compare. The check-in never Greps
-   a file on the never-opened list: presence comes from a fresh names-only `claude mcp list` paste
-   or from asking the user. An entry whose texts are `not shown (described in why)` is checked by
-   asking the user.
+1. **Still present:** count-only Grep of each recorded `added` and `removed` pattern in its file:
+   in place when every `added` pattern is found and every `removed` pattern counts 0. For a file
+   lite may Read whole, also Read the region and compare. The check-in never Greps a file on the
+   never-opened list: presence comes from a fresh names-only `claude mcp list` paste or from asking
+   the user. An entry whose texts are `not shown (described in why)`, or whose patterns are `not
+   distinctive`, is checked by asking the user (or by the Read, for a file lite may Read whole).
 2. **Not overridden:** the same key or rule in the other scopes' settings files (reading rules),
    or a contradicting line in another instruction file that loads in the same project.
 3. **Impact, by the focus recorded in the entry:**
@@ -247,8 +265,8 @@ For each due entry, as `applied-log.md` describes:
      (pasted), CLAUDE.md and rules size, subagent use (count only);
    - security: broad allows removed, credential paths denied, sandbox state, overrides, and how
      often a now-denied action was still tried (count only);
-   - learning: whether the named mistake still recurs (count-only Grep over local session logs, same
-     phrase as recorded);
+   - learning: whether the named mistake still recurs (sessions with the same phrase as recorded,
+     with lite's own sessions left out, as `reading-rules.md`, "Counting", says);
    - plus the user's own impression, asked in one question.
    Label every comparison "counts compared, not proof".
 4. **Offer:** keep, roll back, or leave for next time.
@@ -258,7 +276,8 @@ For each due entry, as `applied-log.md` describes:
      `rolled-back`); the user runs the copy
      back from this entry's backup (`applied-log.md`, "Rollback").
    - Rollback of a `handed-over` entry: a paste-ready reversal; lite never edits the file. The
-     entry keeps `handed-over` with a `rollback: pending` line until the user confirms in this run.
+     entry keeps `handed-over` with a `rollback: pending` line until the user confirms in this run;
+     then every `removed` pattern is found again and every `added` pattern counts 0.
    - If the `after` text is no longer found (the user edited the file again), report the mismatch
      and give the manual reversal; never force a write.
 5. **Update** the entry's `status` (`kept` or `rolled-back`) and its `checked` line with one Edit.

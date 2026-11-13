@@ -16,8 +16,9 @@ exists; the report says "present, not read" and nothing more.
 - `.env`, `.env.*`, `.envrc`, `.dev.vars` are never opened; existence only.
 - `.credentials.json` (including `~/.claude/.credentials.json`) is never opened.
 - `.netrc`, `.npmrc`, `.pypirc`, `*.tfvars`, `*.pem`, private key files, `~/.ssh/`, `~/.aws/`, `~/.config/gh/` are never opened.
-- Session logs (`~/.claude/projects/**/*.jsonl`) are never Read; they are only Grepped with `output_mode: count` (see "Counting" below).
+- Session logs (`~/.claude/projects/**/*.jsonl`) are never Read; they are only Grepped with `output_mode: files_with_matches` or `output_mode: count` (see "Counting" below).
 - Hook scripts, skill scripts and other code files are never Read; Glob checks only that a path exists.
+- Agent, skill and command files whose inline-config probe (see "Skills, agents and commands") counts above 0 are never Read and never Grepped beyond the count probes: inline `mcpServers` and `hooks` blocks can carry tokens, headers and commands. The report says "inline MCP/hooks present, not read".
 - Lite's own backups directory (`~/.claude/setup-audit-lite/backups/`) is never opened, Read or Grepped, not even with a count: a copied settings file holds the same values as the original. Glob only checks whether a backup path is free before one is written.
 
 The MCP inventory comes only from `claude mcp list` or `/mcp` output that the user pastes (see
@@ -98,8 +99,9 @@ lookaround, no backreferences. For each file, in this order:
    and env values are always strings. Header names (`Authorization`, `X-Api-Key`) and helper keys
    aren't on the lists either. The remaining case is an env or header
    entry whose name happens to equal a key on the scalar allowlist plus the hook-field keys (`type`,
-   `matcher`, `event`, `timeout`, `async`, `onFailure`), such as an env variable called `model`: its
-   value is shown, and it is not a credential by name. Key names written with Unicode
+   `matcher`, `event`, `timeout`, `async`, `onFailure`) and the `command` and `url` keys (shown only
+   in the shapes above), such as an env variable called `model`: its value is shown, and it is not a
+   credential by name. Key names written with Unicode
    escapes (`"\u0065nv"`) contain a backslash and match nothing.
 
    Record key names seen inside `permissions`, `hooks`, `sandbox`, `enabledPlugins` and the rest.
@@ -123,11 +125,40 @@ rotate if it is a credential".
 - Instruction files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.claude/rules/**/*.md`,
   `~/.claude/CLAUDE.md`, `~/.claude/rules/**/*.md`): first a count-only Grep for `^` (lines), then
   Read. A file over 2,000 lines is read in ranges.
-- Skills, agents and commands (`skills/*/SKILL.md`, `agents/*.md`, `commands/*.md` under
-  `~/.claude/`, `.claude/` and the plugin cache): Read the frontmatter only (`limit` up to the closing
-  `---`, at most 40 lines). Bodies are read only when a clutter or overlap check needs them.
+- Output styles (`~/.claude/output-styles/*.md`, `.claude/output-styles/*.md`, a plugin's
+  `output-styles/`): Read whole, like instruction files. Their frontmatter has only `name`,
+  `description`, `keep-coding-instructions` and `force-for-plugin` (output-styles page, fetched
+  2026-11-13); no field holds a server, hook or command.
+- Skills, agents and commands: see the next section.
 - Auto memory (`~/.claude/projects/<project>/memory/MEMORY.md`): count-only Grep for `^` for the
   size check; Read only when the user named a mistake (learning focus).
+
+## Skills, agents and commands
+
+`skills/*/SKILL.md`, `agents/*.md` and `commands/*.md` under `~/.claude/`, `.claude/` and the plugin
+cache. Their frontmatter can define MCP servers inline (`mcpServers` in agent frontmatter takes a
+full MCP server config, with `env`, `headers` and URLs) and `hooks` with commands (skills and
+agents). So these files are not Read for their frontmatter. For each file, in this order:
+
+1. **Inline-config probe, count only:** `(^\s*|[{,]\s*)["']?(mcpServers|hooks)["']?\s*:`. A count
+   above 0 (frontmatter or body) means "inline MCP/hooks present, not read": nothing more is read or
+   Grepped from that file, the checks that needed it are "partial", and any change to it is handed
+   over (SKILL.md, Path B).
+2. **Secret probe, count only:** the manifest probe from "Repo manifests for readiness" below, over
+   the whole file. A count above 0 means "not read: secret-shaped text" (report `SEC-secret-literal`
+   with the count only) and, again, nothing more is read and changes are handed over.
+3. **Frontmatter by single-line keys.** Only when both counts are 0, two content Greps with `-n`:
+   the fence lines, `^---\s*$`, and the keys:
+   `^(name|description|when_to_use|model|effort|tools|disallowedTools|allowed-tools|disallowed-tools|permissionMode|paths|skills|memory|isolation|background|context|agent|user-invocable|disable-model-invocation):[^\n]*$`
+   (the keys come from the skills and sub-agents frontmatter tables, fetched 2026-11-12; never
+   `mcpServers`, `hooks`, `metadata`, `experimental` or `initialPrompt`). Use only key lines above
+   the second fence line. The pattern shows top-level keys only; a key written as a block (`tools:`
+   followed by `- Read` lines) or a multi-line YAML value (`description: >`, `description: |`, a
+   quoted value that continues on the next line, or nothing after the colon) shows only its first
+   line: report that field "partial" and never guess the rest.
+4. **Whole Read** only when both counts are 0: for a clutter or overlap check that needs the body,
+   and for an apply on Path A (the backup copy). A file with either count above 0 is never Read
+   whole.
 
 ## Repo manifests for readiness
 
@@ -159,10 +190,24 @@ reported "not read: secret-shaped text".
 ## Counting
 
 Counts never bring content into context. Use Grep with `output_mode: count` (or
-`files_with_matches` when only presence matters) for: line counts, how often a named mistake
-appears in session logs, how often a denied action was still tried, and every probe in step 2 of
-the settings rules. Search patterns for session logs are built from the user's own words for the
-mistake, reduced to a fixed phrase; never from config values.
+`files_with_matches` when only presence matters) for line counts and every probe in the settings,
+frontmatter and manifest rules. Search patterns for session logs are built from the user's own
+words for the mistake (or a fixed phrase of the denied action or the agent tool name), never from
+config values.
+
+**Session logs: sessions, not hits, without lite's own runs.** A session that ran lite contains the
+phrase it was asked to measure (the user named the mistake there, and lite searched for it), so a
+plain count would grow with every audit. One approach, always the same:
+
+1. Grep `~/.claude/projects/**/*.jsonl` with `output_mode: files_with_matches` for the phrase.
+2. Grep the same files with `output_mode: files_with_matches` for the marker `setup-audit-lite`:
+   every session that ran lite, including the apply session and the current one, contains it.
+3. The measure is the number of files in the first list that are not in the second. The lists are
+   session file names, never content.
+
+Record it as `sessions with "<phrase>" = <n> (setup-audit-lite sessions excluded)`. Sessions where
+the user only mentioned lite by name are excluded too, and a session where the mistake happened
+before lite ran in it is not counted; the comparison stays "counts compared, not proof".
 
 ## Pasted output
 

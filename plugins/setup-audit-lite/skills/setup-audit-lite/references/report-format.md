@@ -21,9 +21,12 @@ SKILL.md, step 10); it has the same content.
 - Evidence is **measured** (a count lite made or a number the user pasted), **estimated** (say how),
   or a **recommendation**. A check with "Claims: none" in `checklist.md` is "lite's own
   recommendation".
-- Doc quotes carry one of the three labels from `docs-snapshot.md`: "current docs", "current docs,
-  quote not confirmed", or "may have changed". Quotes from the snapshot alone (fallback) are
-  labelled "snapshot <date>".
+- Doc quotes carry one of the four labels from `docs-snapshot.md`: "current docs", "current docs,
+  quote not confirmed", "may have changed" (the fetch reached the claim's section and it was not
+  there), or "not in fetched portion; snapshot <date>" (WebFetch probably did not see that part of a
+  long page). Quotes from the snapshot alone (fallback) are labelled "snapshot <date>".
+- A finding backed only by a "current docs, quote not confirmed" quote can't be applied: its
+  "Applies as" is "by hand (quote not confirmed)" unless the snapshot or a second fetch confirms it.
 - Community points are labelled "Community" with source name and page date; a practice no official
   page states is "community only".
 - A community-only practice is never an appliable finding and never enters the apply list. It
@@ -67,7 +70,7 @@ follows the official side>
 **Evidence:** <file and key or rule text>, (measured | estimated | partial)
 **Official:** <page>, <label>; **Community:** <source and date, or "none">
 **Fix:** <exact before and after text, or manual steps>
-**Applies as:** edit with backup | paste-ready edit (settings) | by hand (hard limit <n>)
+**Applies as:** edit with backup | paste-ready edit (settings) | by hand (hard limit <n>) | by hand (quote not confirmed)
 
 ## Also noticed
 <one line each: findings in areas with focus weight 0, unranked>
@@ -89,6 +92,8 @@ Rejected: <source: reason>
 ## Coverage
 Not read: <each file with the reason, e.g. "present, not read", "not read: compact JSON layout">
 Not run: <checks and why>
+Not in fetched portion: <claims whose section WebFetch probably did not see, per page, with the
+snapshot date used instead; or "none">
 Inline secrets in rules and commands checked by known shapes only.
 
 ## Next check-in
@@ -118,13 +123,19 @@ Tells the user before they pick how each fix would be made. Every row in "Findin
   change and logs it as handed over.
 - **by hand (hard limit N)**: one of the four hard limits in SKILL.md; lite gives manual steps and
   does not log values.
+- **by hand (quote not confirmed)**: the only official backing is a fetched quote that neither the
+  snapshot nor a second fetch confirms; lite gives the change for the user to make.
 
 ## Counts
 
 - Hooks: handler entries across settings files and plugin hook files: shown `type` lines that sit
   under a `hooks` opening (by line number; a `statusLine` also has a `type`), plus hook lines that
   were counted but not shown, labelled "partial".
-- Skills: SKILL.md files found by Glob (user, project, plugin cache), grouped by source.
+- Skills: SKILL.md files found by Glob (user, project, plugin cache), grouped by source. Plugin
+  skills count only for plugins shown as `true` under `enabledPlugins`, and only in the current
+  version folder of each plugin in the cache: the most recently modified one (folder names can be
+  commit hashes, so never sort them by name). Older version folders and disabled plugins stay on
+  disk but don't load. When the current folder can't be told apart, say "partial".
 - Plugins: `enabledPlugins` entries shown as true, plus a count of those set false.
 - MCP servers: entries in the pasted list; "not run" without a paste.
 

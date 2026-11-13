@@ -6,8 +6,12 @@ only reference file with links; the others name docs pages by name.
 ## Official docs (the authority)
 
 Base URL: `https://code.claude.com/docs/en/<page>.md` (the raw Markdown of each page). Fetch with
-WebFetch and ask for verbatim quotes of the specific keys and rules being checked; a claim that can't
-be quoted is dropped or marked unverified. Compare quotes with `docs-snapshot.md` as described
+WebFetch and ask for verbatim quotes of the specific keys and rules being checked, one section per
+call (name its heading); a claim that can't be quoted is dropped or marked unverified. Long pages
+(the changelog is over 1 MB; hooks, env-vars, mcp, skills, sub-agents and model-config are 115 to
+300 KB) are probably cut short, so a claim from a section WebFetch didn't reach is "not in fetched
+portion; snapshot <date>", not "may have changed". For the changelog, ask only for the versions
+newer than the user's version. Compare quotes with `docs-snapshot.md` as described
 there.
 
 | Page | Fetch when |

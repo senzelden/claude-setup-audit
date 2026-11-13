@@ -10,7 +10,9 @@ How to use it:
 
 - The run fetches the current pages first. A key or rule found both in the fetch and here is
   "current docs". One found only in the fetch is "current docs, quote not confirmed". One found here
-  but missing from the fetch is re-fetched once, then marked "may have changed".
+  but missing from a fetch that reached its section is re-fetched once, then marked "may have
+  changed". One whose section WebFetch probably did not see (long pages are cut short) is "not in
+  fetched portion; snapshot <date>".
 - When the run falls back to this file (offline, WebFetch denied), the report header says so in plain
   words with the snapshot date above.
 - Checks in `checklist.md` cite the claim keys below. A check whose claim is missing here is
