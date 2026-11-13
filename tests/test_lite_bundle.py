@@ -19,20 +19,38 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 TEXT_EXTENSIONS = {'.md', '.txt', '.json', '.yaml', '.yml'}
 ALLOWED_TOOLS = {'Read', 'Grep', 'Glob', 'LS'}
 FORBIDDEN_NAMES = {'package.json', 'package-lock.json', 'pyproject.toml', 'poetry.lock', 'uv.lock',
-                   'pnpm-lock.yaml', 'yarn.lock', 'pnpm-workspace.yaml', 'Pipfile', 'Pipfile.lock',
-                   '.mcp.json'}
-FORBIDDEN_DIRS = {'hooks', 'bin', 'workflows', 'scripts'}
-FORBIDDEN_MANIFEST_KEYS = {'icon', 'hooks', 'mcpServers', 'mods', 'modules'}
+                   'pnpm-lock.yaml', 'yarn.lock', 'pnpm-workspace.yaml', 'Pipfile', 'Pipfile.lock'}
+# Config files that start local servers or processes.
+LOCAL_SERVER_NAMES = {'.mcp.json', '.lsp.json', 'monitors.json'}
+FORBIDDEN_DIRS = {'hooks', 'bin', 'workflows', 'scripts', 'monitors'}
+# LSP servers and monitors run local processes, like hooks and MCP servers (plugins-reference).
+FORBIDDEN_MANIFEST_KEYS = {'icon', 'hooks', 'mcpServers', 'mods', 'modules', 'lspServers', 'monitors'}
+UTF8_BOM = b'\xef\xbb\xbf'
 IMAGE_OR_FONT_PATH = re.compile(r'\.(png|jpe?g|gif|webp|svg|avif|bmp|ico|woff2?|ttf|otf|eot)\b', re.I)
-CREDENTIAL_SOURCE = re.compile(
-    r'(?i:\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b)'
-    r'|\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY)[A-Z0-9_]*\b|\b[A-Z0-9_]+_KEY\b')
+# Uppercase credential-name words; each has its own red-proof sample (test_each_credential_word).
+CREDENTIAL_WORDS = ('TOKEN', 'SECRET', 'PASSWORD', 'PASSWD', 'API_KEY')
+
+
+def credential_source_regex(words=CREDENTIAL_WORDS, key_suffix=True):
+    return re.compile(
+        r'(?i:\.claude\.json|\.envrc|\.credentials\.json|\bdirenv\b)'
+        r'|\b[A-Z0-9_]*(?:' + '|'.join(words) + r')[A-Z0-9_]*\b'
+        + (r'|\b[A-Z0-9_]+_KEY\b' if key_suffix else ''))
+
+
+CREDENTIAL_SOURCE = credential_source_regex()
 URL = re.compile(r'https?://')
 
 
+def normalise(text):
+    """Text as Claude Code's YAML loader sees it: no byte-order mark, LF line endings."""
+    return text.lstrip('\ufeff').replace('\r\n', '\n').replace('\r', '\n')
+
+
 def frontmatter(text):
-    """Top-level keys mapped to their inline value plus any indented or '- ' continuation lines."""
-    match = re.match(r'---\n(.*?)\n---\n', text, re.S)
+    """Top-level keys mapped to their inline value plus any indented or '- ' continuation lines;
+    None when there is no frontmatter block (CRLF and a BOM are normalised first)."""
+    match = re.match(r'---\n(.*?)\n---(\n|$)', normalise(text), re.S)
     if not match:
         return None
     fields = {}
@@ -77,12 +95,17 @@ def bundle_problems(root):
             ext = path.suffix.lower()
             if name in FORBIDDEN_NAMES or re.match(r'requirements.*\.txt$', name):
                 problems.append('package-manager config: %s' % rel)
+            if name in LOCAL_SERVER_NAMES:
+                problems.append('local server config: %s' % rel)
             if ext not in ALLOWED_EXTENSIONS:
                 problems.append('disallowed file type: %s' % rel)
             if ext not in IMAGE_EXTENSIONS and path.stat().st_size > MAX_TEXT_BYTES:
                 problems.append('larger than 256 KiB: %s' % rel)
             with open(path, 'rb') as handle:
-                if handle.read(2) == b'#!':
+                head = handle.read(5)
+                if head.startswith(UTF8_BOM):
+                    head = head[len(UTF8_BOM):]
+                if head.startswith(b'#!'):
                     problems.append('starts with #!: %s' % rel)
             if ext not in TEXT_EXTENSIONS:
                 continue
@@ -98,12 +121,19 @@ def bundle_problems(root):
                 except ValueError:
                     problems.append('invalid JSON: %s' % rel)
                 else:
-                    for key in sorted(FORBIDDEN_MANIFEST_KEYS & set(manifest)):
+                    keys = set(manifest)
+                    experimental = manifest.get('experimental')
+                    if isinstance(experimental, dict):
+                        keys |= set(experimental) & {'monitors'}
+                    for key in sorted(FORBIDDEN_MANIFEST_KEYS & keys):
                         problems.append('manifest key %s: %s' % (key, rel))
             if ext == '.md':
                 fields = frontmatter(text)
                 if fields is None:
-                    if name == 'SKILL.md':
+                    if normalise(text).startswith('---'):
+                        # Claude Code may still load a block the guard can't parse; fail closed.
+                        problems.append('unparseable frontmatter: %s' % rel)
+                    elif name == 'SKILL.md':
                         problems.append('missing frontmatter: %s' % rel)
                     continue
                 if 'hooks' in fields:
@@ -173,6 +203,47 @@ class RedProofTests(unittest.TestCase):
         problems = self.violate(lambda r: (r / 'notes.md').write_text('#!/bin/sh\n'))
         self.assertNamed(problems, 'starts with #!: notes.md')
 
+    def test_shebang_after_bom(self):
+        problems = self.violate(lambda r: (r / 'notes.md').write_bytes(UTF8_BOM + b'#!/bin/sh\n'))
+        self.assertNamed(problems, 'starts with #!: notes.md')
+
+    def test_lsp_and_monitor_files(self):
+        def mutate(root):
+            (root / '.lsp.json').write_text('{}\n')
+            (root / 'monitors').mkdir()
+            (root / 'monitors/monitors.json').write_text('[]\n')
+        problems = self.violate(mutate)
+        self.assertNamed(problems, 'local server config: .lsp.json')
+        self.assertNamed(problems, 'forbidden directory: monitors')
+        self.assertNamed(problems, 'local server config: monitors/monitors.json')
+
+    def test_lsp_and_monitor_manifest_keys(self):
+        for patch in ({'lspServers': {}}, {'monitors': []}, {'experimental': {'monitors': []}}):
+            with self.subTest(patch=patch):
+                def mutate(root, patch=patch):
+                    path = root / '.claude-plugin/plugin.json'
+                    data = json.loads(path.read_text(encoding='utf-8'))
+                    data.update(patch)
+                    path.write_text(json.dumps(data))
+                key = 'lspServers' if 'lspServers' in patch else 'monitors'
+                self.assertNamed(self.violate(mutate), 'manifest key %s' % key)
+
+    def test_crlf_and_bom_frontmatter_checked(self):
+        for label, encode in (('crlf', lambda s: s.replace('\n', '\r\n').encode()),
+                              ('bom', lambda s: UTF8_BOM + s.encode()),
+                              ('bom and crlf', lambda s: UTF8_BOM + s.replace('\n', '\r\n').encode())):
+            with self.subTest(form=label):
+                def mutate(root, encode=encode):
+                    (root / 'commands').mkdir()
+                    (root / 'commands/x.md').write_bytes(encode('---\nallowed-tools: Bash\n---\nbody\n'))
+                self.assertNamed(self.violate(mutate),
+                                 "allowed-tools entry 'Bash' not allowed in commands/x.md")
+
+    def test_unparseable_frontmatter(self):
+        def mutate(root):
+            (root / 'notes.md').write_text('---\nallowed-tools: Bash\nno closing fence\n')
+        self.assertNamed(self.violate(mutate), 'unparseable frontmatter: notes.md')
+
     def skill_with_tools(self, tools):
         def mutate(root):
             path = root / 'skills/setup-audit-lite/SKILL.md'
@@ -207,11 +278,26 @@ class RedProofTests(unittest.TestCase):
 
     def test_credential_source_with_url(self):
         for sample in ('.claude.json', '.envrc', '.credentials.json', 'direnv', 'DIRENV', '.ENVRC',
-                       'GITHUB_TOKEN', 'MY_SECRET', 'DB_PASSWORD', 'X_API_KEY', 'SIGNING_KEY'):
+                       'GITHUB_TOKEN', 'MY_SECRET', 'DB_PASSWORD', 'DB_PASSWD', 'X_API_KEY',
+                       'API_KEYS_FILE', 'SIGNING_KEY'):
             with self.subTest(sample=sample):
                 problems = self.violate(lambda r: (r / 'notes.md').write_text(
                     'Never open %s. See https://example.invalid\n' % sample))
                 self.assertNamed(problems, 'paired with URL in notes.md')
+
+    def test_each_credential_word(self):
+        # Each word's sample is caught only through that word: dropping the word from the pattern
+        # lets its sample through, so every branch is red-provable on its own.
+        samples = {'TOKEN': 'GITHUB_TOKEN', 'SECRET': 'MY_SECRET', 'PASSWORD': 'DB_PASSWORD',
+                   'PASSWD': 'DB_PASSWD', 'API_KEY': 'API_KEYS_FILE'}
+        self.assertEqual(set(samples), set(CREDENTIAL_WORDS))
+        for word, sample in samples.items():
+            with self.subTest(word=word):
+                self.assertTrue(CREDENTIAL_SOURCE.search(sample))
+                without = credential_source_regex(tuple(w for w in CREDENTIAL_WORDS if w != word))
+                self.assertIsNone(without.search(sample))
+        self.assertTrue(CREDENTIAL_SOURCE.search('SIGNING_KEY'))
+        self.assertIsNone(credential_source_regex(key_suffix=False).search('SIGNING_KEY'))
 
     def test_lowercase_key_word_is_not_a_credential_name(self):
         problems = self.violate(lambda r: (r / 'notes.md').write_text(
@@ -357,10 +443,30 @@ SCRIPT_LINE = (r'^\s*"(test|lint|check|format|typecheck|build|dev|start|ci|verif
                r'prepare)(:[A-Za-z0-9_.:-]+)?"\s*:\s*"[^"\\]*",?\s*$')
 MAKE_TARGET = (r'^(test|tests|check|lint|format|fmt|typecheck|build|dev|start|run|ci|verify|setup|'
                r'bootstrap|install|all)([-_.][A-Za-z0-9_.-]*)?:[^=]*$')
+# Skills, agents and commands: agent frontmatter can define MCP servers inline (env, headers, URLs)
+# and skills and agents can carry hooks with commands (sub-agents and skills pages). A count probe
+# for them comes first; frontmatter is then shown only through single-line top-level keys.
+INLINE_CONFIG_PROBE = r"""(^\s*|[{,]\s*)["']?(mcpServers|hooks)["']?\s*:"""
+FRONTMATTER_KEYS = ('name|description|when_to_use|model|effort|tools|disallowedTools|allowed-tools|'
+                    'disallowed-tools|permissionMode|paths|skills|memory|isolation|background|context|'
+                    'agent|user-invocable|disable-model-invocation')
+FRONTMATTER_KEY_LINE = r'^(' + FRONTMATTER_KEYS + r'):[^\n]*$'
+FENCE_LINE = r'^---\s*$'
+# Frontmatter keys in the skills and sub-agents tables (docs fetched 2026-11-12), hard-coded so a
+# fresh checkout needs no docs. Keys that hold servers, hooks, free-form maps or prompts are not
+# allowlisted.
+DOC_FRONTMATTER_KEYS = {
+    'name', 'description', 'when_to_use', 'argument-hint', 'arguments', 'disable-model-invocation',
+    'user-invocable', 'allowed-tools', 'disallowed-tools', 'model', 'effort', 'context', 'agent',
+    'background', 'hooks', 'paths', 'shell', 'metadata', 'license', 'compatibility', 'tools',
+    'disallowedTools', 'permissionMode', 'maxTurns', 'autoCompactWindow', 'skills', 'mcpServers',
+    'memory', 'omitClaudeMd', 'isolation', 'color', 'initialPrompt', 'experimental'}
+NEVER_SHOWN_FRONTMATTER_KEYS = {'hooks', 'mcpServers', 'metadata', 'experimental', 'initialPrompt'}
 DOCUMENTED_PATTERNS = (SCALAR_SETTING, OPENER, BOOLEAN_FLAG, RULE_LINE, HOOK_FIELD, HOOK_TARGET,
                        HOOK_URL, PATH_ELEMENT, HOST_ELEMENT,
                        SPLIT_LINE, SECRET_IN_RULE, SECRET_IN_ELEMENT, SECRET_IN_MANIFEST, TOML_HEADER,
-                       PY_STRICT, TS_STRICT, SCRIPT_LINE, MAKE_TARGET)
+                       PY_STRICT, TS_STRICT, SCRIPT_LINE, MAKE_TARGET, INLINE_CONFIG_PROBE,
+                       FRONTMATTER_KEY_LINE, FENCE_LINE)
 # Words that mark a helper or credential-bearing key; no allowlisted key may contain one.
 CREDENTIAL_KEY_WORDS = re.compile(r'(?i)token|secret|password|key|header|credential|auth|helper|refresh|export')
 SEED_SOURCES = ('trailofbits/claude-code-config', 'shanraisshan/claude-code-best-practice',
@@ -579,6 +685,62 @@ def ref(name):
     return (REFS / name).read_text(encoding='utf-8')
 
 
+def frontmatter_reading(text, probe=INLINE_CONFIG_PROBE, secret=SECRET_IN_MANIFEST,
+                        keys=FRONTMATTER_KEY_LINE):
+    """How lite sees a skill, agent or command file under reading-rules.md.
+
+    Returns (reason, shown, whole_read_allowed). Lines split on newline only, as ripgrep does.
+    """
+    lines = text.split('\n')
+
+    def count(pattern):
+        return pattern is not None and sum(1 for line in lines if re.search(pattern, line))
+
+    if count(probe):
+        return 'inline MCP/hooks present, not read', [], False
+    if count(secret):
+        return 'not read: secret-shaped text', [], False
+    fences = [i for i, line in enumerate(lines) if re.search(FENCE_LINE, line)]
+    end = fences[1] if len(fences) > 1 and fences[0] == 0 else 0
+    return None, [line for line in lines[:end] if re.search(keys, line)], True
+
+
+# Agent, skill and command files whose inline config or secret-shaped text must never reach Claude.
+FRONTMATTER_LEAK_SAMPLES = {
+    'inline mcp env': '---\nname: a\nmcpServers:\n  db:\n    env:\n      DB_PASS: %s\n---\nbody\n',
+    'inline mcp headers, flow style': '---\nname: a\nmcpServers: {db: {headers: {X: %s}}}\n---\n',
+    'quoted mcp key': '---\nname: a\n"mcpServers":\n  x:\n    url: https://h.example.invalid/%s\n---\n',
+    'indented mcp key': '---\nname: a\n  mcpServers:\n    x: %s\n---\n',
+    'hook command': '---\nname: a\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n'
+                    '          command: deploy --pw %s\n---\n',
+    'flow mapping frontmatter': '---\n{name: a, hooks: {Stop: [{command: x %s}]}}\n---\n',
+    'hooks in the body': '---\nname: a\n---\nExample:\nhooks:\n  Stop: x %s\n',
+    'crlf inline mcp': '---\r\nname: a\r\nmcpServers:\r\n  db:\r\n    env: {T: %s}\r\n---\r\n',
+    'secret-shaped text in tools': '---\nname: a\ntools: Bash(curl -H "Authorization: Bear' + 'er abcdef%s123")\n---\n',
+    'secret-shaped text in the body': '---\nname: a\n---\nRun PG' + 'PASSWORD=x%s psql.\n',
+}
+
+
+def frontmatter_leaks(**kwargs):
+    """Labels of samples whose secret marker is shown or sits in a file lite may Read whole."""
+    found = []
+    for label, template in FRONTMATTER_LEAK_SAMPLES.items():
+        text = template.replace('%s', SECRET)
+        _, shown, whole = frontmatter_reading(text, **kwargs)
+        if any(SECRET in line for line in shown) or whole:
+            found.append(label)
+    return found
+
+
+def frontmatter_key_problems(pattern):
+    """Allowlisted frontmatter keys that the docs don't define or that may hold servers or hooks."""
+    keys = re.match(r'\^\(([^)]*)\)', pattern).group(1).split('|')
+    problems = ['not a documented frontmatter key: %s' % k for k in keys if k not in DOC_FRONTMATTER_KEYS]
+    problems += ['key may hold servers, hooks or free text: %s' % k
+                 for k in keys if k in NEVER_SHOWN_FRONTMATTER_KEYS]
+    return problems
+
+
 class LiteReferencesTests(unittest.TestCase):
     def test_lite_ids_subset_of_full(self):
         outside, _ = checklist_ids(ref('checklist.md'))
@@ -742,8 +904,33 @@ class LiteReferencesTests(unittest.TestCase):
         self.assertIn('a boolean env entry', ref('reading-rules.md'))
 
     def test_collision_names_listed(self):
-        text = ref('reading-rules.md')
+        text = flat(ref('reading-rules.md'))
         self.assertIn('scalar allowlist plus the hook-field keys', text)
+        self.assertIn('and the `command` and `url` keys', text)
+
+    def test_no_secret_reaches_claude_from_frontmatter(self):
+        self.assertEqual(frontmatter_leaks(), [])
+
+    def test_frontmatter_keys_shown(self):
+        text = ('---\nname: reviewer\ndescription: Reviews code\nmodel: haiku\ntools: Read, Grep\n'
+                'color: blue\n  model: nested\n---\nmodel: in the body\n')
+        reason, shown, whole = frontmatter_reading(text)
+        self.assertEqual((reason, whole), (None, True))
+        self.assertEqual(shown, ['name: reviewer', 'description: Reviews code', 'model: haiku',
+                                 'tools: Read, Grep'])
+
+    def test_multiline_description_is_partial(self):
+        _, shown, _ = frontmatter_reading('---\nname: a\ndescription: >\n  long text\n---\n')
+        self.assertEqual(shown, ['name: a', 'description: >'])
+        self.assertIn('report that field "partial"', flat(ref('reading-rules.md')))
+
+    def test_frontmatter_keys_documented(self):
+        self.assertEqual(frontmatter_key_problems(FRONTMATTER_KEY_LINE), [])
+
+    def test_inline_config_files_never_opened(self):
+        never_opened = section(ref('reading-rules.md'), '## Never opened')
+        self.assertTrue(any('mcpServers' in line and 'hooks' in line and NEGATION.search(line)
+                            for line in never_opened.splitlines() if line.startswith('- ')))
 
     def test_minified_reported_not_read(self):
         reason, shown = grep_shown('{"model": "opus"}\n')
@@ -876,6 +1063,23 @@ class ReferencesRedProofTests(unittest.TestCase):
                       'host value after a line-commented key'):
             self.assertIn(label, found)
 
+    def test_frontmatter_without_probes_leaks(self):
+        self.assertIn('inline mcp env', frontmatter_leaks(probe=None))
+        self.assertIn('hooks in the body', frontmatter_leaks(probe=None))
+        self.assertIn('secret-shaped text in tools', frontmatter_leaks(secret=None))
+        narrow = INLINE_CONFIG_PROBE.replace(r'(^\s*|[{,]\s*)', '^')
+        self.assertIn('flow mapping frontmatter', frontmatter_leaks(probe=narrow))
+        self.assertIn('indented mcp key', frontmatter_leaks(probe=narrow))
+        unquoted = INLINE_CONFIG_PROBE.replace("""["']?""", '')
+        self.assertIn('quoted mcp key', frontmatter_leaks(probe=unquoted))
+
+    def test_frontmatter_key_widened(self):
+        widened = FRONTMATTER_KEY_LINE.replace('^(name|', '^(mcpServers|initialPrompt|bogus|name|')
+        problems = frontmatter_key_problems(widened)
+        self.assertIn('key may hold servers, hooks or free text: mcpServers', problems)
+        self.assertIn('key may hold servers, hooks or free text: initialPrompt', problems)
+        self.assertIn('not a documented frontmatter key: bogus', problems)
+
     def test_credential_key_in_allowlist_detected(self):
         widened = SCALAR_SETTING.replace('"(model|', '"(apiKeyHelper|API_TOKEN|model|')
         problems = allowlisted_key_problems((widened,))
@@ -908,7 +1112,8 @@ COMMUNITY_UNAVAILABLE_LINE = 'Community practice not gathered this run.'
 HARD_LIMITS = ('credentials and secret values', 'anything that loosens security',
                'adding hooks, MCP servers or plugins',
                'managed settings and files outside the chosen scope')
-LOG_FIELDS = ('file', 'scope', 'focus', 'why', 'before', 'after', 'backup', 'measure', 'status')
+LOG_FIELDS = ('file', 'scope', 'focus', 'why', 'before', 'after', 'added', 'removed', 'backup',
+              'measure', 'status')
 LOG_STATUSES = ('applied', 'handed-over', 'rolled-back', 'kept')
 # Files written for the workflow; they describe Claude's own tool use, so a Bash rule in them could
 # read as an instruction (the references from Task 2 quote Bash rules as audit examples instead).
@@ -1044,6 +1249,117 @@ def restore_problems(texts):
     return problems
 
 
+SPEC = ROOT / 'docs/superpowers/specs/2026-11-12-setup-audit-lite-design.md'
+CHECKLIST_BULLET = re.compile(r'^- `(?P<id>[A-Z]+-[a-z0-9-]+)`.*?(?=^- `|^## |\Z)', re.S | re.M)
+
+
+def doc_texts():
+    """Flattened texts the final-review rules span; 'checklist.md#<id>' is one check's bullet."""
+    texts = {'SKILL.md': skill_text(), 'CHANGELOG.md': (LITE / 'CHANGELOG.md').read_text(encoding='utf-8'),
+             'spec': SPEC.read_text(encoding='utf-8')}
+    for name in ('reading-rules.md', 'applied-log.md', 'report-format.md', 'docs-snapshot.md',
+                 'sources.md', 'checklist.md'):
+        texts[name] = ref(name)
+    for match in CHECKLIST_BULLET.finditer(texts['checklist.md']):
+        texts['checklist.md#' + match.group('id')] = match.group()
+    return {name: flat(text) for name, text in texts.items()}
+
+
+FETCH_LABEL = '"not in fetched portion; snapshot <date>"'
+PRESENT = 'every `added` pattern is found and every `removed` pattern counts 0'
+REVERSED = 'every `removed` pattern is found and every `added` pattern counts 0'
+# (rule, file, phrase): each phrase must be in that file (flattened); one per rule it pins.
+REQUIRED_PHRASES = (
+    ('C1 probe before frontmatter', 'reading-rules.md', '"inline MCP/hooks present, not read"'),
+    ('C1 no whole Read with a hit', 'reading-rules.md', 'A file with either count above 0 is never Read whole.'),
+    ('C1 Path A only with probes 0', 'SKILL.md', 'whose inline-config probe and secret probe both count 0'),
+    ('C1 hit goes to Path B', 'SKILL.md', 'a skill, agent or command with inline `mcpServers` or `hooks`'),
+    ('C1 model check via key Grep', 'checklist.md#COST-model-default', 'single-line key Grep'),
+    ('C1 subagent check via key Grep', 'checklist.md#COST-subagents', 'single-line key Grep'),
+    ('C1 skill listing via key Grep', 'checklist.md#COST-skill-listing', 'single-line key Grep'),
+    ('C1 clutter via key Grep', 'checklist.md#HYG-lite-clutter-skills', 'single-line key Grep'),
+    ('I1 added and removed fields', 'applied-log.md', 'Then these eleven fields, in this order:'),
+    ('I1 presence rule (log)', 'applied-log.md', '"Still in place" means ' + PRESENT),
+    ('I1 presence rule (skill)', 'SKILL.md', 'in place when ' + PRESENT),
+    ('I1 reversal rule (log)', 'applied-log.md', 'with the roles swapped (reversed means ' + REVERSED),
+    ('I1 reversal rule (skill)', 'SKILL.md', 'then every `removed` pattern is found again and every '
+                                            '`added` pattern counts 0'),
+    ('I1 core string, not line', 'applied-log.md', 'the core string of one changed line, not the whole line'),
+    ('I1 distinctive patterns', 'applied-log.md', 'an `added` pattern counts 0 there before the change, '
+                                                  'a `removed` pattern counts 1'),
+    ('I2 marker list', 'reading-rules.md', 'with `output_mode: files_with_matches` for the marker '
+                                           '`setup-audit-lite`'),
+    ('I2 subtraction', 'reading-rules.md', 'the number of files in the first list that are not in the second'),
+    ('I2 measure format', 'applied-log.md', '`sessions with "<phrase>" = 12 (setup-audit-lite sessions excluded)`'),
+    ('I2 learning check', 'checklist.md#LRN-enforce', "lite's own sessions left out"),
+    ('I2 effectiveness check', 'checklist.md#LRN-effectiveness', "lite's own sessions left out"),
+    ('I3 label (skill)', 'SKILL.md', FETCH_LABEL),
+    ('I3 label (report)', 'report-format.md', 'one of the four labels'),
+    ('I3 label (snapshot)', 'docs-snapshot.md', FETCH_LABEL),
+    ('I3 label (sources)', 'sources.md', FETCH_LABEL),
+    ('I3 one section per call', 'SKILL.md', 'ask one section per call, naming its heading'),
+    ('I3 changelog newer versions', 'SKILL.md', "ask only for the versions newer than the user's version"),
+    ('I3 coverage line', 'report-format.md', 'Not in fetched portion:'),
+    ('M1 unconfirmed quote not applied', 'SKILL.md', 'never on a "current docs, quote not confirmed" quote alone'),
+    ('M1 applies-as value', 'report-format.md', '**by hand (quote not confirmed)**'),
+    ('M2 output styles rule', 'reading-rules.md', 'Read whole, like instruction files'),
+    ('M3 wrong types not run', 'checklist.md#HYG-settings-shape', 'not run: lite does not parse settings'),
+    ('M4 hook script partial', 'checklist.md#HYG-missing-hook-script', '"Partial" for hooks whose command isn\'t shown: exec-form'),
+    ('M4 hooks partial', 'checklist.md#SEC-hooks', 'makes the check "partial" for that hook'),
+    ('M4 duplicates partial', 'checklist.md#HYG-hook-duplicates', 'exec-form `args`'),
+    ('M4 clutter partial', 'checklist.md#HYG-lite-clutter-hooks', 'exec-form `args`'),
+    ('M5 skip unparseable (skill)', 'SKILL.md', 'skip only those, say in one line how many were skipped'),
+    ('M5 skip unparseable (log)', 'applied-log.md', 'Skip only those entries, say in one line how many were skipped'),
+    ('M6 enabled plugins only', 'report-format.md', 'only for plugins shown as `true` under `enabledPlugins`'),
+    ('M6 current version only', 'report-format.md', 'Older version folders and disabled plugins'),
+    ('M7 spec rulings section', 'spec', '## Calls made during the build'),
+    ('M7 spec marks superseded', 'spec', 'Superseded (see Calls made during the build)'),
+    ('M8 changelog session logs', 'CHANGELOG.md', 'Session logs are counted with count-only Grep'),
+)
+# (rule, file, phrase): text a fix removed; it must not come back.
+FORBIDDEN_PHRASES = (
+    ('I1 incoherent anchor sentence', 'applied-log.md', 'the block holds only the changed line'),
+    ('I1 whole after lines', 'applied-log.md', 'of each non-empty line of the `after` text'),
+    ('I1 whole before lines', 'applied-log.md', 'count-only Grep of each `before` line'),
+    ('I1 whole after lines (skill)', 'SKILL.md', 'count-only Grep of the `after` text'),
+    ('I2 raw hit count', 'applied-log.md', 'log hits for'),
+    ('I2 raw hit count (skill)', 'SKILL.md', 'count-only Grep over local session logs'),
+    ('I2 raw hit count (checklist)', 'checklist.md', 'count-only Grep of session logs'),
+    ('I3 three labels', 'report-format.md', 'three labels'),
+    ('M5 whole log unparseable', 'SKILL.md', 'no check-ins this run'),
+    ('M5 whole log unparseable (log)', 'applied-log.md', 'no check-ins this run'),
+    ('M8 internal parked items', 'CHANGELOG.md', 'Parked minor items'),
+    ('M8 session logs by Glob', 'CHANGELOG.md', 'and session logs. Existence checks by Glob only'),
+)
+
+
+def doc_rule_problems(texts):
+    problems = ['%s: %s lacks %r' % (rule, name, phrase) for rule, name, phrase in REQUIRED_PHRASES
+                if phrase not in texts.get(name, '')]
+    problems += ['%s: %s contains %r' % (rule, name, phrase) for rule, name, phrase in FORBIDDEN_PHRASES
+                 if phrase in texts.get(name, '')]
+    return problems
+
+
+def presence(file_text, added, removed):
+    """The check-in rule: in place when every added pattern is found and every removed one isn't."""
+    def found(pattern):
+        return any(re.search(pattern, line) for line in file_text.split('\n'))
+    return all(found(p) for p in added) and not any(found(p) for p in removed)
+
+
+def example_entry():
+    """before, after, added and removed from the example entry in applied-log.md."""
+    text = ref('applied-log.md')
+    blocks = re.findall(r'```text\n(.*?)\n  ```', text, re.S)
+    before, after = ('\n'.join(l[2:] for l in b.splitlines()) for b in blocks[:2])
+    lists = {}
+    for field in ('added', 'removed'):
+        body = re.search(r'^- `%s`:\n((?:  - `.*`\n)+)' % field, text, re.M).group(1)
+        lists[field] = re.findall(r'  - `(.*)`', body)
+    return before, after, lists['added'], lists['removed']
+
+
 class SkillWorkflowRedProof(unittest.TestCase):
     """Each rule check fails when the documents are mutated to break that rule."""
 
@@ -1094,6 +1410,39 @@ class SkillWorkflowRedProof(unittest.TestCase):
         moved += '\n2. anything that loosens security\n'
         self.assertIn('hard limit 2 missing under the heading: anything that loosens security',
                       hard_limit_problems(moved))
+
+    def test_doc_rules_removed(self):
+        for rule, name, phrase in REQUIRED_PHRASES:
+            with self.subTest(rule=rule):
+                texts = doc_texts()
+                texts[name] = texts[name].replace(phrase, '')
+                self.assertIn('%s: %s lacks %r' % (rule, name, phrase), doc_rule_problems(texts))
+
+    def test_doc_rules_reverted(self):
+        for rule, name, phrase in FORBIDDEN_PHRASES:
+            with self.subTest(rule=rule):
+                texts = doc_texts()
+                texts[name] += ' ' + phrase
+                self.assertIn('%s: %s contains %r' % (rule, name, phrase), doc_rule_problems(texts))
+
+    def test_whole_line_presence_misleads(self):
+        # A change that removes a deny rule, with an anchor line in both blocks. The user later put
+        # the rule back. The old check (every line of `after` found) still says "in place", because
+        # `after` holds only the anchor; the added/removed rule sees the rule is back.
+        after = '    "deny": [\n      "Read(./.env)"\n    ]'
+        undone = '    "deny": [\n      "Read(./.env)",\n      "Bash(rm -rf *)"\n    ]'
+
+        def old_rule(file_text):
+            return all(re.search(re.escape(l.strip()), file_text) for l in after.splitlines() if l.strip())
+
+        self.assertTrue(old_rule(undone))  # the false "still in place"
+        removed = [r'"Bash\(rm -rf \*\)"']
+        self.assertTrue(presence(after, [], removed))
+        self.assertFalse(presence(undone, [], removed))
+        # A core string survives a re-format that breaks a whole-line match.
+        reformatted = '  "deny": ["Read(./.env)", "Bash(git push *)"]'
+        self.assertTrue(presence(reformatted, [r'"Bash\(git push \*\)"'], []))
+        self.assertFalse(re.search(re.escape('      "Bash(git push *)"'), reformatted))
 
     def test_restore_without_unchanged_check(self):
         texts = workflow_texts()
@@ -1177,6 +1526,18 @@ class SkillWorkflow(unittest.TestCase):
 
     def test_restore_only_if_unchanged(self):
         self.assertEqual(restore_problems(workflow_texts()), [])
+
+    def test_final_review_doc_rules(self):
+        self.assertEqual(doc_rule_problems(doc_texts()), [])
+
+    def test_example_entry_patterns_work(self):
+        before, after, added, removed = example_entry()
+        self.assertTrue(added and removed)
+        self.assertTrue(presence(after, added, removed))
+        self.assertFalse(presence(before, added, removed))
+        # Reversal is the same test with the roles swapped.
+        self.assertTrue(presence(before, removed, added))
+        self.assertFalse(presence(after, removed, added))
 
     def test_workflow_files_have_no_urls(self):
         for rel in WORKFLOW_FILES:
