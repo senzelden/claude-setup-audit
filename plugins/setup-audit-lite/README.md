@@ -26,7 +26,8 @@ Code setup.
   whole-line allowlist (known non-secret settings, permission rules, hook fields), plus
   counts. Other settings are counted, not shown.
 - Instruction files: CLAUDE.md files, rules, and memory (memory only when you name a repeated
-  mistake). Skills, agents and commands are read by frontmatter.
+  mistake). Skills, agents and commands: a count check for inline MCP servers or hooks first,
+  then single-line frontmatter keys; a file with inline servers or hooks is not read.
 - MCP servers: from the output of `claude mcp list` that you paste yourself. Only server names,
   transport and status are used.
 - Your Claude Code version: from `claude --version`, which you paste.

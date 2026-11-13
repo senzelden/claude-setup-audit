@@ -180,8 +180,9 @@ a large bundle wholesale. Lite itself adds nothing except its log file.
 ## Applying changes
 
 - The user picks proposals from the report and the scope (user or project) to write.
-- Before each edit Claude Writes a dated backup next to the file (e.g. `settings.json.bak-2026-11-12`),
-  then makes one small, targeted Edit showing before and after. Claude Code's prompt covers each.
+- *Superseded (see Calls made during the build):* before each edit Claude Writes a dated backup
+  next to the file (e.g. `settings.json.bak-2026-11-12`), then makes one small, targeted Edit
+  showing before and after. Claude Code's prompt covers each.
 - After each edit Claude re-Reads the file and checks the change is there and the JSON looks
   well-formed; the report tells the user to restart or run `/doctor` to confirm the settings load.
 - Hard limits, never applied even with approval (my proposal, the user accepted):
@@ -238,7 +239,8 @@ and snapshot dated.
 
 ## Calls made after the builder check (author's calls, not the user's)
 
-- **Backups without whole-file reads.** Settings files are never Read whole, so whole-file backups
+- **Backups without whole-file reads.** *Superseded (see Calls made during the build).* Settings
+  files are never Read whole, so whole-file backups
   and restores are out. Each apply records the edited region's exact before and after text in
   `applied.md` (regions are never value-bearing, by the hard limits), and rollback is a reverse Edit
   of that region. The report also offers a full copy for the user to run themselves
@@ -254,3 +256,36 @@ and snapshot dated.
   full plugin for this run, then continues only if the user wants. Lite never reads or changes the
   full plugin's ledger, and rollback only reverses entries in its own `applied.md`.
 
+## Calls made during the build
+
+These rulings were made while building 0.1.0 (ledger in the build notes) and replace the bullets
+marked superseded above, which are kept for the record.
+
+- **Allowlist reading.** Settings files are never Read, not even in line ranges. Claude sees only
+  lines that match whole-line Grep patterns for known non-secret shapes (scalar settings by name,
+  block openings, booleans, permission rules, hook fields, bare hook hosts, path and host entries),
+  plus count-only probes. Unknown settings are counted, not shown.
+- **Agent, skill and command frontmatter.** Inline `mcpServers` (agents) and `hooks` (skills and
+  agents) can carry credentials and commands, so these files get a count-only probe first. A hit
+  means "inline MCP/hooks present, not read". Otherwise frontmatter comes from a single-line
+  top-level key Grep, and the whole file is Read only when the probe and the secret probe both
+  count 0.
+- **Path A and Path B.** Claude Code's Edit needs a prior Read, and settings are never Read, so
+  only files lite may Read whole are edited (Path A: instruction files, rules, output styles,
+  memory, and skills, agents and commands whose probes count 0). Settings files and anything else
+  are handed over as paste-ready edits (Path B, status `handed-over`).
+- **Backups.** One backup per log entry under
+  `~/.claude/setup-audit-lite/backups/<YYYY-MM-DD>/<check-id>__<slug>`, never next to the file or
+  in the project. Lite never opens that directory; a full restore is a `! cp` the user runs, only
+  when no later entry on the file is still in place.
+- **Community-only practices** are never applied and never enter the apply list; they stay in the
+  comparison, at most as a suggestion marked "by hand".
+- **Log fields.** Each entry has the nine fields from the build (`file`, `scope`, `focus`, `why`,
+  `before`, `after`, `backup`, `measure`, `status`), now with `added` and `removed`: one Grep
+  pattern per changed line's core string. A change is in place when every `added` pattern is found
+  and every `removed` pattern counts 0; a reversal is the same with the roles swapped.
+- **Session-log measures** count sessions with `files_with_matches` and leave out every session
+  that contains `setup-audit-lite`, so audits don't count as recurrences.
+- **Doc labels.** A fourth label, "not in fetched portion; snapshot <date>", replaces "may have
+  changed" when WebFetch probably didn't reach the claim's section of a long page. A quote that is
+  only "current docs, quote not confirmed" never backs an applied change on its own.
